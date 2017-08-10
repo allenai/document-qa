@@ -1,4 +1,4 @@
-import runner
+import trainer
 from data_processing.qa_data import BatchingParameters, FixedParagraphQaTrainingData
 from doc_qa_models import Attention
 from encoder import DocumentAndQuestionEncoder
@@ -8,7 +8,7 @@ from nn.attention_recurrent_layers import RecurrentAttention
 from nn.embedder import FixedWordEmbedder, CharWordEmbedder, LearnedCharEmbedder
 from nn.layers import SequenceMapperSeq, NullBiMapper, DropoutLayer
 from nn.recurrent_layers import EncodeOverTime, RecurrentEncoder, LstmCellSpec, GruCellSpec, BiRecurrentMapper
-from runner import TrainParams, SerializableOptimizer
+from trainer import TrainParams, SerializableOptimizer
 from squad.squad import SquadCorpus
 from utils import get_output_name_from_cli
 
@@ -68,7 +68,7 @@ def main():
                                 "context_words", True, False)
     data = FixedParagraphQaTrainingData(corpus, None, params, [])
 
-    runner.start_training(data, model, train_params, eval, runner.ModelDir(out), notes, False)
+    trainer.start_training(data, model, train_params, eval, trainer.ModelDir(out), notes, False)
 
 
 if __name__ == "__main__":

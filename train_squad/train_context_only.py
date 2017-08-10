@@ -1,4 +1,4 @@
-import runner
+import trainer
 from data_processing.document_splitter import MergeParagraphs, TopTfIdf
 from data_processing.paragraph_qa import ContextLenKey, ContextLenBucketedKey
 from data_processing.qa_data import Batcher, FixedParagraphQaTrainingData
@@ -10,7 +10,7 @@ from evaluator import LossEvaluator
 from nn.embedder import FixedWordEmbedder
 from nn.layers import NullBiMapper, FullyConnected
 from nn.span_prediction import BoundsPredictor
-from runner import SerializableOptimizer, TrainParams
+from trainer import SerializableOptimizer, TrainParams
 from squad.build_dataset import SquadCorpus
 from squad.squad_eval import BoundedSquadSpanEvaluator, SentenceSpanEvaluator
 from trivia_qa.build_span_corpus import TriviaQaWebDataset
@@ -39,7 +39,7 @@ def main():
     data = FixedParagraphQaTrainingData(corpus, None, train_batching, eval_batching)
 
     eval = [LossEvaluator(), BoundedSquadSpanEvaluator(bound=[17]), SentenceSpanEvaluator()]
-    runner.start_training(data, model, train_params, eval, runner.ModelDir(out), "", False)
+    trainer.start_training(data, model, train_params, eval, trainer.ModelDir(out), "", False)
 
 if __name__ == "__main__":
     # tmp()

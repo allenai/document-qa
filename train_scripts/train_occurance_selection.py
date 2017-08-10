@@ -1,4 +1,4 @@
-import runner
+import trainer
 from data_processing.document_splitter import MergeParagraphs
 from data_processing.preprocessed_corpus import PreprocessedData
 from data_processing.qa_data import Batcher
@@ -18,7 +18,7 @@ from paragraph_selection.paragraph_selection_model import NParagraphsSortKey, \
 from paragraph_selection.paragraph_selection_with_context import SelectionWithContextDatasetBuilder, ContextTriAttention
 from paragraph_selection.word_occurance_model import OccuranceFeaturizer, EncodedOccurancePredictor, \
     OccuranceDatasetBuilder
-from runner import TrainParams, SerializableOptimizer
+from trainer import TrainParams, SerializableOptimizer
 from trivia_qa.build_span_corpus import TriviaQaWebDataset
 from utils import get_output_name_from_cli
 
@@ -68,7 +68,7 @@ def main():
     data.load_preprocess("occurance-data.pkl")
 
     eval = [LossEvaluator(), AnyTopNEvaluator([1, 2, 3, 4])]
-    runner.start_training(data, model, train_params, eval, runner.ModelDir(out), notes, False)
+    trainer.start_training(data, model, train_params, eval, trainer.ModelDir(out), notes, False)
 
 
 if __name__ == "__main__":

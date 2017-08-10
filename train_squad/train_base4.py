@@ -1,4 +1,4 @@
-import runner
+import trainer
 from data_processing.qa_data import FixedParagraphQaTrainingData
 from doc_qa_models import Attention
 from encoder import DocumentAndQuestionEncoder
@@ -9,7 +9,7 @@ from nn.layers import NullBiMapper, SequenceMapperSeq, FullyConnectedMerge
 from nn.prediction_layers import ChainPredictor
 from nn.recurrent_layers import BiRecurrentMapper, LstmCellSpec, RecurrentEncoder, EncodeOverTime
 from nn.similarity_layers import DotProduct
-from runner import SerializableOptimizer, TrainParams
+from trainer import SerializableOptimizer, TrainParams
 from squad.squad import SquadCorpus
 from utils import get_output_name_from_cli
 
@@ -83,7 +83,7 @@ def main():
     data = FixedParagraphQaTrainingData(corpus, None, params, [])
 
     eval = [LossEvaluator(), BoundedSpanEvaluator(bound=[17]), SentenceSpanEvaluator()]
-    runner.start_training(data, model, train_params, eval, runner.ModelDir(out), notes, True)
+    trainer.start_training(data, model, train_params, eval, trainer.ModelDir(out), notes, True)
 
 if __name__ == "__main__":
     main()

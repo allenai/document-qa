@@ -1,4 +1,4 @@
-import runner
+import trainer
 from data_processing.document_splitter import TopTfIdf, MergeParagraphs
 from data_processing.preprocessed_corpus import PreprocessedData
 from data_processing.qa_data import Batcher
@@ -13,7 +13,7 @@ from nn.layers import NullBiMapper, SequenceMapperSeq, FullyConnectedMerge, Drop
 from nn.recurrent_layers import BiRecurrentMapper, LstmCellSpec, RecurrentEncoder, EncodeOverTime, GruCellSpec
 from nn.similarity_layers import TriLinear
 from nn.span_prediction import BoundsPredictor
-from runner import SerializableOptimizer, TrainParams
+from trainer import SerializableOptimizer, TrainParams
 from trivia_qa.build_span_corpus import TriviaQaWebDataset
 from trivia_qa.triviaqa_evaluators import TfTriviaQaBoundedSpanEvaluator
 from trivia_qa.triviaqa_training_data import ExtractSingleParagraph, InMemoryWebQuestionBuilder
@@ -80,7 +80,7 @@ def main():
     data.preprocess(4, 1000)
 
     eval = [LossEvaluator(), TfTriviaQaBoundedSpanEvaluator([4, 8])]
-    runner.start_training(data, model, train_params, eval, runner.ModelDir(out), notes, False)
+    trainer.start_training(data, model, train_params, eval, trainer.ModelDir(out), notes, False)
 
 
 if __name__ == "__main__":

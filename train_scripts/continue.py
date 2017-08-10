@@ -1,6 +1,6 @@
 import argparse
 
-from runner import resume_training, ModelDir
+from trainer import resume_training, ModelDir
 
 
 def main():

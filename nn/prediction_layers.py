@@ -43,15 +43,15 @@ def predict_from_bounds(answer, start_logits, end_logits, mask, aggregate):
     elif len(answer) == 2 and all(x.dtype == tf.bool for x in answer):
         # all correct start/end bounds are marked in a dense bool array
         # In this case there might be multiple answer spans, so we need an aggregation strategy
-        if aggregate is None:
-            raise ValueError()
         losses = []
-        for i, l in enumerate([masked_start_logits, masked_end_logits]):
-            log_norm = tf.reduce_logsumexp(l, axis=1)
-            if aggregate is None or aggregate == "sum":
-                log_score = tf.reduce_logsumexp(l + VERY_NEGATIVE_NUMBER * (1 - tf.cast(answer[i], tf.float32)), axis=1)
+        for answer_mask, logits in enumerate(zip(answer, [masked_start_logits, masked_end_logits])):
+            log_norm = tf.reduce_logsumexp(logits, axis=1)
+            if aggregate == "sum":
+                log_score = tf.reduce_logsumexp(logits +
+                                                VERY_NEGATIVE_NUMBER * (1 - tf.cast(answer_mask, tf.float32)), axis=1)
             elif aggregate == "max":
-                log_score = tf.reduce_max(l + VERY_NEGATIVE_NUMBER * (1 - tf.cast(answer[i], tf.float32)), axis=1)
+                log_score = tf.reduce_max(logits +
+                                          VERY_NEGATIVE_NUMBER * (1 - tf.cast(answer_mask, tf.float32)), axis=1)
             else:
                 raise ValueError()
             losses.append(tf.reduce_mean(-(log_score - log_norm)))
@@ -390,38 +390,4 @@ class ChainConcatPredictor(SequencePredictionLayer):
 #
 #         loss = tf.add_n([tf.reduce_mean(losses1), tf.reduce_mean(losses2)], name="loss")
 #         return ModelOutput(loss, BoundaryPrediction(prediction1, prediction2, logits1, logits2))
-
-
-
-# def compute_best_span_row(starts, ends, bound):
-#     l = tf.shape(starts)[0]
-#
-#     def compute(word_ix, prev_start, best_value, best_start, best_end):
-#         prev_start = tf.cond(word_ix - prev_start + 1 > bound,
-#                              lambda: prev_start + 1 + tf.cast(tf.argmax(starts[prev_start+1:word_ix]), tf.int32),
-#                              lambda: prev_start)
-#         prev_start = tf.cond(starts[word_ix] >= starts[prev_start],
-#                              lambda: word_ix,
-#                              lambda: prev_start)
-#         span_value = starts[prev_start] + ends[word_ix]
-#         best_value, best_start, best_end = tf.cond(
-#             span_value > best_value,
-#             lambda: (span_value, prev_start, word_ix),
-#             lambda: (best_value, best_start, best_end)
-#         )
-#         return word_ix+1, prev_start, best_value, best_start, best_end
-#
-#     _, _, value, start, end = tf.while_loop(
-#         lambda word_ix, prev_start, best_value, best_start, best_end: word_ix < l,
-#         compute,
-#         [0, -1, -1.0, -1, -1],
-#         back_prop=False)
-#     return value, tf.stack([start, end])
-#
-#
-# def dynamic(start_logits, end_logits, bound=None):
-#     return tf.map_fn(lambda x: compute_best_span_row(x[0], x[0], bound),
-#                   (start_logits, end_logits),
-#                   dtype=(tf.float32, tf.int32),
-#                   back_prop=False)
 

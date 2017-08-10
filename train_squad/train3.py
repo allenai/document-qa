@@ -1,4 +1,4 @@
-import runner
+import trainer
 from data_processing.paragraph_qa import ContextLenKey, ContextLenBucketedKey
 from data_processing.qa_data import FixedParagraphQaTrainingData, Batcher
 from dataset import ClusteredBatcher
@@ -13,7 +13,7 @@ from nn.layers import NullBiMapper, NullMapper, SequenceMapperSeq, DropoutLayer,
 from nn.recurrent_layers import BiRecurrentMapper, RecurrentEncoder, EncodeOverTime, GruCellSpec
 from nn.similarity_layers import TriLinear
 from nn.span_prediction import WithFixedContextPredictionLayer
-from runner import SerializableOptimizer, TrainParams
+from trainer import SerializableOptimizer, TrainParams
 from squad.build_dataset import SquadCorpus
 
 from squad.squad_eval import BoundedSquadSpanEvaluator
@@ -82,7 +82,7 @@ def main():
     data = FixedParagraphQaTrainingData(corpus, None, train_batching, eval_batching)
 
     eval = [LossEvaluator(), BoundedSquadSpanEvaluator(bound=[17])]
-    runner.start_training(data, model, train_params, eval, runner.ModelDir(out), notes, False)
+    trainer.start_training(data, model, train_params, eval, trainer.ModelDir(out), notes, False)
 
 
 if __name__ == "__main__":

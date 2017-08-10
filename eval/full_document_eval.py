@@ -9,7 +9,7 @@ from data_processing.batching import get_clustered_batches
 from data_processing.paragraph_qa import get_doc_input_spec, compute_document_voc, DocParagraphAndQuestion, Document
 from data_processing.span_data import get_best_in_sentence_span, compute_span_f1
 from data_processing.wiki_online import SquadWikiArticles
-from runner import ModelDir
+from trainer import ModelDir
 from squad.aligned_wiki_qa import WikiArticleQaCorpus
 from squad.squad import SquadCorpus
 from squad.squad_official_evaluation import f1_score as squad_official_f1_score

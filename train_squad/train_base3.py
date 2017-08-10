@@ -1,4 +1,4 @@
-import runner
+import trainer
 from data_processing.span_data import SpanCorpus
 from data_processing.text_data import QuestionFilter, AnswerWord, ParagraphAndQuestionTrainingData, BatchingParameters
 from doc_qa_models import Attention
@@ -10,7 +10,7 @@ from nn.layers import NullBiMapper, NullMapper, SequenceMapperSeq, FullyConnecte
 from nn.prediction_layers import ChainPredictor
 from nn.recurrent_layers import BiRecurrentMapper, LstmCellSpec
 from nn.similarity_layers import DotProduct
-from runner import SerializableOptimizer, TrainParams
+from trainer import SerializableOptimizer, TrainParams
 from utils import get_output_name_from_cli
 
 
@@ -53,7 +53,7 @@ def main():
     data = ParagraphAndQuestionTrainingData(corpus, None, params, data_filters)
 
     eval = [LossEvaluator(), SquadSpanEvaluator(corpus, bound=[17])]
-    runner.start_training(data, model, train_params, eval, runner.ModelDir(out), notes, False)
+    trainer.start_training(data, model, train_params, eval, trainer.ModelDir(out), notes, False)
 
 if __name__ == "__main__":
     main()

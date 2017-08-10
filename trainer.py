@@ -111,7 +111,6 @@ class TrainParams(Configurable):
                  save_period: int,
                  eval_samples: Dict[str, Optional[int]]=None,
                  regularization_weight: Optional[float]=None,
-                 train_aux_only: int = 0,
                  async_encoding: Optional[int]=None,
                  max_checkpoints_to_keep: int = 5,
                  loss_ema: Optional[float] = .999,
@@ -128,7 +127,6 @@ class TrainParams(Configurable):
         self.eval_period = eval_period
         self.log_period = log_period
         self.save_period = save_period
-        self.train_aux_only = train_aux_only
         self.eval_samples = eval_samples
 
 

@@ -7,14 +7,14 @@ from typing import List, Optional
 import numpy as np
 from tqdm import tqdm
 
-import runner
+import trainer
 from data_processing.document_splitter import DocumentSplitter, MergeParagraphs, ParagraphFilter, ContainsQuestionWord, \
     TopTfIdf
 from data_processing.qa_data import ParagraphAndQuestionDataset, NoShuffleBatcher
 from data_processing.text_utils import NltkPlusStopWords
 from evaluator import Evaluator, Evaluation
 from model import ModelOutput
-from runner import ModelDir
+from trainer import ModelDir
 from trivia_qa.build_span_corpus import TriviaQaWebDataset, TriviaQaOpenDataset
 from trivia_qa.evidence_corpus import TriviaQaEvidenceCorpusTxt
 from trivia_qa.read_data import TriviaQaQuestion

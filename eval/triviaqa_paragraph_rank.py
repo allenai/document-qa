@@ -5,7 +5,7 @@ import tensorflow as tf
 import numpy as np
 from tqdm import tqdm
 
-import runner
+import trainer
 from data_processing.document_splitter import TopTfIdf, MergeParagraphs
 from data_processing.preprocessed_corpus import PreprocessedData, preprocess_par
 from data_processing.qa_data import ParagraphAndQuestion, ParagraphAndQuestionDataset, NoShuffleBatcher, Batcher
@@ -15,7 +15,7 @@ from evaluator import Evaluator, Evaluation, RecordSpanPrediction, RecordQuestio
 from paragraph_selection.paragraph_selection_evaluators import AnyTopNEvaluator
 from paragraph_selection.paragraph_selection_model import NParagraphsSortKey, SelectionDatasetBuilder, \
     FeaturizeredParagraph
-from runner import ModelDir
+from trainer import ModelDir
 from trivia_qa.build_span_corpus import TriviaQaWebDataset
 from trivia_qa.trivia_qa_eval import f1_score as trivia_f1_score
 from trivia_qa.triviaqa_evaluators import TfTriviaQaBoundedSpanEvaluator

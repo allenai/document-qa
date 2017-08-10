@@ -1,4 +1,4 @@
-import runner
+import trainer
 from data_processing.paragraph_qa import ContextLenKey, ContextLenBucketedKey
 from data_processing.qa_data import FixedParagraphQaTrainingData, Batcher
 from dataset import ShuffledBatcher, ClusteredBatcher
@@ -11,7 +11,7 @@ from nn.layers import NullBiMapper, NullMapper, SequenceMapperSeq, ReduceLayer, 
 from nn.prediction_layers import ChainConcatPredictor
 from nn.recurrent_layers import BiRecurrentMapper, LstmCellSpec
 from nn.similarity_layers import TriLinear
-from runner import SerializableOptimizer, TrainParams
+from trainer import SerializableOptimizer, TrainParams
 from squad.squad import SquadCorpus
 from utils import get_output_name_from_cli
 
@@ -31,7 +31,7 @@ def main():
     train_params = TrainParams(SerializableOptimizer("Adam", dict(learning_rate=0.001)),
                                num_epochs=12, ema=0.999,
                                log_period=30, eval_period=1000, save_period=1000,
-                               eval_samples=dict(dev=8000, train=8000))
+                               eval_samples=dict(dev=None, train=8000))
 
     model = Attention(
         encoder=DocumentAndQuestionEncoder(SingleSpanAnswerEncoder()),
@@ -68,7 +68,7 @@ def main():
     eval_batching = ClusteredBatcher(60, ContextLenKey(), False, False)
     data = FixedParagraphQaTrainingData(corpus, None, train_batching, eval_batching)
 
-    runner.start_training(data, model, train_params, eval, runner.ModelDir(out), notes, False)
+    trainer.start_training(data, model, train_params, eval, trainer.ModelDir(out), notes, False)
 
 
 if __name__ == "__main__":

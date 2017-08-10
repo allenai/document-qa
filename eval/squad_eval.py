@@ -3,10 +3,10 @@ import json
 
 import numpy as np
 
-import runner
+import trainer
 from data_processing.qa_data import ParagraphAndQuestionDataset, NoShuffleBatcher
 from evaluator import BoundedSpanEvaluator
-from runner import ModelDir
+from trainer import ModelDir
 from squad.squad import SquadCorpus
 from utils import flatten_iterable, transpose_lists, print_table
 

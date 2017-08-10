@@ -9,10 +9,13 @@ from utils import ResourceLoader
 
 
 class Prediction(object):
+    """ Prediction from a model, subclasses should provide access to a tensor
+     representation of the model's output """
     pass
 
 
 class ModelOutput(object):
+    # TODO might be better to juse use hte "LOSS" graph collection
     def __init__(self, loss: Tensor, prediction: Prediction):
         self.loss = loss
         self.prediction = prediction

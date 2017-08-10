@@ -1,4 +1,4 @@
-import runner
+import trainer
 from data_processing.document_splitter import MergeParagraphs, TopTfIdf
 from data_processing.paragraph_qa import ContextLenKey, ContextLenBucketedKey
 from data_processing.preprocessed_corpus import PreprocessedData
@@ -16,7 +16,7 @@ from nn.prediction_layers import ChainConcat
 from nn.recurrent_layers import BiRecurrentMapper, LstmCellSpec
 from nn.similarity_layers import TriLinear
 from nn.span_prediction import ConfidencePredictor, BoundsPredictor
-from runner import SerializableOptimizer, TrainParams
+from trainer import SerializableOptimizer, TrainParams
 from trivia_qa.build_span_corpus import TriviaQaWebDataset
 from trivia_qa.lazy_data import LazyRandomParagraphBuilder
 from trivia_qa.triviaqa_evaluators import ConfidenceEvaluator, TfTriviaQaBoundedSpanEvaluator
@@ -83,7 +83,7 @@ def main():
     data.preprocess(8, 1000)
     data.cache_preprocess("triviaqa-web-merge400-tfidf1.pkl.gz")
     # data.load_preprocess("triviaqa-web-merge400-tfidf1.pkl.gz")
-    # runner.start_training(data, model, train_params, eval, runner.ModelDir(out), notes, False)
+    # trainer.start_training(data, model, train_params, eval, trainer.ModelDir(out), notes, False)
 
 
 if __name__ == "__main__":

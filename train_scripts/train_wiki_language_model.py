@@ -1,9 +1,9 @@
-import runner
+import trainer
 from language_model import LanguageTrainingData, LmBatchingParameters, PartialFillIn, LanguageModelEncoder
 from nn.embedder import FixedWordEmbedder
 from nn.layers import SequenceMapperSeq, FullyConnected
 from nn.recurrent_layers import BiRecurrentMapper, LstmCellSpec
-from runner import TrainParams, SerializableOptimizer
+from trainer import TrainParams, SerializableOptimizer
 from trivia_qa.evidence_corpus import TriviaQaEvidenceCorpusTxt
 from utils import get_output_name_from_cli
 
@@ -28,7 +28,7 @@ def main():
         SequenceMapperSeq(BiRecurrentMapper(LstmCellSpec(150)), FullyConnected(300, activation=None)),
         fill_in_percent=0.9, loss_fn="l1")
 
-    runner.start_training(data, model, train_params, [], runner.ModelDir(out), notes, False)
+    trainer.start_training(data, model, train_params, [], trainer.ModelDir(out), notes, False)
 
 if __name__ == "__main__":
     main()
