@@ -2,20 +2,21 @@ import pickle
 from collections import Counter
 from os import makedirs, listdir
 from os.path import isfile, join, exists, isdir
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict
 
 import numpy as np
 
 from config import CORPUS_DIR
 from configurable import Configurable
-from data_processing.qa_data import ParagraphAndQuestionSpec, Answer, ParagraphAndQuestion, QaCorpus, \
-    QaCorpusStats
+from data_processing.qa_data import ParagraphAndQuestionSpec, Answer, ParagraphAndQuestion, \
+    ParagraphQuestionFilter, apply_filters, ParagraphAndQuestionDataset, QaCorpusLazyStats
 from data_processing.word_vectors import load_word_vectors
+from dataset import TrainingData, ListBatcher, Dataset
 from utils import ResourceLoader
 
 """
 Classes for representing a QA dataset that has questions per a paragraph,
-and those paragraphs are organized into documents
+and those paragraphs are organized into documents, basically for SQuAD
 """
 
 
@@ -32,7 +33,8 @@ class Question(object):
 
 
 class Paragraph(object):
-    """ Context with multiple questions """
+    """ Context with multiple questions, optionally includes it's "raw" untokenzied text and the reverse
+    mapping for the tokenized text -> raw text """
 
     def __init__(self,
                  context: List[List[str]],
@@ -49,6 +51,7 @@ class Paragraph(object):
         self.spans = spans
 
     def get_original_text(self, start, end):
+        """ Get text between the token at `start` and `end` inclusive """
         return self.original_text[self.spans[start][0]:self.spans[end][1]]
 
     @property
@@ -73,6 +76,7 @@ class Document(object):
         return "Document(%s)" % self.title
 
 
+# FIXME this should be in "qa_data"
 class ContextLenKey(Configurable):
     def __call__(self, q: ParagraphAndQuestion):
         return sum(len(s) for s in q.context)
@@ -86,6 +90,7 @@ class ContextLenBucketedKey(Configurable):
         return sum(len(s) for s in q.context)//self.bucket_size
 
 
+# FIXME should subclass ParagraphAndQuestion
 class DocParagraphAndQuestion(object):
     """ QA pair the comes from a specific document/paragraph, and optionally mantains a
      "reverse" mapping from its tokenized form to its original text """
@@ -112,7 +117,7 @@ class DocParagraphAndQuestion(object):
         return self.paragraph.article_id
 
 
-class ParagraphQaStats(object):
+class DocumentQaStats(object):
     def __init__(self, docs: List[Document], special_tokens=None):
         self.docs = docs
         self._question_counts = None
@@ -163,24 +168,8 @@ def split_docs(docs: List[Document]) -> List[DocParagraphAndQuestion]:
     return paras
 
 
-def build_qa_collection(docs: List[Document]):
-    context = Counter()
-    unique_counts = Counter()
-    question_counts = Counter()
-    for doc in docs:
-        for para in doc.paragraphs:
-            for sent in para.context:
-                unique_counts.update(sent)
-                for word in sent:
-                    context[word] += len(para.questions)
-            for question in para.questions:
-                question_counts.update(question.words)
-                question_counts.update(question.answer.get_vocab())
-    return QaCorpusStats(question_counts, context, unique_counts)
-
-
 # TODO we should go back to making loading the reverse-mappings optional
-class DocumentCorpus(QaCorpus):
+class DocumentCorpus(object):
     TRAIN_FILE = "train.pkl"
     TEST_FILE = "test.pkl"
     DEV_FILE = "dev.pkl"
@@ -210,6 +199,10 @@ class DocumentCorpus(QaCorpus):
         if not isdir(dir):
             raise ValueError("Not a directory: " + dir)
         self.dir = dir
+
+    @property
+    def evidence(self):
+        return None
 
     def get_vocab(self):
         """ get all-lower cased unique words for this corpus, includes train/dev/test files """
@@ -259,27 +252,13 @@ class DocumentCorpus(QaCorpus):
     def get_resource_loader(self):
         return ResourceLoader(self.get_pruned_word_vecs)
 
-    def get_train(self) -> List[DocParagraphAndQuestion]:
-        return split_docs(self.get_train_docs())
-
-    def get_train_corpus(self) -> Tuple[List[ParagraphAndQuestion], ParagraphQaStats]:
-        docs = self.get_train_docs()
-        collection = ParagraphQaStats(docs)
-        return split_docs(docs), collection
-
-    def get_dev(self) -> List[DocParagraphAndQuestion]:
-        return split_docs(self.get_dev_docs())
-
-    def get_test(self) -> List[DocParagraphAndQuestion]:
-        return split_docs(self.get_test_docs())
-
-    def get_train_docs(self) -> List[Document]:
+    def get_train(self) -> List[Document]:
         return self._load(join(self.dir, self.TRAIN_FILE))
 
-    def get_dev_docs(self) -> List[Document]:
+    def get_dev(self) -> List[Document]:
         return self._load(join(self.dir, self.DEV_FILE))
 
-    def get_test_docs(self) -> List[Document]:
+    def get_test(self) -> List[Document]:
         return self._load(join(self.dir, self.TEST_FILE))
 
     def _load(self, file) -> List[Document]:
@@ -287,10 +266,6 @@ class DocumentCorpus(QaCorpus):
             return []
         with open(file, "rb") as f:
             return pickle.load(f)
-
-    def _read_answer(self, json_obj) -> Answer:
-        # subclasses need to implement this for their answer format
-        raise NotImplemented()
 
     @property
     def name(self):
@@ -304,6 +279,66 @@ class DocumentCorpus(QaCorpus):
         if not isdir(dir):
             raise ValueError("Not a directory: " + dir)
         self.dir = dir
+
+
+class ParagraphQaTrainingData(TrainingData):
+    """ Training data where the documents are split into (paragraph, question) pairs """
+
+    def __init__(self,
+                 corpus: DocumentCorpus,
+                 percent_train_dev: Optional[float],
+                 train_batcher: ListBatcher,
+                 eval_batcher: ListBatcher,
+                 data_filters: List[ParagraphQuestionFilter] = None):
+        self.percent_train_dev = percent_train_dev
+        self.eval_batcher = eval_batcher
+        self.train_batcher = train_batcher
+        self.corpus = corpus
+        self.data_filters = data_filters
+        self._train = None
+        self._dev = None
+
+    @property
+    def name(self):
+        return self.corpus.name
+
+    def _load_data(self):
+        if self._train is not None:
+            return
+        print("Loading data for: " + self.corpus.name)
+        self._train = split_docs(self.corpus.get_train())
+        if self.percent_train_dev is None:
+            self._dev = split_docs(self.corpus.get_dev())
+        else:
+            raise NotImplemented()
+        if self.data_filters is not None:
+            self._dev = apply_filters(self._dev, self.data_filters, "dev")
+            self._train = apply_filters(self._train, self.data_filters, "train")
+
+    def get_train(self) -> Dataset:
+        self._load_data()
+        return ParagraphAndQuestionDataset(self._train, self.train_batcher)
+
+    def get_train_corpus(self):
+        self._load_data()
+        return QaCorpusLazyStats(self._train)
+
+    def get_eval(self) -> Dict[str, Dataset]:
+        self._load_data()
+        return dict(dev=ParagraphAndQuestionDataset(self._dev, self.eval_batcher),
+                    train=ParagraphAndQuestionDataset(self._train, self.eval_batcher))
+
+    def get_resource_loader(self) -> ResourceLoader:
+        return self.corpus.get_resource_loader()
+
+    def __getstate__(self):
+        state = self.__dict__
+        state["_train"] = None
+        state["_dev"] = None
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__ = state
 
 
 def compute_document_voc(data: List[Document]):

@@ -8,7 +8,8 @@ from tqdm import tqdm
 
 from data_processing.document_splitter import DocumentSplitter, ExtractedParagraph, ParagraphFilter
 from data_processing.preprocessed_corpus import Preprocessor, DatasetBuilder
-from data_processing.qa_data import ParagraphAndQuestionSpec, ParagraphAndQuestionDataset, Answer, Batcher
+from data_processing.qa_data import ParagraphAndQuestionSpec, ParagraphAndQuestionDataset, Answer, \
+    ParagraphAndQuestion
 from dataset import Dataset, ListBatcher
 from trivia_qa.build_span_corpus import TriviaQaWebDataset, TriviaQaSpanCorpus
 from trivia_qa.read_data import TriviaQaQuestion
@@ -26,6 +27,7 @@ class TriviaQaAnswer(Answer):
         return []
 
 
+# FIXME we should properly inheriate from ParagraphAndQuestion
 class DocumentParagraphQuestion(object):
     __slots__ = ["q_id", "doc_id", "para_range", "question", "context", "answer"]
 
@@ -108,7 +110,7 @@ class DocCorpusLazyStats(object):
 
 
 class DocParaCorpusLazyStats(object):
-    def __init__(self, data: List[DocumentParagraphQuestion], special_tokens=None):
+    def __init__(self, data: List[ParagraphAndQuestion], special_tokens=None):
         self.data = data
         self.special_tokens = special_tokens
         self._question_counts = None
@@ -283,7 +285,7 @@ class InMemoryWebQuestionBuilder(DatasetBuilder):
     def build_stats(self, data: PrunedQuestions) -> object:
         return DocParaCorpusLazyStats(data.questions, [])
 
-    def build_dataset(self, data: PrunedQuestions, evidence, is_train: bool) -> Dataset:
+    def build_dataset(self, data: PrunedQuestions, _, is_train: bool) -> Dataset:
         points, true_len = data.questions, data.true_len
         print("Kept %d/%d (%.4f) doc/q pairs" % (len(points), true_len, len(points)/true_len))
         return ParagraphAndQuestionDataset(data.questions, self.train_batcher if is_train else self.eval_batcher, data.true_len)

@@ -10,6 +10,11 @@ from squad.squad_official_evaluation import exact_match_score as squad_official_
 from squad.squad_official_evaluation import f1_score as squad_official_f1_score
 
 
+"""
+SQuAD specific evalation
+"""
+
+
 def squad_span_scores(data: List[Union[ParagraphAndQuestion, DocParagraphAndQuestion]], prediction):
     scores = np.zeros((len(data), 4))
     for i in range(len(data)):
@@ -22,14 +27,14 @@ def squad_span_scores(data: List[Union[ParagraphAndQuestion, DocParagraphAndQues
         span_max_f1 = 0
         text_correct = 0
         text_max_f1 = 0
-
-        for answer in data[i].answer:
-            answer_span = (answer.para_word_start, answer.para_word_end)
+        answer = data[i].answer
+        for (start, end), text in zip(answer.answer_spans, answer.answer_text):
+            answer_span = (start, end)
             span_max_f1 = max(span_max_f1, compute_span_f1(answer_span, pred_span))
             if answer_span == pred_span:
                 span_correct = True
-            f1 = squad_official_f1_score(pred_text, answer.text)
-            correct = squad_official_em_score(pred_text, answer.text)
+            f1 = squad_official_f1_score(pred_text, text)
+            correct = squad_official_em_score(pred_text, text)
             text_correct = max(text_correct, correct)
             text_max_f1 = max(text_max_f1, f1)
 

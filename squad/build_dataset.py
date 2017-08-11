@@ -13,7 +13,6 @@ from data_processing.paragraph_qa import Question, Document, Paragraph, Document
 from data_processing.span_data import ParagraphSpan, ParagraphSpans
 from data_processing.text_utils import get_paragraph_tokenizer, convert_to_spans, post_split_tokens, clean_text, \
     get_word_span, space_re
-# from data_processing.wiki import get_wiki_page_ids
 from utils import flatten_iterable
 
 """
@@ -24,9 +23,6 @@ Script to build a corpus from SQUAD training data with `DocumentSpans` answers
 class SquadCorpus(DocumentCorpus):
     def __init__(self):
         super().__init__("squad")
-
-    def _read_answer(self, json_obj) -> Answer:
-        return ParagraphSpans([ParagraphSpan(*x) for x in json_obj])
 
 
 def clean_title(title):
@@ -68,12 +64,10 @@ def parse_squad_data(source, name, tokenizer="NLTK") -> List[Document]:
 
             for question_ix, question in enumerate(para['qas']):
                 question_text = word_tokenize(question['question'])
-                question_text = [clean_text(x) for x in post_split_tokens(question_text)]
+                question_text = [clean_text(x) for x in question_text]
                 answer_spans = []
                 for answer_ix, answer in enumerate(question['answers']):
                     answer_raw = answer['text']
-                    if "''" in answer_raw or "``" in answer_raw:
-                        raise ValueError()
 
                     answer_start = answer['answer_start']
                     answer_stop = answer_start + len(answer_raw)
@@ -107,9 +101,9 @@ def parse_squad_data(source, name, tokenizer="NLTK") -> List[Document]:
                     para_word_start = word_start + sum(sent_lens[:sent_start])
                     para_word_end = word_end + sum(sent_lens[:sent_end])
                     if text[sent_start][word_start] != flat_text[para_word_start]:
-                        raise ValueError()
+                        raise RuntimeError()
                     if text[sent_end][word_end] != flat_text[para_word_end]:
-                        raise ValueError()
+                        raise RuntimeError()
 
                     span = ParagraphSpan(
                         sent_start, word_start, char_start,
@@ -119,7 +113,7 @@ def parse_squad_data(source, name, tokenizer="NLTK") -> List[Document]:
                         answer_raw)
                     if span.para_word_end >= n_words or \
                                     span.para_word_start >= n_words:
-                        raise ValueError()
+                        raise RuntimeError()
                     answer_spans.append(span)
 
                 questions.append(Question(question_text, ParagraphSpans(answer_spans), question['id']))
@@ -146,20 +140,10 @@ def main():
         raise ValueError("Files already exist in " + target_dir + ", if you really want to override delete them"
                                                                        "and then and re-run")
     print("Parsing train...")
-    # train = [next(parse_squad_data(join(source_dir, "train-v1.1.json"), "train", args.tokenizer))]
     train = list(parse_squad_data(join(source_dir, "train-v1.1.json"), "train", args.tokenizer))
 
     print("Parsing dev...")
-    # dev = [next(parse_squad_data(join(source_dir,  "dev-v1.1.json"), "dev", args.tokenizer))]
     dev = list(parse_squad_data(join(source_dir, "dev-v1.1.json"), "dev", args.tokenizer))
-
-    if args.wikititles:
-        print("Computing wiki titles")
-        all_docs = [x[0] for x in (train+dev)]
-        all_titles = [clean_title(x.title) for x in all_docs]
-        wiki_titles = get_wiki_page_ids(all_titles)
-        for (wiki_title, _), doc in zip(wiki_titles, all_docs):
-            doc.wiki_title = wiki_title
 
     print("Saving...")
     SquadCorpus.make_corpus(target_dir, train, dev, None)

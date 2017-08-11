@@ -34,9 +34,6 @@ def show_unk(corpus: SquadCorpus, vec_name: str,
                         if word not in vecs:
                             lower_unk[word] += 1
 
-    for k,v in lower_unk.most_common():
-        if "-" in k and "-" != k:
-            raise ValueError()
     print("\n".join("%s: %d" % (k,v) for k,v in lower_unk.most_common()))
 
 
@@ -114,13 +111,6 @@ def show_in_context(corpus: SquadCorpus, vec_name):
                         words[i] = "{{{" + word + "}}}"
                         print(" ".join(words[max(0,i-10):min(len(words),i+10)]))
                         words[i] = word
-
-
-def show_names(corpus: SquadCorpus, vec_name):
-    data, corpus = corpus.get_train_corpus()
-
-
-
 
 
 def main():

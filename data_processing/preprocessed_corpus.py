@@ -8,7 +8,6 @@ import numpy as np
 from tqdm import tqdm
 
 from configurable import Configurable
-from data_processing.qa_data import Batcher
 from data_processing.text_utils import NltkPlusStopWords
 from dataset import TrainingData, Dataset, ListDataset
 from trivia_qa.read_data import TriviaQaQuestion
@@ -22,16 +21,6 @@ class Preprocessor(Configurable):
 
     def finalize(self, x):
         pass
-
-    # The following methods are just used for multi-processing, in case the preprocessor
-    # want to precompute-something that should be used between processes, but should not
-    # be pickelled in general
-    def get_cache(self):
-        return None
-
-    def set_cache(self, c):
-        if c is not None:
-            raise ValueError()
 
 
 class DatasetBuilder(Configurable):
@@ -69,7 +58,7 @@ class TextDataset(ListDataset):
         return voc
 
 
-def _preprocess_and_count(questions: List[TriviaQaQuestion], evidence, preprocessor: DatasetBuilder):
+def _preprocess_and_count(questions: List[TriviaQaQuestion], evidence, preprocessor: Preprocessor):
     count = len(questions)
     output = preprocessor.preprocess(questions, evidence)
     return output, count
@@ -143,11 +132,10 @@ def tmp_clean(data):
 
 
 class PreprocessedData(TrainingData):
-    # TODO can this general approach be made to encompass what we do with the InMemory dataset?
 
     def __init__(self,
                  corpus,
-                 preprocesser: Preprocessor,
+                 preprocesser: Optional[Preprocessor],
                  builder: DatasetBuilder,
                  eval_on_verified: bool=True,
                  eval_on_train: bool = True,
@@ -164,7 +152,6 @@ class PreprocessedData(TrainingData):
 
         self._train = None
         self._dev = None
-        self._corpus = None
         self._verified_dev = None
 
     @property
@@ -172,6 +159,8 @@ class PreprocessedData(TrainingData):
         return self.corpus.name
 
     def cache_preprocess(self, filename):
+        if self.sample > 0 or self.sample_dev > 0 or self.hold_out_train is not None:
+            raise ValueError()
         if filename.endswith("gz"):
             handle = lambda: gzip.open(filename, "wb")
         else:
@@ -187,17 +176,14 @@ class PreprocessedData(TrainingData):
         with handle() as f:
             stored = pickle.load(f)
             stored_preprocesser, self._train, self._dev, self._verified_dev = stored
-            if stored_preprocesser.get_config() != self.preprocesser.get_config():
-                print("!!!!")
+        if stored_preprocesser.get_config() != self.preprocesser.get_config():
+            # print("WARNING")
+            raise ValueError()
 
-        # print("HACKING REMOVE ME")
-        # self._train = tmp_clean(self._train)
-        # self._dev = tmp_clean(self._dev)
-
-    def preprocess(self, n_processes=1, chunk_size=200):
+    def preprocess(self, n_processes=1, chunk_size=500):
         if self._train is not None:
             return
-        print("Loading questions...")
+        print("Loading data...")
         train_questions = self.corpus.get_train()
         if self.hold_out_train is not None:
             print("Using held out train")
@@ -207,7 +193,7 @@ class PreprocessedData(TrainingData):
             train_questions = train_questions[self.hold_out_train[1]:]
         else:
             dev_questions = self.corpus.get_dev()
-        if self.eval_on_verified:
+        if self.eval_on_verified and hasattr(self.corpus, "get_verified"):  # TODO this is a bit hacky
             verified_questions = self.corpus.get_verified()
             if verified_questions is not None:
                 # we don't eval on verified docs w/o any valid human answer
@@ -225,19 +211,21 @@ class PreprocessedData(TrainingData):
             print("Warning: using sampling. Only should do this during debugging")
             dev_questions = rng.choice(dev_questions, self.sample_dev, replace=False)
 
-        print("Loading docs with %d processes..." % n_processes)
+        if self.preprocesser:
+            print("Preprocessing with %d processes..." % n_processes)
+            out = []
+            for name, questions in [("verified", verified_questions),
+                                    ("dev", dev_questions),
+                                    ("train", train_questions)]:
+                if questions is None:
+                    out.append(None)
+                    continue
+                data = preprocess_par(questions, self.corpus.evidence, self.preprocesser, n_processes, chunk_size, name)
+                out.append(data)
+            self._verified_dev, self._dev, self._train = out
+        else:
+            self._verified_dev, self._dev, self._train = verified_questions, dev_questions, train_questions
 
-        out = []
-        for name, questions in [("verified", verified_questions),
-                                ("dev", dev_questions),
-                                ("train", train_questions)]:
-            if questions is None:
-                out.append(None)
-                continue
-            data = preprocess_par(questions, self.corpus.evidence, self.preprocesser, n_processes, chunk_size, name)
-            out.append(data)
-
-        self._verified_dev, self._dev, self._train = out
         print("Done")
 
     def _convert_questions(self, questions, n_processes, chunk_size):
@@ -245,25 +233,25 @@ class PreprocessedData(TrainingData):
         if size == 0:
             return []
         data = preprocess_par(questions, self.corpus.evidence, self.preprocesser, n_processes, chunk_size)
-        return self.builder.build_dataset(data, self.corpus.evidence)
+        return self.builder.build_dataset(data, self.corpus)
 
     def get_train(self) -> Dataset:
-        return self.builder.build_dataset(self._train, self.corpus.evidence, True)
+        return self.builder.build_dataset(self._train, self.corpus, True)
 
     def get_train_corpus(self):
         return self.builder.build_stats(self._train)
 
     def get_eval(self) -> Dict[str, Dataset]:
-        ev = self.corpus.evidence
-        eval_set = dict(dev=self.builder.build_dataset(self._dev, ev, False))
+        corpus = self.corpus
+        eval_set = dict(dev=self.builder.build_dataset(self._dev, corpus, False))
         if self.eval_on_train:
-            eval_set["train"] = self.builder.build_dataset(self._train, ev, False)
-        if self._verified_dev is not None:
-            eval_set["verified-dev"] = self.builder.build_dataset(self._verified_dev, ev, False)
+            eval_set["train"] = self.builder.build_dataset(self._train, corpus, False)
+        if self.eval_on_verified:
+            eval_set["verified-dev"] = self.builder.build_dataset(self._verified_dev, corpus, False)
         return eval_set
 
     def get_resource_loader(self) -> ResourceLoader:
-        return ResourceLoader()
+        return self.corpus.get_resource_loader()
 
     def __setstate__(self, state):
         self.__dict__ = state
@@ -272,6 +260,5 @@ class PreprocessedData(TrainingData):
         state = dict(self.__dict__)
         state["_train"] = None
         state["_dev"] = None
-        state["_corpus"] = None
         state["_verified_dev"] = None
         return state

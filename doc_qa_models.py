@@ -3,7 +3,7 @@ from typing import List, Optional, Dict, Union
 import tensorflow as tf
 from tensorflow import Tensor
 
-from data_processing.paragraph_qa import ParagraphQaStats
+from data_processing.paragraph_qa import DocumentQaStats
 from data_processing.qa_data import ParagraphAndQuestionDataset
 from encoder import DocumentAndQuestionEncoder
 from model import ModelOutput, Model
@@ -34,7 +34,7 @@ class DocumentQuestionModel(Model):
         self.encoder = encoder
         self._is_train_placeholder = None
 
-    def init(self, corpus: ParagraphQaStats, loader: ResourceLoader):
+    def init(self, corpus: DocumentQaStats, loader: ResourceLoader):
         if self.word_embed is not None:
             self.word_embed.set_vocab(corpus, loader, corpus.special_tokens)
         if self.char_embed is not None:

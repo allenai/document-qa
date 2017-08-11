@@ -65,7 +65,6 @@ def get_best_span_bounded(word_start_probs, word_end_probs, bound):
         # Jump to the next largest span start iff we reach the boundary limit
         if (word_ix - span_start + 1) > bound:
             span_start += 1 + np.argmax(word_start_probs[span_start+1:word_ix+1])
-            # span_start = np.argmax(word_start_probs[span_start + 1:word_ix + 1])
             span_start_val = word_start_probs[span_start]
 
         # Check if the new span is the best one yet
@@ -144,7 +143,6 @@ def compute_span_f1(true_span, pred_span):
     return 2 * p * r / (p + r)
 
 
-
 class ParagraphSpan(object):
     def __init__(self,
                  sent_start: int, word_start: int, char_start: int,
@@ -158,7 +156,7 @@ class ParagraphSpan(object):
         self.word_end = word_end
         self.char_end = char_end
         self.para_word_start = para_word_start
-        self.para_word_end = para_word_end
+        self.para_word_end = para_word_end  # inclusive
         self.text = text
 
     def as_tuple(self):
@@ -169,9 +167,6 @@ class ParagraphSpan(object):
 class ParagraphSpans(Answer):
     def __init__(self, spans: List[ParagraphSpan]):
         self.spans = spans
-
-    def to_json_object(self):
-        return [x.as_tuple() for x in self.spans]
 
     def get_vocab(self):
         return []
@@ -184,3 +179,25 @@ class ParagraphSpans(Answer):
 
     def __len__(self) -> int:
         return len(self.spans)
+
+    @property
+    def answer_text(self):
+        return [x.text for x in self.spans]
+
+    @property
+    def answer_spans(self):
+        return [(x.para_word_start, x.para_word_end) for x in self.spans]
+
+
+class TokenSpans(Answer):
+    # TODO I think it would be preferable to just swich everything to using this class
+    def __init__(self, answer_text: List[str], answer_spans: np.ndarray):
+        """
+        :param answer_text: list of text answers
+        :param answer_spans: (n, 2) array of inclusive (start, end) occurrences of an answer
+        """
+        self.answer_text = answer_text
+        self.answer_spans = answer_spans
+
+    def get_vocab(self):
+        return []

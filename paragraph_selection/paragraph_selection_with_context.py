@@ -257,7 +257,9 @@ class DocumentEncoder(ParagraphSelectionModel):
                 flat_context = self.map_context.apply(is_train, flat_context, flat_context_mask)
 
         with tf.variable_scope("encode_context"):
+            print(flat_context.shape)
             encoded_context = self.encode_context.apply(is_train, flat_context, flat_context_mask)
+            print(encoded_context.shape)
             n_encodes = 1 if len(encoded_context.shape) == 2 else encoded_context.shape.as_list()[1]
             encoded_context = tf.reshape(encoded_context, (batch, para_dim, n_encodes, encoded_context.shape.as_list()[-1]))
 

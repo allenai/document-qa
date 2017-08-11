@@ -1,12 +1,10 @@
-import json
 import os
 import pickle
 import shutil
 import time
 from datetime import datetime
-from json import JSONEncoder
 from os.path import exists, join, relpath, isabs
-from threading import Thread
+from threading import Thread, Event
 from typing import List, Union, Tuple, Optional, Dict
 
 import tensorflow as tf
@@ -559,11 +557,22 @@ def _train_async(model: Model,
     if save_start:
         save_train_start(out.dir, data, sess.run(global_step), evaluators, train_params, notes)
 
+    enqueue_error = Event()
+
     def enqueue_train():
-        for epoch in range(train_params.num_epochs):
-            for batch in train.get_epoch():
-                feed_dict = model.encode(batch, True)
-                sess.run(train_enqeue, feed_dict)
+        try:
+            # feed data from the dataset iterator -> encoder -> queue
+            for epoch in range(train_params.num_epochs):
+                for batch in train.get_epoch():
+                    feed_dict = model.encode(batch, True)
+                    sess.run(train_enqeue, feed_dict)
+        except tf.errors.CancelledError:
+            # The queue_close operator has been called, exit gracefully
+            return
+        except Exception as e:
+            # alert the main thread an exception occurred
+            enqueue_error.set()
+            raise e
 
     train_enqueue_thread = Thread(target=enqueue_train)
     train_enqueue_thread.daemon = True  # Ensure we exit the program on an excpetion
@@ -581,9 +590,11 @@ def _train_async(model: Model,
     for epoch in range(train_params.num_epochs):
         for batch_ix in range(len(train)):
             t0 = time.perf_counter()
-            on_step = sess.run(global_step) + 1  # +1 because all calculations are done after step
-
+            on_step = sess.run(global_step) + 1
             get_summary = on_step % train_params.log_period == 0
+
+            if enqueue_error.is_set():
+                raise RuntimeError("Enqueue thread crashed!")
 
             if get_summary:
                 loss, summary, _ = sess.run([pred.loss, summary_tensor, train_opt], feed_dict=train_dict)

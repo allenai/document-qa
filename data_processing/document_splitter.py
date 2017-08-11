@@ -26,7 +26,7 @@ class ExtractedParagraph(object):
 
 
 class ParagraphFilter(Configurable):
-    def prune(self, question, paragraphs: List[ExtractedParagraph]):
+    def prune(self, question, paragraphs: List[ExtractedParagraph]) -> List[ExtractedParagraph]:
         raise NotImplementedError()
 
 
@@ -77,6 +77,7 @@ class TopTfIdf(ParagraphFilter):
 
 
 class DocumentSplitter(Configurable):
+    """ Re-organize a collection of tokenized paragraphs into `ExtractedParagraph`s """
 
     @property
     def max_tokens(self):
@@ -120,9 +121,6 @@ class Truncate(DocumentSplitter):
 
 
 class MergeParagraphs(DocumentSplitter):
-    PARAGRAPH_TOKEN = "%%PARAGRAPH%%"
-    DOC_TOKEN = "%%DOCUMENT%%"
-
     """
     Build paragraphs that always start with document-paragraph, but might
     include other paragraphs. Paragraphs are always smaller then `max_tokens`
@@ -220,8 +218,6 @@ def test_splitter(splitter: DocumentSplitter, n_sample, n_answer_spans, seed=Non
     read_n = splitter.reads_first_n
     for doc in docs[:n_sample]:
         print(doc)
-        # if doc != "web/98/98_1250432":
-        #     continue
         text = corpus.get_document(doc, read_n)
         fake_answers = []
         offset = 0

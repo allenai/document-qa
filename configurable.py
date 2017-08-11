@@ -78,7 +78,7 @@ class Configurable(object):
                 out[key] = v
         return out
 
-    def get_config(self):
+    def get_config(self) -> Configuration:
         params = {k: describe(v) for k,v in self.get_params().items()}
         return Configuration(self.name, self.version, params)
 

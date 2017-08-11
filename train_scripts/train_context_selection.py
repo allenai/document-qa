@@ -8,7 +8,8 @@ from evaluator import LossEvaluator
 from nn.attention import AttentionEncoder, MultiAttentionEncoder
 from nn.embedder import FixedWordEmbedder, CharWordEmbedder, LearnedCharEmbedder
 from nn.layers import SequenceMapperSeq, FullyConnected, DropoutLayer, MultiAggregateLayer, MergeWith, SelfProduct, \
-    NullMapper, ConcatLayer, FullyConnectedMerge, ConcatWithProductProj, ConcatOneSidedProduct, ReduceLayer
+    NullMapper, ConcatLayer, FullyConnectedMerge, ConcatWithProductProj, ConcatOneSidedProduct, ReduceLayer, \
+    SqueezeLayer, ReduceSequenceLayer
 from nn.recurrent_layers import BiRecurrentMapper, GruCellSpec, RecurrentEncoder, EncodeOverTime
 from paragraph_selection.paragraph_selection_evaluators import AnyTopNEvaluator, PercentAnswerEvaluator, \
     TotalAnswersEvaluator
@@ -49,9 +50,9 @@ def main():
         word_embed=FixedWordEmbedder(vec_name="glove.6B.100d", word_vec_init_scale=0, learn_unk=False),
         featurizer=fe,
         map_question=NullMapper(),
-        map_context=FullyConnected(50, activation="tanh"),
-        encode_question_words=FullyConnected(50, activation="tanh"),
-        encode_context=MultiAttentionEncoder(1, bias=True),
+        map_context=NullMapper(),
+        encode_question_words=NullMapper(),
+        encode_context=ReduceSequenceLayer("mean"),
         question_features=SequenceMapperSeq(
             DropoutLayer(0.8),
             BiRecurrentMapper(GruCellSpec(50)),

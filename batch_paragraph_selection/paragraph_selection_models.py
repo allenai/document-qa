@@ -4,7 +4,7 @@ import tensorflow as tf
 from paragraph_selection.selection_encoder import ParagraphQuestionGroupEncoder, ParagraphQuestionGroupFeaturizedEncoder
 from tensorflow import Tensor
 
-from data_processing.paragraph_qa import ParagraphQaStats
+from data_processing.paragraph_qa import DocumentQaStats
 from model import Model, ModelOutput, Prediction
 from nn.embedder import WordEmbedder, CharWordEmbedder
 from nn.layers import SequenceMapper, SequenceEncoder
@@ -31,7 +31,7 @@ class ParagraphSelectionFeaturizedModel(Model):
         self.encoder = encoder
         self._is_train_placeholder = None
 
-    def init(self, corpus: ParagraphQaStats, loader: ResourceLoader):
+    def init(self, corpus: DocumentQaStats, loader: ResourceLoader):
         if self.word_embed is not None:
             self.word_embed.set_vocab(corpus, loader)
         if self.char_embed is not None:

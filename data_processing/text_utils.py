@@ -10,7 +10,8 @@ from nltk.corpus import stopwords
 from configurable import Configurable
 
 extra_split_chars = ("-", "£", "€", "¥", "¢", "₹", "\u2212", "\u2014", "\u2013", "/", "~", '"', "'", "\ud01C", "\u2019", "\u201D", "\u2018", "\u00B0")
-extra_split_tokens = ("``", "(?<=[^_])_(?=[^_])", "''", "[" + "".join(extra_split_chars) + "]")
+extra_split_tokens = ("``", "(?<=[^_])_(?=[^_])",  # words with prefix/sufix dashses, like __wow___
+                      "''", "[" + "".join(extra_split_chars) + "]")
 extra_split_chars_re = re.compile("(" + "|".join(extra_split_tokens) + ")")
 double_quote_re = re.compile("\"|``|''")
 space_re = re.compile("[ \u202f]")
@@ -23,36 +24,6 @@ def post_split_tokens(tokens: List[str]) -> List[str]:
     for token in tokens:
         resplit_sent += [x for x in extra_split_chars_re.split(token) if x != ""]
     return resplit_sent
-
-
-def our_normalize_answer(s):
-    """Lower text and remove punctuation, articles and extra whitespace."""
-    def remove_articles(text):
-        return re.sub(r'\b(|an|the)\b', ' ', text)
-
-    def white_space_fix(text):
-        return ' '.join(text.split())
-
-    def remove_punc(text):
-        return re.sub(r"\s*[\u2212°%£€¥\u2000-\u206F\u2E00-\u2E7F\\'!\"#$%&()*+,\u2013\-.\/:;<=>?@\[\]^_`{|}~]\s*", '', text)
-
-    def lower(text):
-        return text.lower()
-
-    return white_space_fix(remove_articles(remove_punc(lower(clean_text(s)))))
-
-
-def our_text_score(prediction, ground_truth):
-    prediction_tokens = our_normalize_answer(prediction).split()
-    ground_truth_tokens = our_normalize_answer(ground_truth).split()
-    common = Counter(prediction_tokens) & Counter(ground_truth_tokens)
-    num_same = sum(common.values())
-    if num_same == 0:
-        return 0, 0
-    precision = 1.0 * num_same / len(prediction_tokens)
-    recall = 1.0 * num_same / len(ground_truth_tokens)
-    f1 = (2 * precision * recall) / (precision + recall)
-    return f1, prediction_tokens == ground_truth_tokens
 
 
 def clean_text(text):

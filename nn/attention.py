@@ -247,8 +247,7 @@ class StaticAttentionSelf(SequenceMapper):
 class BiAttention(AttentionMapper):
     """ Bi-attention from https://arxiv.org/abs/1611.01603 """
 
-    def __init__(self, sim: SimilarityFunction, q2c: bool,
-                 query_dots: bool=True):
+    def __init__(self, sim: SimilarityFunction, q2c: bool, query_dots: bool=True):
         self.sim = sim
         self.q2c = q2c
         self.query_dots = query_dots

@@ -107,7 +107,7 @@ class SequenceMultiEncoder(Configurable):
         raise NotImplementedError()
 
 
-class SqueezeLayer(SequenceEncoder):
+class SqueezeLayer(Configurable):
     """ (dim1, dim2, dim3, input_dim) -> (dim1, dim2, dim3) """
     def apply(self, is_train, x, mask=None):
         raise NotImplementedError()
@@ -855,7 +855,7 @@ class Conv1d(Mapper):
         return fn(tf.nn.conv2d(x, filter_, strides, "VALID") + bias)
 
 
-class AggregateLayer(SequenceEncoder):
+class ReduceSequenceLayer(SequenceEncoder):
     def __init__(self, reduce: str, apply_mask=True):
         self.reduce = reduce
         self.apply_mask = apply_mask
@@ -873,6 +873,11 @@ class AggregateLayer(SequenceEncoder):
                 # In case a row in x is all negative
                 x += (tf.reduce_min(x)-1) * (1 - answer_mask)
             return tf.reduce_max(x, axis=1)
+        elif self.reduce == "mean":
+            if mask is not None:
+                return tf.reduce_sum(x, axis=1) / tf.cast(tf.expand_dims(mask, 1), tf.float32)
+            else:
+                return tf.reduce_mean(x, axis=1)
         elif self.reduce == "sum":
             return tf.reduce_sum(x, axis=1)
         else:

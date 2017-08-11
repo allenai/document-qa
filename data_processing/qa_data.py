@@ -3,23 +3,19 @@ from typing import List, Union, Optional, Set, Tuple, Dict, Callable
 
 import numpy as np
 from configurable import Configurable
+from data_processing.preprocessed_corpus import DatasetBuilder
 
 from dataset import Dataset, TrainingData, ListDataset, ListBatcher
 from utils import ResourceLoader, flatten_iterable, max_or_none
 
 """
-Objects to represent question-context-answer training points, relating utility methods, 
-and objects to use them as part of a `Dataset` that can be used to train models.
+Objects to represent question-context-answer training points
 """
 
 
 class Answer(object):
     """ Abstract representation of an answer to question """
-
     def get_vocab(self):
-        raise NotImplemented()
-
-    def to_json_object(self):
         raise NotImplemented()
 
 
@@ -81,27 +77,12 @@ def get_input_spec(batch_size, data: List[ParagraphAndQuestion]) -> ParagraphAnd
                                     max_num_sents, max_sent_size, max_word_size)
 
 
-class QaCorpusStats(object):
-    def __init__(self, question_counts, context_counts, unique_context_counts, special_tokens=None):
-        self.question_counts = question_counts
-        self.context_counts = context_counts
-        self.unique_context_counts = unique_context_counts
-        self.special_tokens = special_tokens
-
-    def get_question_counts(self):
-        return self.question_counts
-
-    def get_context_counts(self):
-        return self.context_counts
-
-    def get_document_counts(self):
-        return self.unique_context_counts
-
-    def get_word_counts(self):
-        return self.context_counts + self.question_counts
-
-
 class QaCorpusLazyStats(object):
+    """
+    Metadata about a set of such questions we might need for things like
+    computing which words vectors to use/train
+    """
+
     def __init__(self, data: List[ParagraphAndQuestion], special_tokens=None):
         self.data = data
         self.special_tokens = special_tokens
@@ -210,21 +191,6 @@ def apply_filters(data: List, data_filters: List[ParagraphQuestionFilter], name:
         return pruned
 
 
-def question_sorter(cluster):
-    if cluster == "context_words":
-        cluster = lambda x: sum(len(s) for s in x.context)
-    elif cluster is not None and cluster.startswith("bucket_context_words_"):
-        bucket_size = int(cluster[cluster.rfind("_") + 1:])
-        cluster = lambda x: sum(len(s) for s in x.context) // bucket_size
-    elif cluster == "sentence_len":
-        cluster = lambda x: max(len(s) for s in x.context)
-    elif cluster is not None:
-        raise ValueError()
-    else:
-        return None
-    return cluster
-
-
 class ParagraphAndQuestionDataset(ListDataset):
     def get_spec(self) -> ParagraphAndQuestionSpec:
         return get_input_spec(self.batching.get_fixed_batch_size(), self.data)
@@ -233,83 +199,14 @@ class ParagraphAndQuestionDataset(ListDataset):
         return compute_voc(self.data)
 
 
-class QaCorpus(Configurable):
-    def get_train_corpus(self):
-        raise NotImplemented()
+class ParagraphAndQuestionDatasetBuilder(DatasetBuilder):
+    """ For use with the preprocesed_corpus framework """
+    def __init__(self, train_batching: ListBatcher, eval_batching: ListBatcher):
+        self.train_batching = train_batching
+        self.eval_batching = eval_batching
 
-    def get_train(self) -> List[ParagraphAndQuestion]:
-        raise NotImplemented()
+    def build_stats(self, data) -> object:
+        return QaCorpusLazyStats(data)
 
-    def get_dev(self) -> List[ParagraphAndQuestion]:
-        raise NotImplemented()
-
-    def get_resource_loader(self) -> ResourceLoader:
-        raise NotImplemented()
-
-
-class FixedParagraphQaTrainingData(TrainingData):
-    def __init__(self,
-                 corpus: QaCorpus,
-                 percent_train_dev: Optional[float],
-                 train_batcher: ListBatcher,
-                 eval_batcher: ListBatcher,
-                 data_filters: List[ParagraphQuestionFilter] = None):
-        self.percent_train_dev = percent_train_dev
-        self.eval_batcher = eval_batcher
-        self.train_batcher = train_batcher
-        self.corpus = corpus
-        self.data_filters = data_filters
-        self._train_corpus = None
-        self._train = None
-        self._dev = None
-
-    @property
-    def name(self):
-        return self.corpus.name
-
-    def _load_data(self):
-        if self._train is not None:
-            return
-        print("Loading data for: " + self.corpus.name)
-        self._train, self._train_corpus = self.corpus.get_train_corpus()
-        if self.percent_train_dev is None:
-            self._dev = self.corpus.get_dev()
-        else:
-            raise NotImplemented()
-        if self.data_filters is not None:
-            self._dev = apply_filters(self._dev, self.data_filters, "dev")
-            self._train = apply_filters(self._train, self.data_filters, "train")
-
-    def get_train(self) -> Dataset:
-        self._load_data()
-        return ParagraphAndQuestionDataset(self._train, self.train_batcher)
-
-    def get_train_corpus(self):
-        self._load_data()
-        return self._train_corpus
-
-    def get_eval(self) -> Dict[str, Dataset]:
-        self._load_data()
-        return dict(dev=ParagraphAndQuestionDataset(self._dev, self.eval_batcher),
-                    train=ParagraphAndQuestionDataset(self._train, self.eval_batcher))
-
-    def get_resource_loader(self) -> ResourceLoader:
-        return self.corpus.get_resource_loader()
-
-    def __getstate__(self):
-        state = self.__dict__
-        state["_train"] = None
-        state["_dev"] = None
-        state["_train_corpus"] = None
-        return state
-
-    def __setstate__(self, state):
-        if "batching" in state:
-            raise NotImplementedError("Backwards compatability")
-        self.__dict__ = state
-
-
-# Keep around to keep pickle happy for legacy cases
-class Batcher(Configurable):
-    def __init__(self):
-        raise ValueError("Deprecated!")
+    def build_dataset(self, data, evidence, is_train: bool) -> Dataset:
+        return ParagraphAndQuestionDataset(data, self.train_batching)

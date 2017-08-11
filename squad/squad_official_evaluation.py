@@ -7,6 +7,11 @@ import json
 import sys
 
 
+"""
+Lifted from the squad website so we can use in our evluators
+"""
+
+
 def normalize_answer(s):
     """Lower text and remove punctuation, articles and extra whitespace."""
     def remove_articles(text):

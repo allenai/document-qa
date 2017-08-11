@@ -7,7 +7,6 @@ from nltk.corpus import stopwords
 
 from configurable import Configurable
 from data_processing.paragraph_qa import ParagraphAndQuestion
-from data_processing.qa_data import QaCorpusStats
 from nn.layers import SqueezeLayer, Updater
 from utils import ResourceLoader
 
@@ -85,7 +84,7 @@ class LearnedCharEmbedder(CharEmbedder):
     def get_word_size_th(self):
         return self.word_size_th
 
-    def set_vocab(self, corpus: QaCorpusStats):
+    def set_vocab(self, corpus):
         w_counts = corpus.get_word_counts()
         counts = Counter()
         for w,count in w_counts.items():

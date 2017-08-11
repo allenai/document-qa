@@ -7,11 +7,8 @@ from configurable import Configurable
 from nn.layers import get_keras_initialization, get_keras_activation
 
 
-# TODO should probably just make a "linear" layer or base layer
-
-
 def compute_attention_mask(x_mask, mem_mask, x_word_dim, key_word_dim):
-    """ computes a (batch, x_len, mem_len) bool mask for clients that want masking """
+    """ computes a (batch, x_word_dim, key_word_dim) bool mask for clients that want masking """
     if x_mask is None and mem_mask is None:
         return None
     elif x_mask is None or mem_mask is None:
@@ -19,10 +16,7 @@ def compute_attention_mask(x_mask, mem_mask, x_word_dim, key_word_dim):
 
     x_mask = tf.sequence_mask(x_mask, x_word_dim)
     mem_mask = tf.sequence_mask(mem_mask, key_word_dim)
-    # TODO can we use broadcasting here as well? probably
-    x_mask_aug = tf.tile(tf.expand_dims(x_mask, 2), [1, 1, key_word_dim])
-    u_mask_aug = tf.tile(tf.expand_dims(mem_mask, 1), [1, x_word_dim, 1])
-    join_mask = x_mask_aug & u_mask_aug
+    join_mask = tf.logical_and(tf.expand_dims(x_mask, 2), tf.expand_dims(mem_mask, 1))
     return join_mask
 
 
@@ -73,7 +67,6 @@ class DotProduct(_WithBias):
         self.scale = scale
 
     def _distance_logits(self, tensor_1, tensor_2):
-        # Batch dot using einsum
         dots = tf.matmul(tensor_1, tensor_2, transpose_b=True)
         if self.scale:
             last_dim = dots.shape.as_list()[-1]
@@ -174,7 +167,6 @@ class TriLinear(_WithBias):
         super().__init__(bias)
         self.init = init
 
-
     def _distance_logits(self, x, keys):
         init = get_keras_initialization(self.init)
 
@@ -194,11 +186,4 @@ class TriLinear(_WithBias):
 
     @property
     def version(self):
-        # Added `self.einsum_dots`
         return 1
-
-    def __setstate__(self, state):
-        if state["version"] == 0:
-            state["version"] = 1
-            state["state"]["einsum_dots"] = False
-        super().__setstate__(state)

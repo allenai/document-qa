@@ -1,8 +1,10 @@
 import trainer
 from data_processing.document_splitter import MergeParagraphs, TopTfIdf
+from data_processing.paragraph_qa import ContextLenKey, ContextLenBucketedKey
 from data_processing.preprocessed_corpus import PreprocessedData
 from data_processing.qa_data import Batcher
 from data_processing.text_utils import NltkPlusStopWords
+from dataset import ListBatcher, ClusteredBatcher
 from doc_qa_models import Attention
 from encoder import DocumentAndQuestionEncoder, DenseMultiSpanAnswerEncoder
 from evaluator import LossEvaluator
@@ -62,8 +64,8 @@ def main():
     with open(__file__, "r") as f:
         notes = f.read()
 
-    train_batching = Batcher(60, "bucket_context_words_3", True, False)
-    eval_batching = Batcher(60, "context_words", False, False)
+    train_batching = ClusteredBatcher(60, ContextLenBucketedKey(3), True, False)
+    eval_batching = ClusteredBatcher(60, ContextLenKey(), False, False)
     stop = NltkPlusStopWords()
     data = PreprocessedData(TriviaQaWebDataset(),
                             ExtractSingleParagraph(MergeParagraphs(400), TopTfIdf(stop, 1), intern=True),

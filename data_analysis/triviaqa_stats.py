@@ -147,48 +147,6 @@ def contains_question_word():
     print(has_token/total)
 
 
-def align_corpra():
-    open_data = TriviaQaOpenDataset()
-    open_dev = open_data.get_train()
-    web_dev = TriviaQaWebDataset().get_train()
-
-    web_quid_map = {q.question_id:q for q in web_dev}
-
-    for q in open_dev:
-        valid_docs = set()
-        for doc in q.all_docs:
-            if len(doc.answer_spans) > 0:
-                if not isinstance(doc, SearchDoc) or doc.rank < 10:
-                    valid_docs.add(doc.doc_id)
-
-        other = web_quid_map.get(q.question_id)
-        if other is not None:
-            if q.question != other.question:
-                raise ValueError()
-            other_docs = [x for x in other.all_docs if len(x.answer_spans) > 0]
-            if len(other_docs) != len(valid_docs):
-                answer_ids = {x.doc_id for x in other_docs}
-                missing_valid = valid_docs - answer_ids
-                missing_answer = answer_ids - valid_docs
-                if len(missing_answer) > 0:
-                    raise ValueError()
-                # else:
-                #     print("\n")
-                #     print("*"*30)
-                #     print(q.question)
-                #     print(q.answer.all_answers)
-                #     for v in missing_valid:
-                #         print(v)
-                #         text = open_data.evidence.get_document(v, flat=True)
-                #         doc = [x for x in q.all_docs if x.doc_id == v][0]
-                #         print([" ".join(text[s:e+1]) for s,e in doc.answer_spans])
-
-                # print("!!")
-                # raise ValueError()
-        # if other is None:
-        #     if any(len(d.answer_spans) > 0 for d in q.all_docs):
-        #         raise ValueError()
-
 def show_questions():
     corpus = TriviaQaWebDataset()
     questions = corpus.get_train()

@@ -11,11 +11,11 @@ from evaluator import LossEvaluator
 from nn.attention import BiAttention, AttentionEncoder, StaticAttentionSelf
 from nn.embedder import FixedWordEmbedder, CharWordEmbedder, LearnedCharEmbedder
 from nn.layers import NullBiMapper, NullMapper, SequenceMapperSeq, ReduceLayer, Conv1d, HighwayLayer, FullyConnected, \
-    ChainBiMapper, DropoutLayer, ConcatWithProduct
+    ChainBiMapper, DropoutLayer, ConcatWithProduct, ResidualLayer, WithProjectedProduct, MapperSeq
 from nn.prediction_layers import ChainConcat
 from nn.recurrent_layers import BiRecurrentMapper, LstmCellSpec
 from nn.similarity_layers import TriLinear
-from nn.span_prediction import ConfidencePredictor, BoundsPredictor
+from nn.span_prediction import ConfidencePredictor, BoundsPredictor, WithFixedContextPredictionLayer
 from trainer import SerializableOptimizer, TrainParams
 from trivia_qa.build_span_corpus import TriviaQaWebDataset
 from trivia_qa.lazy_data import LazyRandomParagraphBuilder
@@ -47,18 +47,13 @@ def main():
             HighwayLayer(activation="relu"),
             DropoutLayer(0.8),
             BiRecurrentMapper(LstmCellSpec(100)),
-            DropoutLayer(0.8),
         ),
         question_mapper=None,
         context_mapper=None,
         memory_builder=NullBiMapper(),
         attention=BiAttention(TriLinear(bias=True), True),
-        match_encoder=SequenceMapperSeq(FullyConnected(200, activation="tanh"),
-                                        DropoutLayer(0.8),
-                                        # StaticAttentionSelf(TriLinear(bias=True), ConcatWithProduct()),
-                                        # FullyConnected(200, activation="tanh"),
-                                        # DropoutLayer(0.8)
-                                        ),
+        match_encoder=SequenceMapperSeq(FullyConnected(300, activation="tanh"),
+                                        DropoutLayer(0.8)),
         predictor=BoundsPredictor(
             ChainBiMapper(
                 first_layer=BiRecurrentMapper(LstmCellSpec(100)),
@@ -77,13 +72,11 @@ def main():
     data = PreprocessedData(TriviaQaWebDataset(),
                             ExtractSingleParagraph(MergeParagraphs(400), TopTfIdf(stop, 1), intern=True),
                             InMemoryWebQuestionBuilder(train_batching, eval_batching),
-                            # eval_on_verified=False, sample=500, sample_dev=500
+                            eval_on_verified=False
                             )
     eval = [LossEvaluator(), TfTriviaQaBoundedSpanEvaluator([4, 8])]
-    data.preprocess(8, 1000)
-    data.cache_preprocess("triviaqa-web-merge400-tfidf1.pkl.gz")
-    # data.load_preprocess("triviaqa-web-merge400-tfidf1.pkl.gz")
-    # trainer.start_training(data, model, train_params, eval, trainer.ModelDir(out), notes, False)
+    data.load_preprocess("triviaqa-web-merge400-tfidf1.pkl.gz")
+    trainer.start_training(data, model, train_params, eval, trainer.ModelDir(out), notes, False)
 
 
 if __name__ == "__main__":

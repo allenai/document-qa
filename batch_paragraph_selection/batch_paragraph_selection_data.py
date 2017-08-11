@@ -8,7 +8,7 @@ from sklearn.metrics import pairwise_distances
 
 from configurable import Configurable
 from data_processing.batching import get_samples
-from data_processing.paragraph_qa import Document, SquadCorpus, ParagraphQaStats
+from data_processing.paragraph_qa import Document, SquadCorpus, DocumentQaStats
 from dataset import Dataset, TrainingData
 from squad.squad import clean_title
 from utils import ResourceLoader, flatten_iterable, transpose_lists
@@ -274,7 +274,7 @@ class ParagraphSelectionTrainingData(TrainingData):
 
     def get_train_corpus(self) -> object:
         self._load_data()
-        return ParagraphQaStats(self._train)
+        return DocumentQaStats(self._train)
 
     def get_resource_loader(self) -> ResourceLoader:
         return self.corpus.get_resource_loader()
