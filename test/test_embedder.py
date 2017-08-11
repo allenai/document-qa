@@ -2,7 +2,6 @@ import unittest
 
 import numpy as np
 
-from data_processing.text_data import ParagraphAndQuestion
 from nn.embedder import FixedWordEmbedder
 
 
@@ -11,7 +10,7 @@ class MockLoader(object):
         self.name = name
         self.vec = vec
 
-    def get_word_vecs(self, name):
+    def load_word_vec(self, name, voc):
         if name != self.name:
             raise ValueError()
         return self.vec

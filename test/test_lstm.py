@@ -23,8 +23,9 @@ class TestInitLstm(unittest.TestCase):
 
         inputs = tf.placeholder(dtype='float32', shape=input_size)
         h = tf.placeholder(dtype='float32', shape=hidden_size)
-        i_t, j_t, f_t, o_t = _compute_gates(inputs, h, 4 * num_units, 1,
-                                            init_ops.zeros_initializer(), init_ops.zeros_initializer())
+        with tf.variable_scope("test_bias"):
+            i_t, j_t, f_t, o_t = _compute_gates(inputs, h, 4 * num_units, 1,
+                                                init_ops.zeros_initializer(), init_ops.zeros_initializer())
         gates = [i_t, j_t, f_t, o_t]
 
         sess = tf.Session()
@@ -49,8 +50,9 @@ class TestInitLstm(unittest.TestCase):
 
         inputs = tf.placeholder(dtype='float32', shape=input_size)
         h = tf.placeholder(dtype='float32', shape=hidden_size)
-        i_t, j_t, f_t, o_t = _compute_gates(inputs, h, num_units, 0,
-                                            init_ops.constant_initializer(1), init_ops.constant_initializer(100))
+        with tf.variable_scope("test_inits"):
+            i_t, j_t, f_t, o_t = _compute_gates(inputs, h, num_units, 0,
+                                                init_ops.constant_initializer(1), init_ops.constant_initializer(100))
         gates = [i_t, j_t, f_t, o_t]
 
         sess = tf.Session()

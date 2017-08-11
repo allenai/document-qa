@@ -6,13 +6,13 @@ from dataset import ListBatcher, ClusteredBatcher, ShuffledBatcher
 
 class TestBatches(unittest.TestCase):
 
-    def test_u(self, batches):
+    def assert_unique(self, batches):
         values, c = np.unique(np.concatenate(batches), return_counts=True)
         self.assertTrue(np.all(c == 1))
 
     def test_unique_samples(self):
         batchers = [ShuffledBatcher(5), ClusteredBatcher(5, lambda x:x)]
-        test_u = self.test_u
+        test_u = self.assert_unique
         for batcher in batchers:
             batches = list(batcher.get_epoch(list(np.arange(21))))
             self.assertEqual(len(batches), 4)
@@ -31,7 +31,7 @@ class TestBatches(unittest.TestCase):
 
     def test_truncate_samples(self):
         batchers = [ShuffledBatcher(5, truncate_batches=True), ClusteredBatcher(5, lambda x: x, truncate_batches=True)]
-        test_u = self.test_u
+        test_u = self.assert_unique
         for batcher in batchers:
             batches = list(batcher.get_epoch(list(np.arange(21))))
             self.assertEqual(len(batches), 5)

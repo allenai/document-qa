@@ -1,8 +1,8 @@
 import unittest
 import numpy as np
 
-from data_processing.span_data import get_best_span_bounded, get_best_span_from_sent_predictions
-from evaluator import get_best_span, get_best_in_sentence_span
+from data_processing.span_data import get_best_span_bounded, get_best_span_from_sent_predictions, get_best_span, \
+    get_best_in_sentence_span
 
 
 class TestEvaluator(unittest.TestCase):

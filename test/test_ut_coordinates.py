@@ -2,7 +2,7 @@ import unittest
 import numpy as np
 import tensorflow as tf
 
-from nn.span_prediction import to_packed_coordiantes, to_unpacked_coordinates
+from nn.span_prediction import to_packed_coordinates, to_unpacked_coordinates
 
 
 class TestUrCoordinates(unittest.TestCase):
@@ -14,7 +14,7 @@ class TestUrCoordinates(unittest.TestCase):
         matrix_size_placeholder = tf.placeholder(np.int32, ())
         span_placeholder = tf.placeholder(np.int32, [None, 2])
         # tmp = tmp_lens(to_packed_coordiantes(span_placeholder, matrix_size_placeholder), matrix_size_placeholder)
-        rebuilt = to_unpacked_coordinates(to_packed_coordiantes(span_placeholder, matrix_size_placeholder), matrix_size_placeholder, matrix_size)
+        rebuilt = to_unpacked_coordinates(to_packed_coordinates(span_placeholder, matrix_size_placeholder), matrix_size_placeholder, matrix_size)
 
         for i in range(0, 1000):
             rng = np.random.RandomState(i)
