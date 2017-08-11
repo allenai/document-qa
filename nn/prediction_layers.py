@@ -44,7 +44,7 @@ def predict_from_bounds(answer, start_logits, end_logits, mask, aggregate):
         # all correct start/end bounds are marked in a dense bool array
         # In this case there might be multiple answer spans, so we need an aggregation strategy
         losses = []
-        for answer_mask, logits in enumerate(zip(answer, [masked_start_logits, masked_end_logits])):
+        for answer_mask, logits in zip(answer, [masked_start_logits, masked_end_logits]):
             log_norm = tf.reduce_logsumexp(logits, axis=1)
             if aggregate == "sum":
                 log_score = tf.reduce_logsumexp(logits +

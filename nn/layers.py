@@ -917,7 +917,8 @@ class ReduceLayer(SqueezeLayer):
         self.reduce = reduce
 
     def apply(self, is_train, x, mask=None):
-        x = self.map_layer.apply(is_train, x, mask)
+        if self.map_layer is not None:
+            x = self.map_layer.apply(is_train, x, mask)
         rank = len(x.shape) - 1
 
         if self.reduce == "max":
