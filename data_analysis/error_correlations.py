@@ -18,7 +18,7 @@ def main():
     parser.add_argument("answers")
     parser.add_argument("output")
     args = parser.parse_args()
-    vecs = SquadCorpus().get_resource_loader().load_word_vec("glove.6B.100d")
+    vecs = SquadCorpus().get_resource_loader.load_word_vec("glove.6B.100d")
 
     collection = SquadCorpus().get_train_corpus()[1]
     counts = collection.get_question_counts() + collection.get_document_counts()

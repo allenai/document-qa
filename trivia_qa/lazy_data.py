@@ -7,7 +7,7 @@ from data_processing.batching import get_clustered_batches
 from data_processing.document_splitter import DocumentSplitter, ParagraphFilter, MergeParagraphs, \
     TopTfIdf
 from data_processing.preprocessed_corpus import DatasetBuilder, Preprocessor, PreprocessedData
-from data_processing.qa_data import ParagraphAndQuestionSpec, QaCorpusStats
+from data_processing.qa_data import ParagraphAndQuestionSpec
 from data_processing.text_utils import NltkPlusStopWords
 from dataset import Dataset
 from trivia_qa.build_span_corpus import TriviaQaSampleWebDataset

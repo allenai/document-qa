@@ -64,9 +64,8 @@ class SquadSpanEvaluator(Evaluator):
 
 
 class BoundedSquadSpanEvaluator(Evaluator):
-    def __init__(self, bound: List[int], record_samples=False):
+    def __init__(self, bound: List[int]):
         self.bound = bound
-        self.record_samples = record_samples
 
     def tensors_needed(self, model):
         return {str(b): model.prediction.get_best_span(b)[0] for b in self.bound}

@@ -162,23 +162,25 @@ class PreprocessedData(TrainingData):
         if self.sample > 0 or self.sample_dev > 0 or self.hold_out_train is not None:
             raise ValueError()
         if filename.endswith("gz"):
-            handle = lambda: gzip.open(filename, "wb")
+            handle = gzip.open
         else:
-            handle = lambda: open(filename, "wb")
-        with handle() as f:
+            handle = open
+        with handle(filename, "wb") as f:
             pickle.dump([self.preprocesser, self._train, self._dev, self._verified_dev], f)
 
     def load_preprocess(self, filename):
+        print("Loading preprocessed data...")
         if filename.endswith("gz"):
-            handle = lambda: gzip.open(filename, "rb")
+            handle = gzip.open
         else:
-            handle = lambda: open(filename, "rb")
-        with handle() as f:
+            handle = open
+        with handle(filename, "rb") as f:
             stored = pickle.load(f)
             stored_preprocesser, self._train, self._dev, self._verified_dev = stored
         if stored_preprocesser.get_config() != self.preprocesser.get_config():
             # print("WARNING")
             raise ValueError()
+        print("done")
 
     def preprocess(self, n_processes=1, chunk_size=500):
         if self._train is not None:

@@ -1,15 +1,16 @@
-from typing import Optional, Union, List
+from typing import Optional, Union, List, Callable
 
 import tensorflow as tf
-from tensorflow.contrib.rnn.python.ops.core_rnn_cell_impl import _linear
 
 from configurable import Configurable
 from tensorflow.contrib.keras import activations
 from tensorflow.contrib.keras import initializers
 from tensorflow.python.layers.core import fully_connected
 
-from nn.ops import dropout, mixed_dropout, VERY_NEGATIVE_NUMBER
+from model import ModelOutput
+from nn.ops import dropout, mixed_dropout, VERY_NEGATIVE_NUMBER, exp_mask
 import numpy as np
+
 
 def _wrap_init(init_fn):
     def wrapped(shape, dtype=None, partition_info=None):
@@ -19,7 +20,7 @@ def _wrap_init(init_fn):
     return wrapped
 
 
-def get_keras_initialization(name: str):
+def get_keras_initialization(name: Union[str, Callable]):
     if name is None:
         return None
     return _wrap_init(initializers.get(name))
@@ -83,8 +84,17 @@ class Updater(Mapper):
         raise NotImplementedError()
 
 
+class Activation(Updater):
+
+    def apply(self, is_train, x, mask=None):
+        return self(x)
+
+    def __call__(self, x):
+        raise NotImplementedError()
+
+
 class AttentionMapper(Configurable):
-    """ (batch, time1, dim1), (batch, time1, dim2) (batch, time2, dim3) -> (batch, time2, out_dim) """
+    """ (batch, time1, dim1), (batch, time1, dim2) (batch, time2, dim3) -> (batch, time1, out_dim) """
     def apply(self, is_train, x, keys, memories, mask=None, memory_mask=None):
         raise NotImplementedError()
 
@@ -95,7 +105,16 @@ class SequenceBiMapper(Configurable):
         raise NotImplementedError()
 
 
-class SequenceEncoder(Configurable):
+class Encoder(Configurable):
+    """
+    reduce the second to last dimension
+     (dim1, dim2, ..., dimN, in_dim) -> (dim1, dim2, ..., dim(N-1), out_dim)
+     """
+    def apply(self, is_train, x, mask=None):
+        raise NotImplementedError()
+
+
+class SequenceEncoder(Encoder):
     """ (batch, time, in_dim) -> (batch, out_dim) """
     def apply(self, is_train, x, mask=None):
         raise NotImplementedError()
@@ -108,8 +127,21 @@ class SequenceMultiEncoder(Configurable):
 
 
 class SqueezeLayer(Configurable):
-    """ (dim1, dim2, dim3, input_dim) -> (dim1, dim2, dim3) """
+    """
+     removes the last dimension
+    (dim1, dim2, dim3, input_dim) -> (dim1, dim2, dim3)
+     """
     def apply(self, is_train, x, mask=None):
+        raise NotImplementedError()
+
+
+class SequencePredictionLayer(Configurable):
+    def apply(self, is_train, x, answer: List, mask=None) -> ModelOutput:
+        return NotImplemented()
+
+
+class AttentionPredictionLayer(Configurable):
+    def apply(self, is_train, keys, context, answer: List, mask=None, memory_mask=None) -> ModelOutput:
         raise NotImplementedError()
 
 
@@ -180,6 +212,22 @@ class WithProjectedProduct(FixedMergeLayer):
         return tf.concat(out, axis=2)
 
 
+class LeakyRelu(Activation):
+    def __init__(self, reduce_factor: float=0.3):
+        self.reduce_factor = reduce_factor
+
+    def __call__(self, x):
+        return tf.where(x > 0, x, x * self.reduce_factor)
+
+
+class ParametricRelu(Updater):
+    def apply(self, is_train, x, mask=None):
+        w = tf.get_variable("prelu", x.shape.as_list()[-1])
+        for i in range(len(x.shape)-1):
+            w = tf.expand_dims(w, 0)
+        return tf.where(x > 0, x, x * w)
+
+
 class ConcatLayer(MergeLayer):
     def apply(self, is_train, tensor1: tf.Tensor, tensor2: tf.Tensor) -> tf.Tensor:
         return tf.concat([tensor1, tensor2], axis=len(tensor1.shape)-1)
@@ -193,7 +241,6 @@ class SumLayer(MergeLayer):
 class ConcatWithProduct(MergeLayer):
     def apply(self, is_train, tensor1, tensor2) -> tf.Tensor:
         return tf.concat([tensor1, tensor2, tensor1 * tensor2], axis=len(tensor1.shape) - 1)
-
 
 
 class ConcatWithProductProj(MergeLayer):
@@ -463,8 +510,10 @@ class LearnedDropoutLayer(Updater):
 
 
 class FullyConnected(Mapper):
-    def __init__(self, n_out, w_init="glorot_uniform",
-                 activation="relu", bias=True):
+    def __init__(self, n_out,
+                 w_init="glorot_uniform",
+                 activation: Union[str, Updater, None]="relu",
+                 bias=True):
         self.w_init = w_init
         self.activation = activation
         self.n_out = n_out
@@ -472,10 +521,18 @@ class FullyConnected(Mapper):
 
     def apply(self, is_train, x, mask=None):
         bias = (self.bias is None) or self.bias  # for backwards compat
-        return fully_connected(x, self.n_out,
-                               use_bias=bias,
-                               activation=activations.get(self.activation),
-                               kernel_initializer=_wrap_init(initializers.get(self.w_init)))
+        if isinstance(self.activation, Updater):
+            out = fully_connected(x, self.n_out,
+                                   use_bias=bias,
+                                   activation=None,
+                                   kernel_initializer=get_keras_initialization(self.w_init))
+            with tf.variable_scope("activation"):
+                return self.activation.apply(is_train, out, mask)
+        else:
+            return fully_connected(x, self.n_out,
+                                   use_bias=bias,
+                                   activation=get_keras_activation(self.activation),
+                                   kernel_initializer=get_keras_initialization(self.w_init))
 
 
 class FullyConnectedDotProject(Mapper):
@@ -489,10 +546,9 @@ class FullyConnectedDotProject(Mapper):
 
     def apply(self, is_train, x, mask=None):
         bias = (self.bias is None) or self.bias  # for backwards compat
-        w1 = t
         return fully_connected(x, self.n_out,
                                use_bias=bias,
-                               activation=activations.get(self.activation),
+                               activation=get_keras_activation(self.activation),
                                kernel_initializer=_wrap_init(initializers.get(self.w_init)))
 
 
@@ -509,8 +565,8 @@ class FullyConnectedUpdate(Updater):
         bias = (self.bias is None) or self.bias
         out = fully_connected(x, x.shape.as_list()[-1],
                                use_bias=bias,
-                               activation=activations.get(self.activation),
-                               kernel_initializer=_wrap_init(initializers.get(self.w_init)))
+                               activation=get_keras_activation(self.activation),
+                               kernel_initializer=get_keras_initialization(self.w_init))
         if self.residual:
             out += x
         return out
@@ -586,6 +642,7 @@ class MapperSeq(Mapper):
 
     def get_params(self):
         return dict(layers=[x.get_params() for x in self.layers])
+
 
 class SequenceMapperSeq(SequenceMapper):
     def __init__(self, *layers: SequenceMapper):
@@ -730,6 +787,7 @@ class LinearMerge(SequenceMapperWithContext):
 
         return get_keras_activation(self.activation)(total)
 
+
 # TODO move our crazy dropout experimets out of this file
 class DropoutLayer(Updater):
     def __init__(self, keep_probs: float):
@@ -737,6 +795,20 @@ class DropoutLayer(Updater):
 
     def apply(self, is_train, x, mask=None):
         return dropout(x, self.keep_prob, is_train)
+
+
+class VariationalDropoutLayer(SequenceMapper):
+    """
+    `VariationalDropout` is an overload term, but this is in particular referring to
+    https://arxiv.org/pdf/1506.02557.pdf were the dropout mask is consistent across the time dimension
+    """
+
+    def __init__(self, keep_probs: float):
+        self.keep_prob = keep_probs
+
+    def apply(self, is_train, x, mask=None):
+        shape = tf.shape(x)
+        return dropout(x, self.keep_prob, is_train, [shape[0], 1, shape[2]])
 
 
 class BiDropoutLayer(Updater):
@@ -916,23 +988,40 @@ class MultiAggregateLayer(SequenceEncoder):
         return tf.concat(out, axis=1)
 
 
-class ReduceLayer(SqueezeLayer):
-    def __init__(self, reduce: str, map_layer: Optional[Mapper]=None):
+class ReduceLayer(Encoder):
+    def __init__(self, reduce: str, map_layer: Optional[Mapper]=None, mask=True):
         self.map_layer = map_layer
         self.reduce = reduce
+        self.mask = mask
 
     def apply(self, is_train, x, mask=None):
+        if not self.mask:
+            # Ignore the mask, this option exists since BiDaF does not account for masking here as well
+            mask = None
+
+        if mask is not None:
+            valid_mask = tf.expand_dims(tf.cast(tf.sequence_mask(mask, tf.shape(x)[1]), tf.float32), 2)
+        else:
+            valid_mask = None
+
         if self.map_layer is not None:
             x = self.map_layer.apply(is_train, x, mask)
-        rank = len(x.shape) - 1
+        rank = len(x.shape) - 2
 
         if self.reduce == "max":
-            return tf.reduce_max(x, axis=rank)
+            if mask is not None:
+                return tf.reduce_max(x * valid_mask + ((tf.reduce_min(x) - 1) * (1 - valid_mask)), axis=rank)
+            else:
+                return tf.reduce_max(x, axis=rank)
         elif self.reduce == "mean":
-            return tf.reduce_mean(x, axis=rank)
-        elif self.reduce == "max":
-            return tf.reduce_max(x, axis=rank)
+            if valid_mask is not None:
+                x *= valid_mask
+                return tf.reduce_sum(x, axis=rank) / tf.cast(tf.expand_dims(mask, 1), tf.float32)
+            else:
+                return tf.reduce_mean(x, axis=rank)
         elif self.reduce == "sum":
+            if valid_mask is not None:
+                x *= valid_mask
             return tf.reduce_sum(x, axis=rank)
         else:
             raise ValueError()
@@ -940,4 +1029,53 @@ class ReduceLayer(SqueezeLayer):
     def __setstate__(self, state):
         if "axis" not in state["state"]:
             state["state"]["axis"] = 2
+        if "mask" not in state["state"]:
+            state["state"]["mask"] = False
+        return super().__setstate__(state)
+
+
+class ChainConcat(SequenceBiMapper):
+    def __init__(self, start_layer: SequenceMapper, end_layer: SequenceMapper,
+                 soft_select_start_word: bool=True, use_original: bool=True,
+                 use_start_layer: bool=True, init: str="glorot_uniform"):
+        self.init = init
+        self.use_original = use_original
+        self.start_layer = start_layer
+        self.use_start_layer = use_start_layer
+        self.end_layer = end_layer
+        self.soft_select_start_word = soft_select_start_word
+
+    def apply(self, is_train, context_embed, context_mask=None):
+        init_fn = get_keras_initialization(self.init)
+        with tf.variable_scope("start_layer"):
+            m1 = self.start_layer.apply(is_train, context_embed, context_mask)
+
+        with tf.variable_scope("start_pred"):
+            logits1 = fully_connected(tf.concat([m1, context_embed], axis=2), 1,
+                                      activation=None, kernel_initializer=init_fn)
+            masked_logits1 = exp_mask(tf.squeeze(logits1, squeeze_dims=[2]), context_mask)
+            prediction1 = tf.nn.softmax(masked_logits1)
+
+        m2_input = []
+        if self.use_original:
+            m2_input.append(context_embed)
+        if self.use_start_layer:
+            m2_input.append(m1)
+        if self.soft_select_start_word:
+            soft_select = tf.einsum("ai,aik->ak", prediction1, m1)
+            soft_select_tiled = tf.tile(tf.expand_dims(soft_select, axis=1), [1, tf.shape(m1)[1], 1])
+            m2_input += [soft_select_tiled, soft_select_tiled * m1]
+
+        with tf.variable_scope("end_layer"):
+            m2 = self.end_layer.apply(is_train, tf.concat(m2_input, axis=2), context_mask)
+
+        with tf.variable_scope("end_pred"):
+            logits2 = fully_connected(tf.concat([m2, context_embed], axis=2), 1,
+                                      activation=None, kernel_initializer=init_fn)
+
+        return logits1, logits2
+
+    def __setstate__(self, state):
+        if "aggregate" not in state["state"]:
+            state["state"]["aggregate"] = None
         return super().__setstate__(state)

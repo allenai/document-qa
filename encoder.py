@@ -5,10 +5,10 @@ import tensorflow as tf
 
 from configurable import Configurable
 from data_processing.paragraph_qa import ParagraphAndQuestionSpec, ParagraphAndQuestion
-from data_processing.span_data import ParagraphSpans
+from data_processing.span_data import ParagraphSpans, TokenSpans
 from data_processing.text_features import QaTextFeautrizer
 from nn.embedder import WordEmbedder, CharEmbedder
-from nn.span_prediction import to_packed_coordinates_np
+from nn.span_prediction_ops import to_packed_coordinates_np
 from trivia_qa.triviaqa_training_data import TriviaQaAnswer
 from utils import max_or_none
 
@@ -54,6 +54,12 @@ class SingleSpanAnswerEncoder(AnswerEncoder):
                 word_start = answer.para_word_start
                 word_end = answer.para_word_end
             elif isinstance(answer, TriviaQaAnswer):
+                candidates = np.where(answer.answer_spans[:, 1] < context_len[doc_ix])[0]
+                if len(candidates) == 0:
+                    raise ValueError()
+                ix = candidates[np.random.randint(0, len(candidates))]
+                word_start, word_end = answer.answer_spans[ix]
+            elif isinstance(answer, TokenSpans):
                 candidates = np.where(answer.answer_spans[:, 1] < context_len[doc_ix])[0]
                 if len(candidates) == 0:
                     raise ValueError()
@@ -160,7 +166,7 @@ class DocumentAndQuestionEncoder(Configurable):
         return 2
 
     def init(self, input_spec: ParagraphAndQuestionSpec, len_op: bool,
-             word_emb: WordEmbedder, char_emb: CharEmbedder):
+             word_emb: WordEmbedder, char_emb: Optional[CharEmbedder]):
 
         self._word_embedder = word_emb
         self._char_emb = char_emb
@@ -272,19 +278,14 @@ class DocumentAndQuestionEncoder(Configurable):
             context_chars, question_chars = None, None
 
         for doc_ix, doc in enumerate(batch):
-            placeholders = {}
+            doc_mapping = {}
 
             for word_ix, word in enumerate(doc.question):
                 if self._word_embedder is not None:
-                    ix = self._word_embedder.question_word_to_ix(word)
-                    if ix < 0:
-                        wl = word.lower()
-                        if wl in placeholders:
-                            ix = placeholders[wl]
-                        else:
-                            ix = self._word_embedder.get_placeholder(ix, is_train)
-                            placeholders[wl] = ix
-
+                    # ix = doc_mapping.get(word)
+                    # if ix is None:
+                    ix = self._word_embedder.context_word_to_ix(word, is_train)
+                        # doc_mapping[word] = ix
                     question_words[doc_ix, word_ix] = ix
                 if self._char_emb is not None:
                     for char_ix, char in enumerate(word):
@@ -300,15 +301,10 @@ class DocumentAndQuestionEncoder(Configurable):
                     if word_ix == self.max_context_word_dim:
                         break
                     if self._word_embedder is not None:
-                        ix = self._word_embedder.context_word_to_ix(word)
-                        if ix < 0:
-                            wl = word.lower()
-                            if wl in placeholders:
-                                ix = placeholders[wl]
-                            else:
-                                ix = self._word_embedder.get_placeholder(ix, is_train)
-                                placeholders[wl] = ix
-
+                        # ix = doc_mapping.get(word)
+                        # if ix is None:
+                        ix = self._word_embedder.context_word_to_ix(word, is_train)
+                            # doc_mapping[word] = ix
                         context_words[doc_ix, word_ix] = ix
 
                     if self._char_emb is not None:

@@ -9,7 +9,7 @@ import numpy as np
 from config import CORPUS_DIR
 from configurable import Configurable
 from data_processing.qa_data import ParagraphAndQuestionSpec, Answer, ParagraphAndQuestion, \
-    ParagraphQuestionFilter, apply_filters, ParagraphAndQuestionDataset, QaCorpusLazyStats
+    ParagraphQuestionFilter, apply_filters, ParagraphAndQuestionDataset, QaCorpusLazyStats, ParagraphQaTrainingData
 from data_processing.word_vectors import load_word_vectors
 from dataset import TrainingData, ListBatcher, Dataset
 from utils import ResourceLoader
@@ -169,7 +169,7 @@ def split_docs(docs: List[Document]) -> List[DocParagraphAndQuestion]:
 
 
 # TODO we should go back to making loading the reverse-mappings optional
-class DocumentCorpus(object):
+class DocumentCorpus(Configurable):
     TRAIN_FILE = "train.pkl"
     TEST_FILE = "test.pkl"
     DEV_FILE = "dev.pkl"
@@ -272,6 +272,10 @@ class DocumentCorpus(object):
         return self.source_name
 
     def __setstate__(self, state):
+        if "state" not in state:
+            # handle a bug
+            self.__dict__ = state
+            return
         self.source_name = state["state"]["source_name"]
         dir = join(CORPUS_DIR, self.source_name)
         if not exists(dir):
@@ -281,64 +285,10 @@ class DocumentCorpus(object):
         self.dir = dir
 
 
-class ParagraphQaTrainingData(TrainingData):
-    """ Training data where the documents are split into (paragraph, question) pairs """
-
-    def __init__(self,
-                 corpus: DocumentCorpus,
-                 percent_train_dev: Optional[float],
-                 train_batcher: ListBatcher,
-                 eval_batcher: ListBatcher,
-                 data_filters: List[ParagraphQuestionFilter] = None):
-        self.percent_train_dev = percent_train_dev
-        self.eval_batcher = eval_batcher
-        self.train_batcher = train_batcher
-        self.corpus = corpus
-        self.data_filters = data_filters
-        self._train = None
-        self._dev = None
-
-    @property
-    def name(self):
-        return self.corpus.name
-
-    def _load_data(self):
-        if self._train is not None:
-            return
-        print("Loading data for: " + self.corpus.name)
-        self._train = split_docs(self.corpus.get_train())
-        if self.percent_train_dev is None:
-            self._dev = split_docs(self.corpus.get_dev())
-        else:
-            raise NotImplemented()
-        if self.data_filters is not None:
-            self._dev = apply_filters(self._dev, self.data_filters, "dev")
-            self._train = apply_filters(self._train, self.data_filters, "train")
-
-    def get_train(self) -> Dataset:
-        self._load_data()
-        return ParagraphAndQuestionDataset(self._train, self.train_batcher)
-
-    def get_train_corpus(self):
-        self._load_data()
-        return QaCorpusLazyStats(self._train)
-
-    def get_eval(self) -> Dict[str, Dataset]:
-        self._load_data()
-        return dict(dev=ParagraphAndQuestionDataset(self._dev, self.eval_batcher),
-                    train=ParagraphAndQuestionDataset(self._train, self.eval_batcher))
-
-    def get_resource_loader(self) -> ResourceLoader:
-        return self.corpus.get_resource_loader()
-
-    def __getstate__(self):
-        state = self.__dict__
-        state["_train"] = None
-        state["_dev"] = None
-        return state
-
-    def __setstate__(self, state):
-        self.__dict__ = state
+class DocumentQaTrainingData(ParagraphQaTrainingData):
+    def _preprocess(self, x):
+        data = split_docs(x)
+        return data, len(data)
 
 
 def compute_document_voc(data: List[Document]):

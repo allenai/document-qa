@@ -32,7 +32,7 @@ class DocumentParagraphQuestion(object):
     __slots__ = ["q_id", "doc_id", "para_range", "question", "context", "answer"]
 
     def __init__(self, q_id: str, doc_id: str, para_range, question: List[str],
-                 context: List[List[str]], answer: TriviaQaAnswer):
+                 context: List[List[str]], answer: Answer):
         self.q_id = q_id
         self.doc_id = doc_id
         self.para_range = para_range
@@ -196,7 +196,7 @@ class ExtractSingleParagraph(Preprocessor):
         self.para_filter = para_filter
         self.intern = intern
 
-    def preprocess(self, questions: List[TriviaQaQuestion], evidence) -> object:
+    def preprocess(self, questions: List[TriviaQaQuestion], evidence) -> PrunedQuestions:
         splitter = self.splitter
         paragraph_filter = self.para_filter
         output = []

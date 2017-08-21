@@ -13,7 +13,7 @@ from tqdm import tqdm
 
 from configurable import Configurable
 from dataset import TrainingData, Dataset
-from evaluator import Evaluator, run_evaluators, Evaluation, run_evaluators_with
+from evaluator import Evaluator, Evaluation, AysncEvaluatorRunner, EvaluatorRunner
 from tensorflow.python.training.adadelta import AdadeltaOptimizer
 from tensorflow.python.training.adam import AdamOptimizer
 
@@ -54,6 +54,7 @@ class ModelDir(object):
             return pickle.load(f)
 
     def get_latest_checkpoint(self):
+        print(self.save_dir)
         return tf.train.latest_checkpoint(self.save_dir)
 
     def get_checkpoint(self, step):
@@ -98,36 +99,6 @@ class SerializableOptimizer(Configurable):
             raise NotImplemented()
 
 
-# TODO might be nicer to just have a "Trainer" object
-class TrainParams(Configurable):
-    """ Parameters related to training """
-    def __init__(self,
-                 opt: SerializableOptimizer,
-                 num_epochs: int,
-                 eval_period: int,
-                 log_period: int,
-                 save_period: int,
-                 eval_samples: Dict[str, Optional[int]]=None,
-                 regularization_weight: Optional[float]=None,
-                 async_encoding: Optional[int]=None,
-                 max_checkpoints_to_keep: int = 5,
-                 loss_ema: Optional[float] = .999,
-                 monitor_ema: float = .999,
-                 ema: Optional[float]=None):
-        self.async_encoding = async_encoding
-        self.regularization_weight = regularization_weight
-        self.max_checkpoints_to_keep = max_checkpoints_to_keep
-        self.opt = opt
-        self.ema = ema
-        self.loss_ema = loss_ema
-        self.monitor_ema = monitor_ema
-        self.num_epochs = num_epochs
-        self.eval_period = eval_period
-        self.log_period = log_period
-        self.save_period = save_period
-        self.eval_samples = eval_samples
-
-
 def init(out: ModelDir, model: Model, override=False):
     import socket
     hostname = socket.gethostname()
@@ -153,6 +124,38 @@ def init(out: ModelDir, model: Model, override=False):
         f.write(configurable.description_to_json(model, indent=2))
     with open(join(out.dir, "model.npy"), "wb") as f:
         pickle.dump(model, f)
+
+
+# TODO might be nicer to just have a "Trainer" object
+class TrainParams(Configurable):
+    """ Parameters related to training """
+    def __init__(self,
+                 opt: SerializableOptimizer,
+                 num_epochs: int,
+                 eval_period: int,
+                 log_period: int,
+                 save_period: int,
+                 eval_samples: Dict[str, Optional[int]]=None,
+                 regularization_weight: Optional[float]=None,
+                 async_encoding: Optional[int]=None,
+                 max_checkpoints_to_keep: int = 5,
+                 loss_ema: Optional[float] = .999,
+                 eval_at_zero: bool=False,
+                 monitor_ema: float = .999,
+                 ema: Optional[float]=None):
+        self.async_encoding = async_encoding
+        self.regularization_weight = regularization_weight
+        self.max_checkpoints_to_keep = max_checkpoints_to_keep
+        self.opt = opt
+        self.eval_at_zero = eval_at_zero
+        self.ema = ema
+        self.loss_ema = loss_ema
+        self.monitor_ema = monitor_ema
+        self.num_epochs = num_epochs
+        self.eval_period = eval_period
+        self.log_period = log_period
+        self.save_period = save_period
+        self.eval_samples = eval_samples
 
 
 def save_train_start(out,
@@ -282,14 +285,16 @@ def start_training(
           evaluators: List[Evaluator],
           out: ModelDir,
           notes: str=None,
+          initialize_from=None,
           dry_run=False):
-    print("Initializing model at: " + out.dir)
-    model.init(data.get_train_corpus(), data.get_resource_loader())
+    if initialize_from is None:
+        print("Initializing model at: " + out.dir)
+        model.init(data.get_train_corpus(), data.get_resource_loader())
 
     if not dry_run:
         init(out, model, False)
 
-    _train(model, data, None,
+    _train(model, data, None, initialize_from,
            True, train_params, evaluators, out, notes, dry_run)
 
 
@@ -309,7 +314,7 @@ def resume_training(out: ModelDir, notes: str=None, dry_run=False, start_eval=Fa
     if latest is None:
         raise ValueError()
 
-    _train(model, train_data, latest, False, params, evaluators, out, notes, dry_run, start_eval)
+    _train(model, train_data, latest, None, False, params, evaluators, out, notes, dry_run, start_eval)
 
 
 def resume_training_with(
@@ -324,13 +329,14 @@ def resume_training_with(
         model = pickle.load(f)
     latest = out.get_latest_checkpoint()
 
-    _train(model, data, latest, False,
+    _train(model, data, latest, None, False,
            train_params, evaluators, out, notes, dry_run)
 
 
 def _train(model: Model,
            data: TrainingData,
            checkpoint: Union[str, None],
+           parameter_checkpoint: Union[str, None],
            save_start: bool,
            train_params: TrainParams,
            evaluators: List[Evaluator],
@@ -340,7 +346,7 @@ def _train(model: Model,
            start_eval=False):
 
     if train_params.async_encoding:
-        _train_async(model, data, checkpoint, save_start, train_params,
+        _train_async(model, data, checkpoint, parameter_checkpoint, save_start, train_params,
                      evaluators, out, notes, dry_run, start_eval)
         return
 
@@ -348,15 +354,28 @@ def _train(model: Model,
     train = data.get_train()
     eval_datasets = data.get_eval()
     loader = data.get_resource_loader()
+    evaluator_runner = EvaluatorRunner(evaluators, model)
 
     print("Training on %d samples (%d) batches" % (train.get_n_examples(), len(train)))
     print("Evaluation datasets: " + " ".join("%s (%d)" % (name, data.get_n_examples()) for name, data in eval_datasets.items()))
 
+    print("Init model...")
     model.set_inputs([train] + list(eval_datasets.values()), loader)
 
     print("Setting up model prediction / tf...")
 
-    pred = model.get_prediction()
+    sess = tf.Session(config=tf.ConfigProto(allow_soft_placement=True))
+
+    with sess.as_default():
+        pred = model.get_prediction()
+    evaluator_runner.set_input(pred)
+
+    if parameter_checkpoint is not None:
+        print("Restoring parameters from %s" % parameter_checkpoint)
+        saver = tf.train.Saver()
+        saver.restore(sess, parameter_checkpoint)
+        saver = None
+
     loss, summary_tensor, train_opt, global_step = _build_train_ops(pred.loss, train_params)
 
     # Pre-compute tensors we need at evaluations time
@@ -364,29 +383,43 @@ def _train(model: Model,
     for ev in evaluators:
         eval_tensors.append(ev.tensors_needed(pred))
 
-    sess = tf.Session(config=tf.ConfigProto(allow_soft_placement=True))
     saver = tf.train.Saver(max_to_keep=train_params.max_checkpoints_to_keep)
     summary_writer = tf.summary.FileWriter(out.log_dir)
 
     # Load or initialize the model parameters
     if checkpoint is not None:
-        print("Restoring from checkpoint...")
+        print("Restoring training from checkpoint...")
         saver.restore(sess, checkpoint)
         print("Loaded checkpoint: " + str(sess.run(global_step)))
+        return
     else:
-        print("Initializing parameters...")
-        sess.run(tf.global_variables_initializer())
+        if parameter_checkpoint is not None:
+            print("Initializing training variables...")
+            vars = [x for x in tf.global_variables() if x not in tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES)]
+            sess.run(tf.variables_initializer(vars))
+        else:
+            print("Initializing parameters...")
+            sess.run(tf.global_variables_initializer())
 
     # Make sure not bugs occur that add to the graph in the train loop, that can cause (eventuall) OOMs
     tf.get_default_graph().finalize()
 
     print("Start training!")
 
-    mean_loss = 0
     batch_time = 0
     on_step = sess.run(global_step)
     if save_start:
+        summary_writer.add_graph(sess.graph, global_step=on_step)
         save_train_start(out.dir, data, on_step, evaluators, train_params, notes)
+
+    if train_params.eval_at_zero:
+        print("Running evaluation...")
+        start_eval = False
+        for name, data in eval_datasets.items():
+            n_samples = train_params.eval_samples.get(name)
+            evaluation = evaluator_runner.run_evaluators(sess, data, name, n_samples)
+            for s in evaluation.to_summaries(name + "-"):
+                summary_writer.add_summary(s, on_step)
 
     for epoch in range(train_params.num_epochs):
         for batch_ix, batch in enumerate(train.get_epoch()):
@@ -403,17 +436,11 @@ def _train(model: Model,
                 loss, _ = sess.run([pred.loss, train_opt], feed_dict=encoded)
 
             batch_time += time.perf_counter() - t0
-            mean_loss += loss
             if get_summary:
-                av_loss = mean_loss/train_params.log_period
-                print("on epoch=%d batch=%d step=%d loss=%.5f time=%.3f" %
-                      (epoch, batch_ix+1, on_step, av_loss, batch_time))
+                print("on epoch=%d batch=%d step=%d time=%.3f" %
+                      (epoch, batch_ix+1, on_step, batch_time))
                 summary_writer.add_summary(tf.Summary(value=[tf.Summary.Value(tag="time", simple_value=batch_time)]), on_step)
                 summary_writer.add_summary(summary, on_step)
-                # FIXME "averaged loss" should be removed in favour or EMA, still here since I used it for other models
-                # ands its nice to be able to make comparisons
-                summary_writer.add_summary(tf.Summary(value=[tf.Summary.Value(tag="averaged-loss", simple_value=av_loss)]), on_step)
-                mean_loss = 0
                 batch_time = 0
 
             # occasional saving
@@ -428,13 +455,7 @@ def _train(model: Model,
                 t0 = time.perf_counter()
                 for name, data in eval_datasets.items():
                     n_samples = train_params.eval_samples.get(name)
-                    if n_samples is not None:
-                        it, _ = data.get_samples(n_samples)
-                    else:
-                        it = data.get_epoch()
-                    evaluation = run_evaluators_with(eval_tensors, model, sess, evaluators,
-                                                     it, data.percent_filtered())
-
+                    evaluation = evaluator_runner.run_evaluators(sess, data, name, n_samples)
                     for s in evaluation.to_summaries(name + "-"):
                         summary_writer.add_summary(s, on_step)
 
@@ -444,14 +465,23 @@ def _train(model: Model,
     sess.close()
 
 
-def test(model: Model, evaluators, datasets: List[Dataset], loader, checkpoint, ema=False, sample=None):
+def test(model: Model, evaluators, datasets: Dict[str, Dataset], loader, checkpoint,
+         ema=False, aysnc_encoding=None, sample=None) -> Dict[str, Evaluation]:
     print("Setting up model")
+    model.set_inputs(list(datasets.values()), loader)
 
-    model.set_inputs(datasets, loader)
-
-    pred = model.get_prediction()
+    if aysnc_encoding:
+        evaluator_runner = AysncEvaluatorRunner(evaluators, model, aysnc_encoding)
+        inputs = evaluator_runner.eval_queue.dequeue()
+    else:
+        evaluator_runner = EvaluatorRunner(evaluators, model)
+        inputs = model.get_placeholders()
+    input_dict = {p: x for p, x in zip(model.get_placeholders(), inputs)}
 
     sess = tf.Session(config=tf.ConfigProto(allow_soft_placement=True))
+    with sess.as_default():
+        pred = model.get_predictions_for(input_dict)
+    evaluator_runner.set_input(pred)
 
     print("Restoring variables")
     saver = tf.train.Saver()
@@ -465,31 +495,20 @@ def test(model: Model, evaluators, datasets: List[Dataset], loader, checkpoint, 
         saver = tf.train.Saver({ema.average_name(x): x for x in tf.trainable_variables()})
         saver.restore(sess, checkpoint)
 
-    # precompute the tensors we need to do evaluations so
-    # they can be re-used between datasets
-    eval_tensors = []
-    for ev in evaluators:
-        eval_tensors.append(ev.tensors_needed(pred))
-
     tf.get_default_graph().finalize()
 
     print("Begin evaluation")
 
-    dataset_outputs = []
-    for dataset in datasets:
-        if sample is not None:
-            total, it = dataset.get_batches(sample)
-        else:
-            total, it = dataset.get_epoch()
-        batches = tqdm(it, total=total)
-        dataset_outputs.append(run_evaluators_with(eval_tensors, model, sess, evaluators,
-                                              batches, dataset.percent_filtered()))
+    dataset_outputs = {}
+    for name, dataset in datasets.items():
+        dataset_outputs[name] = evaluator_runner.run_evaluators(sess, dataset, name, sample, {})
     return dataset_outputs
 
 
 def _train_async(model: Model,
            data: TrainingData,
            checkpoint: Union[str, None],
+           parameter_checkpoint: Union[str, None],
            save_start: bool,
            train_params: TrainParams,
            evaluators: List[Evaluator],
@@ -513,18 +532,30 @@ def _train_async(model: Model,
     placeholders = model.get_placeholders()
 
     train_queue = tf.FIFOQueue(train_params.async_encoding, [x.dtype for x in placeholders], name="train_queue")
-    eval_queue = tf.FIFOQueue(train_params.async_encoding, [x.dtype for x in placeholders], name="eval_queue")
+    evaluator_runner = AysncEvaluatorRunner(evaluators, model, train_params.async_encoding)
     train_enqeue = train_queue.enqueue(placeholders)
-    eval_enqueue = eval_queue.enqueue(placeholders)
     train_close = train_queue.close(True)
-    eval_size = eval_queue.size()
+
     is_train = tf.placeholder(tf.bool, ())
-    input_tensors = tf.cond(is_train, lambda: train_queue.dequeue(), lambda: eval_queue.dequeue())
+    input_tensors = tf.cond(is_train, lambda: train_queue.dequeue(),
+                            lambda: evaluator_runner.eval_queue.dequeue())
 
     # tensorfow can't infer the shape for an unsized queue, so set it manually
     for input_tensor, pl in zip(input_tensors, placeholders):
         input_tensor.set_shape(pl.shape)
-    pred = model.get_predictions_for(dict(zip(placeholders, input_tensors)))
+
+    print("Init model...")
+    sess = tf.Session(config=tf.ConfigProto(allow_soft_placement=True))
+    with sess.as_default():
+        pred = model.get_predictions_for(dict(zip(placeholders, input_tensors)))
+
+    evaluator_runner.set_input(pred)
+
+    if parameter_checkpoint is not None:
+        print("Restoring parameters from %s" % parameter_checkpoint)
+        saver = tf.train.Saver()
+        saver.restore(sess, checkpoint)
+        saver = None
 
     print("Setting up model prediction / tf...")
 
@@ -537,7 +568,6 @@ def _train_async(model: Model,
 
     saver = tf.train.Saver(max_to_keep=train_params.max_checkpoints_to_keep)
     summary_writer = tf.summary.FileWriter(out.log_dir)
-    sess = tf.Session(config=tf.ConfigProto(allow_soft_placement=True))
 
     # Load or initialize the model parameters
     if checkpoint is not None:
@@ -554,7 +584,10 @@ def _train_async(model: Model,
     if dry_run:
         return
 
+    on_step = sess.run(global_step)
+
     if save_start:
+        # summary_writer.add_graph(sess.graph, global_step=on_step)
         save_train_start(out.dir, data, sess.run(global_step), evaluators, train_params, notes)
 
     enqueue_error = Event()
@@ -580,120 +613,58 @@ def _train_async(model: Model,
     print("Start training!")
 
     batch_time = 0
-    on_step = sess.run(global_step)
 
     train_dict = {is_train: True}
     eval_dict = {is_train: False}
+    try:
+        train_enqueue_thread.start()
 
-    train_enqueue_thread.start()
-
-    for epoch in range(train_params.num_epochs):
-        for batch_ix in range(len(train)):
-            t0 = time.perf_counter()
-            on_step = sess.run(global_step) + 1
-            get_summary = on_step % train_params.log_period == 0
-
-            if enqueue_error.is_set():
-                raise RuntimeError("Enqueue thread crashed!")
-
-            if get_summary:
-                loss, summary, _ = sess.run([pred.loss, summary_tensor, train_opt], feed_dict=train_dict)
-            else:
-                summary = None
-                loss, _ = sess.run([pred.loss, train_opt], feed_dict=train_dict)
-
-            batch_time += time.perf_counter() - t0
-            if summary is not None:
-                print("on epoch=%d batch=%d step=%d, time=%.3f" %
-                      (epoch, batch_ix + 1, on_step, batch_time))
-                summary_writer.add_summary(tf.Summary(value=[tf.Summary.Value(tag="time", simple_value=batch_time)]), on_step)
-                summary_writer.add_summary(summary, on_step)
-                batch_time = 0
-
-            # occasional saving
-            if on_step % train_params.save_period == 0:
-                print("Checkpointing")
-                saver.save(sess, join(out.save_dir, "checkpoint-" + str(on_step)), global_step=global_step)
-
-            # Occasional evaluation
-            if (on_step % train_params.eval_period == 0) or start_eval:
-                print("Running evaluation...")
-                start_eval = False
+        for epoch in range(train_params.num_epochs):
+            for batch_ix in range(len(train)):
                 t0 = time.perf_counter()
-                for name, data in eval_datasets.items():
-                    n_samples = train_params.eval_samples.get(name)
-                    evaluation = run_evaluators_async(eval_tensors, model, sess, evaluators,
-                                                     data, n_samples, eval_dict, eval_enqueue,
-                                                     name)
-                    if sess.run(eval_size) != 0:
-                        raise RuntimeError("Leftover elements in the eval queue!")
-                    for s in evaluation.to_summaries(name + "-"):
-                        summary_writer.add_summary(s, on_step)
+                on_step = sess.run(global_step) + 1
+                get_summary = on_step % train_params.log_period == 0
 
-                print("Evaluation took: %.3f seconds" % (time.perf_counter() - t0))
-    sess.run(train_close)  # terminates the enqueue thread with an exception
-    train_enqueue_thread.join()  # wait for it to die
+                if enqueue_error.is_set():
+                    raise RuntimeError("Enqueue thread crashed!")
+
+                if get_summary:
+                    loss, summary, _ = sess.run([pred.loss, summary_tensor, train_opt], feed_dict=train_dict)
+                else:
+                    summary = None
+                    loss, _ = sess.run([pred.loss, train_opt], feed_dict=train_dict)
+
+                batch_time += time.perf_counter() - t0
+                if summary is not None:
+                    print("on epoch=%d batch=%d step=%d, time=%.3f" %
+                          (epoch, batch_ix + 1, on_step, batch_time))
+                    summary_writer.add_summary(tf.Summary(value=[tf.Summary.Value(tag="time", simple_value=batch_time)]), on_step)
+                    summary_writer.add_summary(summary, on_step)
+                    batch_time = 0
+
+                # occasional saving
+                if on_step % train_params.save_period == 0:
+                    print("Checkpointing")
+                    saver.save(sess, join(out.save_dir, "checkpoint-" + str(on_step)), global_step=global_step)
+
+                # Occasional evaluation
+                if (on_step % train_params.eval_period == 0) or start_eval:
+                    print("Running evaluation...")
+                    start_eval = False
+                    t0 = time.perf_counter()
+                    for name, data in eval_datasets.items():
+                        n_samples = train_params.eval_samples.get(name)
+                        evaluation = evaluator_runner.run_evaluators(sess, data, name, n_samples, eval_dict)
+                        for s in evaluation.to_summaries(name + "-"):
+                            summary_writer.add_summary(s, on_step)
+
+                    print("Evaluation took: %.3f seconds" % (time.perf_counter() - t0))
+    finally:
+        sess.run(train_close)  # terminates the enqueue thread with an exception
+
+    train_enqueue_thread.join()
 
     saver.save(sess, relpath(join(out.save_dir, "checkpoint-" + str(on_step))), global_step=global_step)
     sess.close()
 
 
-def run_evaluators_async(tensors_needed: List[Dict], model: Model, sess: tf.Session,
-                         evaluators: List[Evaluator], dataset, n_sample, feed_dict, enqueue_op,
-                         name, tq=False) -> Evaluation:
-    all_tensors_needed = list(set(flatten_iterable(x.values() for x in tensors_needed)))
-
-    tensors = {x: [] for x in all_tensors_needed}
-
-    data_used = []
-    if n_sample is None:
-        batches, n_batches = dataset.get_epoch(), len(dataset)
-    else:
-        batches, n_batches = dataset.get_samples(n_sample)
-
-    def enqueue_eval():
-        for data in batches:
-            encoded = model.encode(data, False)
-            data_used.append(data)
-            sess.run(enqueue_op, encoded)
-
-    th = Thread(target=enqueue_eval)
-    th.daemon = True
-    th.start()
-    for _ in tqdm(range(n_batches), total=n_batches, desc=name, ncols=80):
-        output = sess.run(all_tensors_needed, feed_dict=feed_dict)
-        for i in range(len(all_tensors_needed)):
-            tensors[all_tensors_needed[i]].append(output[i])
-    th.join()
-
-    # flatten the input
-    for k in all_tensors_needed:
-        v = tensors[k]
-        if len(k.shape) == 0:
-            v = np.array(v)  # List of scalars -> array
-        elif any(x is None for x in k.shape.as_list()):
-            # Variable sized tensors, so convert to flat python-list
-            v = flatten_iterable(v)
-        else:
-            v = np.concatenate(v, axis=0)  # concat along the batch dim
-        tensors[k] = v
-
-    # flatten the data if it consists of batches
-    if isinstance(data_used[0], List):
-        data_used = flatten_iterable(data_used)
-
-    if dataset.percent_filtered() is None:
-        true_len = len(data_used)
-    else:
-        true_len = len(data_used) * 1/(1 - dataset.percent_filtered())
-
-    combined = None
-    for ev, needed in zip(evaluators, tensors_needed):
-        args = {k: tensors[v] for k, v in needed.items()}
-        evaluation = ev.evaluate(data_used, true_len, **args)
-        if combined is None:
-            combined = evaluation
-        else:
-            combined.add(evaluation)
-
-    return combined

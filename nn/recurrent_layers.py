@@ -1,16 +1,17 @@
 from typing import Optional
 
 import tensorflow as tf
+
+from tensorflow.contrib.cudnn_rnn.python.ops import cudnn_rnn_ops
 from tensorflow.contrib.layers import fully_connected
 
 from configurable import Configurable
 from nn.layers import get_keras_activation, get_keras_initialization, SequenceMapper, SqueezeLayer, SequenceEncoder, \
-    MergeLayer
+    MergeLayer, Encoder
 
-from tensorflow.contrib.rnn import LSTMStateTuple, DropoutWrapper
+from tensorflow.contrib.rnn import LSTMStateTuple, DropoutWrapper, LSTMBlockFusedCell, GRUBlockCell
 from tensorflow.python.ops.rnn import dynamic_rnn, bidirectional_dynamic_rnn
 from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
-from tensorflow.contrib.rnn.python.ops.core_rnn_cell_impl import _linear as _tmp_linear
 
 
 from nn.ops import dropout
@@ -236,6 +237,7 @@ class GRUCell(RNNCell):
                 recurrent_shape[0] = state.shape.as_list()[-1]
                 return tf.concat([self.kernal_init(kernal_shape, dtype), self.recurrent_init(recurrent_shape, dtype)], axis=0)
 
+
             value = tf.sigmoid(_linear(tf.concat([inputs, state], axis=1), self.num_units*2,
                                        True, self.bias_init, _init_stacked_weights))
             r, u = tf.split(value=value, num_or_size_splits=2, axis=1)
@@ -244,6 +246,98 @@ class GRUCell(RNNCell):
                                         tf.zeros_initializer(), self.candidate_init))
         new_h = u * state + (1 - u) * c
         return new_h, new_h
+
+#
+# _gru_ops_so = tf.load_op_library(
+#     tf.resource_loader.get_path_to_datafile("_gru_ops.so"))
+#
+#
+# class GRUBlockCell(RNNCell):
+#     def __init__(self, num_units, bias_init, kernel_init, recurrent_init, candidate_init):
+#         self.num_units = num_units
+#         self.kernal_init = kernel_init
+#         self.recurrent_init = recurrent_init
+#         self.bias_init = bias_init
+#         self.candidate_init = candidate_init
+#
+#     @property
+#     def state_size(self):
+#         return self.num_units
+#
+#     @property
+#     def output_size(self):
+#         return self.num_units
+#
+#     def __call__(self, x, h_prev, scope=None):
+#         def _init_stacked_weights(shape, dtype=None, partition_info=None):
+#             kernal_shape = list(shape)
+#             kernal_shape[0] = x.shape.as_list()[-1]
+#             recurrent_shape = list(shape)
+#             recurrent_shape[0] = h_prev.shape.as_list()[-1]
+#             return tf.concat([self.kernal_init(kernal_shape, dtype), self.recurrent_init(recurrent_shape, dtype)],
+#                              axis=0)
+#
+#         args = tf.concat([x, h_prev], axis=1)
+#         input_size = args.shape.as_list()[-1]
+#
+#         w_ru = tf.get_variable(
+#             "weights_ru", [input_size, self.num_units*2], dtype=self.bias_init,
+#             initializer=_init_stacked_weights)
+#
+#         b_ru = tf.get_variable(
+#             "biases_ru", [self.num_units*2], dtype=tf.float32, initializer=self.bias_init)
+#
+#         w_c = tf.get_variable(
+#             "weights_c", [input_size, self.num_units*2], dtype=self.bias_init,
+#             initializer=_init_stacked_weights)
+#
+#         b_c = tf.get_variable(
+#             "biases_c", [self.num_units*2], dtype=tf.float32, initializer=self.bias_init)
+#
+#         _, _, _, new_h = _gru_ops_so.gru_block_cell.gru_block_cell(
+#           x=x, h_prev=h_prev, w_ru=w_ru, w_c=w_c, b_ru=b_ru, b_c=b_c)
+#         return new_h
+
+# class BlockGruCellSpec(RnnCellSpec):
+#
+#     def __init__(self, num_units,
+#                  bais_init=1.0,
+#                  kernel_initializer='glorot_uniform',
+#                  recurrent_initializer='orthogonal',
+#                  candidate_initializer='glorot_uniform',
+#                  learn_init=False):
+#         self.num_units = num_units
+#         self.bais_init = bais_init
+#         self.learn_init = learn_init
+#         self.candidate_initializer = candidate_initializer
+#         self.kernel_initializer = kernel_initializer
+#         self.recurrent_initializer = recurrent_initializer
+#
+#     def convert_to_state(self, variables):
+#         if len(variables) != 2:
+#             raise ValueError()
+#         return LSTMStateTuple(variables[0], variables[1])
+#
+#     def __call__(self, is_train, scope=None):
+#         recurrent_initializer = get_keras_initialization(self.recurrent_initializer)
+#         kernel_initializer = get_keras_initialization(self.kernel_initializer)
+#         candidate_initializer = get_keras_initialization(self.candidate_initializer)
+#         return GRUBlockCell(self.num_units, tf.constant_initializer(self.bais_init),
+#                        kernel_initializer, recurrent_initializer, candidate_initializer, self.learn_init)
+
+
+class BlockGruCellSpec(RnnCellSpec):
+
+    def __init__(self, num_units):
+        self.num_units = num_units
+
+    def convert_to_state(self, variables):
+        if len(variables) != 2:
+            raise ValueError()
+        return LSTMStateTuple(variables[0], variables[1])
+
+    def __call__(self, is_train, scope=None):
+        return GRUBlockCell(self.num_units)
 
 
 class GruCellSpec(RnnCellSpec):
@@ -266,7 +360,7 @@ class GruCellSpec(RnnCellSpec):
             raise ValueError()
         return LSTMStateTuple(variables[0], variables[1])
 
-    def __call__(self, is_train):
+    def __call__(self, is_train, scope=None):
         activation = get_keras_activation(self.activation)
         recurrent_initializer = get_keras_initialization(self.recurrent_initializer)
         kernel_initializer = get_keras_initialization(self.kernel_initializer)
@@ -314,7 +408,7 @@ class BiRecurrentEncoder(SequenceEncoder):
             return tf.concat(output, axis=1)
 
 
-class EncodeOverTime(SqueezeLayer):
+class EncodeOverTime(Encoder):
     def __init__(self, enc: SequenceEncoder, mask: bool=True):
         self.enc = enc
         self.mask = mask
@@ -337,6 +431,288 @@ class EncodeOverTime(SqueezeLayer):
         # reshape to the original size
         enc = tf.reshape(encoding, [batch, -1, encoding.shape.as_list()[-1]])
         return enc
+
+#
+# class CudnnGRULayer(SequenceMapper):
+#     def __init__(self, n_units, n_layers, direction, weight_init=None, bias_init=None):
+#         self.n_units = n_units
+#         self.n_layers = n_layers
+#         self.direction = direction
+#         self.weight_init = weight_init
+#         self.bias_init = bias_init
+#
+#     def apply(self, is_train, x, mask=None):
+#         rnn = CudnnGRU(self.n_units, self.n_layers, self.direction)
+#         rnn.
+#         w = tf.get_variable("weights", )
+#         rnn.canonical_to_params()
+#
+#
+#         self._rnn.canonical_to_params()
+
+
+class BiDirectionalFusedLstm(SequenceMapper):
+    def __init__(self, n_units, use_peepholes=False):
+        self.n_units = n_units
+        self.use_peepholes = use_peepholes
+
+    def apply(self, is_train, inputs, mask=None):
+        inputs = tf.transpose(inputs, [1, 0, 2])  # to time first
+        with tf.variable_scope("forward"):
+            cell = LSTMBlockFusedCell(self.n_units, use_peephole=self.use_peepholes)
+            fw = cell(inputs, dtype=tf.float32, sequence_length=mask)[0]
+        with tf.variable_scope("backward"):
+            cell = LSTMBlockFusedCell(self.n_units, use_peephole=self.use_peepholes)
+            inputs = tf.reverse_sequence(inputs, mask, seq_axis=0, batch_axis=1)
+            bw = cell(inputs, dtype=tf.float32, sequence_length=mask)[0]
+            bw = tf.reverse_sequence(bw, mask, seq_axis=0, batch_axis=1)
+        out = tf.concat([fw, bw], axis=2)
+        out = tf.transpose(out, [1, 0, 2])  # batck to batch first
+        return out
+
+
+class _CudnnRnn(Configurable):
+    """
+    Base class for using Cudnn's RNNs methods.
+    """
+
+    def __init__(self,
+                 kind: str,
+                 n_units,
+                 n_layers=1,
+                 # Its not obvious how to compute fan_in/fan_out for these models
+                 # so we recommend avoiding glorot initialization for now
+                 w_init="truncated_normal",
+                 recurrent_init=None,
+                 bidirectional=True,
+                 learn_initial_states: bool=False,
+                 save_cannonical_parameters=True,
+                 lstm_bias=1,
+                 keep_recurrent: float=1):
+        if bidirectional is None or n_layers is None or n_units is None:
+            raise ValueError()
+        if kind not in ["GRU", "LSTM"]:
+            raise ValueError()
+        self._kind = kind
+        self.keep_recurrent = keep_recurrent
+        self.lstm_bias = lstm_bias
+        self.n_units = n_units
+        self.n_layers = n_layers
+        self.bidirectional = bidirectional
+        self.w_init = w_init
+        self.recurrent_init = recurrent_init
+        self.learn_initial_states = learn_initial_states
+        self.save_cannonical_parameters = save_cannonical_parameters
+
+    def _apply_transposed(self, is_train, x):
+        w_init = get_keras_initialization(self.w_init)
+        r_init = None if self.recurrent_init is None else get_keras_initialization(self.recurrent_init)
+        x_size = x.shape.as_list()[-1]
+        if x_size is None:
+            raise ValueError("Last dimension must be defined (have shape %s)" % str(x.shape))
+
+        if self._kind == "GRU":
+            cell = cudnn_rnn_ops.CudnnGRU(self.n_layers, self.n_units, x_size, input_mode="linear_input")
+        elif self._kind == "LSTM":
+            cell = cudnn_rnn_ops.CudnnLSTM(self.n_layers, self.n_units, x_size, input_mode="linear_input")
+        else:
+            raise ValueError()
+
+        n_params = cell.params_size().eval()
+        weights, biases = cell.params_to_canonical(tf.zeros([n_params]))
+
+        def init(shape, dtype=None, partition_info=None):
+            # This a bit hacky, since the api for these models is akward. We have to compute the shape of
+            # the weights / biases by calling `cell.params_to_canonical` with a unused tensor, and then
+            # use .eval() to actually get the shape. Then we can apply the user-requested initialzers
+            if self._kind == "LSTM":
+                is_recurrent = [False, False, False, False, True, True, True, True]
+                is_forget_bias = [False, True, False, False, False, True, False, False]
+            else:
+                is_recurrent = [False, False, False, True, True, True]
+                is_forget_bias = [False] * 6
+
+            init_biases = [tf.constant(self.lstm_bias/2.0, tf.float32, (self.n_units,)) if z else tf.zeros(self.n_units)
+                           for z in is_forget_bias]
+            init_weights = []
+
+            for w, r in zip(weights, is_recurrent):
+                if r and r_init is not None:
+                    init_weights.append(tf.reshape(r_init((self.n_units, self.n_units), w.dtype), tf.shape(w)))
+                else:
+                    init_weights.append(w_init(tf.shape(w).eval(), w.dtype))
+            out = cell.canonical_to_params(init_weights, init_biases)
+            out.set_shape((n_params, ))
+
+            return out
+
+        parameters = tf.get_variable(
+            "gru_parameters",
+            n_params,
+            tf.float32,
+            initializer=init
+        )
+
+        if self.keep_recurrent < 1:
+            print("Drop Connect!")
+            is_recurrent = weights[:len(weights) // 2] + [tf.ones_like(w) for w in weights[len(weights) // 2:]]
+            recurrent_mask = cell.canonical_to_params(is_recurrent, biases)  # ones at recurrent weights
+            recurrent_mask = 1 - recurrent_mask * (1 - self.keep_recurrent)  # ones are non-recurrent param, keep_prob elsewhere
+            parameters = tf.cond(is_train,
+                                 lambda: tf.floor(tf.random_uniform((n_params, )) + recurrent_mask) * parameters,
+                                 lambda: parameters)
+
+        if self._kind == "LSTM":
+            if self.learn_initial_states:
+                raise NotImplementedError()
+            else:
+                initial_state_h = tf.zeros((self.n_layers, tf.shape(x)[1], self.n_units), tf.float32)
+                initial_state_c = tf.zeros((self.n_layers, tf.shape(x)[1], self.n_units), tf.float32)
+            out = cell(x, initial_state_h, initial_state_c, parameters, True)
+        else:
+            if self.learn_initial_states:
+                initial_state = tf.get_variable("initial_state", self.n_units,
+                                                tf.float32, tf.zeros_initializer())
+                initial_state = tf.tile(tf.expand_dims(tf.expand_dims(initial_state, 0), 0),
+                                        [self.n_layers, tf.shape(x)[1], 1])
+            else:
+                initial_state = tf.zeros((self.n_layers, tf.shape(x)[1], self.n_units), tf.float32)
+            out = cell(x, initial_state, parameters, True)
+        return out
+
+
+class CudnnRnnMapper(_CudnnRnn):
+    def map(self, is_train, x, mask=None):
+        x = tf.transpose(x, [1, 0, 2])
+
+        if self.bidirectional:
+            with tf.variable_scope("forward"):
+                fw = self._apply_transposed(is_train, x)[0]
+            with tf.variable_scope("backward"):
+                bw = self._apply_transposed(is_train, tf.reverse_sequence(x, mask, 0, 1))[0]
+                bw = tf.reverse_sequence(bw, mask, 0, 1)
+            out = tf.concat([fw, bw], axis=2)
+        else:
+            out = self._apply_transposed(is_train, x)[0]
+        out = tf.transpose(out, [1, 0, 2])
+        if mask is not None:
+            out *= tf.expand_dims(tf.cast(tf.sequence_mask(mask, tf.shape(out)[1]), tf.float32), 2)
+        return out
+
+
+class CudnnGru(CudnnRnnMapper, SequenceMapper):
+    def __init__(self,
+                 n_units,
+                 n_layers=1,
+                 keep_recurrent=1,
+                 w_init="truncated_normal",
+                 recurrent_init=None,
+                 bidirectional=True,
+                 learn_initial_states=False,
+                 save_cannonical_parameters=True):
+        super().__init__("GRU", n_units, n_layers, w_init, recurrent_init, bidirectional,
+                         learn_initial_states, save_cannonical_parameters, 1, keep_recurrent)
+
+    def apply(self, is_train, x, mask=None):
+        return super().map(is_train, x, mask)
+
+    def __setstate__(self, state):
+        if "_kind" not in state["state"]:
+            state["state"]["_kind"] = "GRU"
+        if "learn_initial_states" not in state["state"]:
+            state["state"]["learn_initial_states"] = False
+        if "recurrent_init" not in state["state"]:
+            state["state"]["recurrent_init"] = None
+        if "keep_recurrent" not in state["state"]:
+            state["state"]["keep_recurrent"] = 1
+        super().__setstate__(state)
+
+
+class CudnnLstm(CudnnRnnMapper, SequenceMapper):
+    def __init__(self,
+                 n_units,
+                 n_layers=1,
+                 lstm_bias=1,
+                 w_init="truncated_normal",
+                 recurrent_init=None,
+                 bidirectional=True,
+                 learn_initial_states=False,
+                 save_cannonical_parameters=True):
+        super().__init__("LSTM", n_units, n_layers, w_init, recurrent_init, bidirectional,
+                         learn_initial_states, save_cannonical_parameters, lstm_bias)
+
+    def apply(self, is_train, x, mask=None):
+        return super().map(is_train, x, mask)
+
+    def __setstate__(self, state):
+        if "recurrent_init" not in state["state"]:
+            state["state"]["recurrent_init"] = None
+        super().__setstate__(state)
+
+
+class CudnnEncoder(_CudnnRnn, SequenceEncoder):
+    def apply(self, is_train, x, mask=None):
+        x = tf.transpose(x, [1, 0, 2])
+
+        if self.bidirectional:
+            with tf.variable_scope("forward"):
+                fw = self._apply_transposed(x)[1:]
+                fw_states, fw_final = fw[0], fw[1]
+            with tf.variable_scope("backward"):
+                bw = self._apply_transposed(tf.reverse_sequence(x, mask, 0, 1))[1:]
+                bw_states, bw_final = bw[0], bw[1]
+            states = tf.concat([fw_states, bw_states], axis=2)
+            final = tf.concat([fw_final, bw_states], axis=1)
+        else:
+            out = self._apply_transposed(x)[1:]
+            states, final = out[0], out[1]
+
+        if mask is None:
+            return final
+        else:
+            # This is a bit akward, we have to scan the entire output sequence to grab
+            # the output that actually corresponds to the last time step
+            all_states = tf.concat([states, tf.expand_dims(final, 0)], axis=0)  # (time, batch, dim)
+            # use mask to index into the state that we want
+            return tf.gather_nd(mask, all_states)
+
+
+class FusedRecurrentEncoder(SequenceEncoder):
+    def __init__(self, n_units, hidden=True, state=False):
+        self.n_units = n_units
+        self.hidden = hidden
+        self.state = state
+
+    def apply(self, is_train, x, mask=None):
+        x = tf.transpose(x, [1, 0, 2])  # to time first
+        state = LSTMBlockFusedCell(self.n_units)(x, dtype=tf.float32, sequence_length=mask)[1]
+        if self.state and self.hidden:
+            state = tf.concat(state, 1)
+        elif self.hidden:
+            state = state.h
+        elif self.state:
+            state = state.c
+        else:
+            raise ValueError()
+        return state
+
+
+class RecurrentMapper(SequenceMapper):
+
+    def __init__(self, cell_spec, learn_initial=False):
+        self.cell_spec = cell_spec
+        self.learn_initial = learn_initial
+
+    def apply(self, is_train, inputs, mask=None):
+        cell = self.cell_spec(is_train)
+        batch_size = inputs.shape.as_list()[0]
+
+        if self.learn_initial:
+            initial = self.cell_spec.build_initial_state_var(batch_size, cell)
+        else:
+            initial = None
+
+        return dynamic_rnn(cell, inputs, mask, initial, dtype=tf.float32)[0]
 
 
 class BiRecurrentMapper(SequenceMapper):
@@ -365,12 +741,6 @@ class BiRecurrentMapper(SequenceMapper):
         if "swap_memory" not in state["state"]:
             state["state"]["swap_memory"] = False
         super().__setstate__(state)
-
-
-    # mat = tf.matmul(tf.concat([inputs, h], axis=1), tf.concat([kernal_w, recurrent_w], axis=0)) + bias
-    #
-    # hidden_std = tf.sqrt(tf.matmul(tf.pow(inputs, 2), tf.pow(kernal_w, 2)))
-
 
 
 class BiRecurrentMapperRegularized(SequenceMapper):
@@ -487,118 +857,3 @@ class BiRecurrentMapperRegularized(SequenceMapper):
             state["state"]["merge"] = None
         super().__setstate__(state)
 
-
-class RecurrentMapper(SequenceMapper):
-
-    def __init__(self, cell_spec, learn_initial=False):
-        self.cell_spec = cell_spec
-        self.learn_initial = learn_initial
-
-    def apply(self, is_train, inputs, mask=None):
-        cell = self.cell_spec(is_train)
-        batch_size = inputs.shape.as_list()[0]
-
-        if self.learn_initial:
-            initial = self.cell_spec.build_initial_state_var(batch_size, cell)
-        else:
-            initial = None
-
-        return dynamic_rnn(cell, inputs, mask, initial, dtype=tf.float32)[0]
-
-
-
-
-# class LearnedDropoutLSTMCellSpec(RnnCellSpec):
-#     def __init__(self, num_units,
-#                  keep_probs,
-#                  kernel_initializer='glorot_uniform',
-#                  recurrent_initializer='orthogonal',
-#                  activation='tanh',
-#                  recurrent_activation="sigmoid",
-#                  forget_bias=1.0,
-#                  aux_metric=None):
-#         self.keep_probs = keep_probs
-#         self.num_units = num_units
-#         self.activation = activation
-#         self.recurrent_activation = recurrent_activation
-#         self.kernel_initializer = kernel_initializer
-#         self.recurrent_initializer = recurrent_initializer
-#         self.forget_bias = forget_bias
-#         self.aux_metric = aux_metric
-#
-#     def __call__(self, is_train):
-#         return LearnedDropoutLSTMCell(self.num_units, self.kernel_initializer,
-#                                       self.recurrent_initializer, self.activation,
-#                                       self.keep_probs, self.recurrent_activation,
-#                                       self.forget_bias, is_train, self.aux_metric)
-#
-#     def convert_to_state(self, variables):
-#         if len(variables) != 2:
-#             raise ValueError()
-#         return LSTMStateTuple(variables[0], variables[1])
-#
-#
-# class LearnedDropoutLSTMCell(RNNCell):
-#     def __init__(self, num_units,
-#                  kernel_initializer,
-#                  recurrent_initializer,
-#                  activation,
-#                  keep_probs,
-#                  recurrent_activation,
-#                  forget_bias=1.0,
-#                  is_train=None,
-#                  aux_metric=None):
-#         self.keep_probs = keep_probs
-#         self.is_train = is_train
-#         self.num_units = num_units
-#         self.activation = activation
-#         self.recurrent_activation = recurrent_activation
-#         self.kernel_initializer = kernel_initializer
-#         self.recurrent_initializer = recurrent_initializer
-#         self.forget_bias = forget_bias
-#         self.aux_metric = aux_metric
-#
-#     @property
-#     def state_size(self):
-#         return LSTMStateTuple(self.num_units, self.num_units)
-#
-#     @property
-#     def output_size(self):
-#         return self.num_units
-#
-#     def __call__(self, inputs, state, scope=None):
-#         with tf.variable_scope("learned_dropout_lstm_cell"):
-#             c, h = state
-#             i_dim = inputs.shape.as_list()[-1]
-#
-#             random_tensor = self.keep_probs + tf.random_uniform(tf.shape(inputs), minval=0, maxval=1, dtype=inputs.dtype)
-#             binary_tensor = tf.floor(random_tensor)
-#             drop_i = inputs * binary_tensor
-#
-#             if self.aux_metric:
-#                 fill_in = fully_connected(tf.stop_gradient(tf.concat([inputs, h], axis=1)), i_dim, activation_fn=None)
-#                 if self.aux_metric == "l2":
-#                     reg = tf.reduce_mean(tf.pow(tf.stop_gradient(inputs) - fill_in, 2))
-#                 elif self.aux_metric == "l1":
-#                     reg = tf.reduce_mean(tf.abs(tf.stop_gradient(inputs) - fill_in))
-#                 else:
-#                     raise ValueError()
-#                 tf.add_to_collection(tf.GraphKeys.REGULARIZATION_LOSSES, reg)
-#                 fill_in = tf.stop_gradient(fill_in)
-#             else:
-#                 fill_in = fully_connected(tf.concat([inputs, h], axis=1), i_dim, activation_fn=None)
-#
-#             inputs = tf.cond(self.is_train, lambda: drop_i + fill_in * (1 - binary_tensor), lambda: inputs)
-#
-#             k_init = get_keras_initialization(self.kernel_initializer)
-#             r_init = get_keras_initialization(self.recurrent_initializer)
-#             i, j, f, o = _compute_gates(inputs, h, self.num_units, self.forget_bias, k_init, r_init)
-#
-#             r_activation = get_keras_activation(self.recurrent_activation)
-#             activation = get_keras_activation(self.activation)
-#             new_c = (c * r_activation(f) + r_activation(i) * activation(j))
-#             new_h = activation(new_c) * r_activation(o)
-#
-#             new_state = LSTMStateTuple(new_c, new_h)
-#
-#         return new_h, new_state

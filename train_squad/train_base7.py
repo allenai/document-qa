@@ -1,8 +1,10 @@
 import trainer
 from data_processing.document_splitter import MergeParagraphs, TopTfIdf
+from data_processing.paragraph_qa import DocumentQaTrainingData, ContextLenKey, ContextLenBucketedKey
 from data_processing.preprocessed_corpus import PreprocessedData
 from data_processing.qa_data import FixedParagraphQaTrainingData, Batcher
 from data_processing.text_utils import NltkPlusStopWords
+from dataset import ClusteredBatcher
 from doc_qa_models import Attention
 from encoder import DocumentAndQuestionEncoder, SingleSpanAnswerEncoder, DenseMultiSpanAnswerEncoder
 from evaluator import LossEvaluator
@@ -77,9 +79,9 @@ def main():
         notes = f.read()
 
     corpus = SquadCorpus()
-    train_batching = Batcher(45, "bucket_context_words_3", True, False)
-    eval_batching = Batcher(45, "context_words", False, False)
-    data = FixedParagraphQaTrainingData(corpus, None, train_batching, eval_batching)
+    train_batching = ClusteredBatcher(45, ContextLenBucketedKey(3), True, False)
+    eval_batching = ClusteredBatcher(45, ContextLenKey(), False, False)
+    data = DocumentQaTrainingData(corpus, None, train_batching, eval_batching)
 
     eval = [LossEvaluator(), BoundedSquadSpanEvaluator(bound=[17])]
     trainer.start_training(data, model, train_params, eval, trainer.ModelDir(out), notes, False)

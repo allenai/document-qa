@@ -1,8 +1,9 @@
+from tensorflow.contrib.keras.python.keras.initializers import TruncatedNormal
+
 import trainer
 from data_processing.document_splitter import MergeParagraphs, TopTfIdf
 from data_processing.paragraph_qa import ContextLenKey, ContextLenBucketedKey
 from data_processing.preprocessed_corpus import PreprocessedData
-from data_processing.qa_data import Batcher
 from data_processing.text_utils import NltkPlusStopWords
 from dataset import ListBatcher, ClusteredBatcher
 from doc_qa_models import Attention
@@ -11,9 +12,10 @@ from evaluator import LossEvaluator
 from nn.attention import BiAttention, AttentionEncoder, StaticAttentionSelf
 from nn.embedder import FixedWordEmbedder, CharWordEmbedder, LearnedCharEmbedder
 from nn.layers import NullBiMapper, NullMapper, SequenceMapperSeq, ReduceLayer, Conv1d, HighwayLayer, FullyConnected, \
-    ChainBiMapper, DropoutLayer, ConcatWithProduct, ResidualLayer, WithProjectedProduct, MapperSeq
-from nn.prediction_layers import ChainConcat
-from nn.recurrent_layers import BiRecurrentMapper, LstmCellSpec
+    ChainBiMapper, DropoutLayer, ConcatWithProduct, ResidualLayer, WithProjectedProduct, MapperSeq, ParametricRelu, \
+    VariationalDropoutLayer
+from nn.recurrent_layers import BiRecurrentMapper, LstmCellSpec, BiDirectionalFusedLstm, EncodeOverTime, \
+    FusedRecurrentEncoder, CudnnLstm, CudnnGru
 from nn.similarity_layers import TriLinear
 from nn.span_prediction import ConfidencePredictor, BoundsPredictor, WithFixedContextPredictionLayer
 from trainer import SerializableOptimizer, TrainParams
@@ -26,43 +28,46 @@ from utils import get_output_name_from_cli
 
 
 def main():
-    out = get_output_name_from_cli()
-
-    train_params = TrainParams(SerializableOptimizer("Adam", dict(learning_rate=0.001)),
-                               num_epochs=10, ema=0.999, max_checkpoints_to_keep=2,
+    train_params = TrainParams(
+                               SerializableOptimizer("Adadelta", dict(learning_rate=1)),
+                               # SerializableOptimizer("Adam", dict(learning_rate=0.001)),
+                               num_epochs=15, ema=0.999, max_checkpoints_to_keep=2,
                                async_encoding=10,
-                               log_period=30, eval_period=1000, save_period=1000,
-                               eval_samples=dict(dev=12000, train=8000))
+                               log_period=30, eval_period=1400, save_period=1400,
+                               eval_samples=dict(dev=18000, train=10000))
+    recurrent_layer = CudnnGru(100, w_init=TruncatedNormal())
     model = Attention(
         encoder=DocumentAndQuestionEncoder(DenseMultiSpanAnswerEncoder()),
-        word_embed=FixedWordEmbedder(vec_name="glove.6B.100d", word_vec_init_scale=0, learn_unk=False),
+        word_embed=FixedWordEmbedder(vec_name="glove.840B.300d", word_vec_init_scale=0, learn_unk=False),
         char_embed=CharWordEmbedder(
-            embedder=LearnedCharEmbedder(16, 49, 8),
-            layer=ReduceLayer("max", Conv1d(100, 5, 0.8)),
+            LearnedCharEmbedder(word_size_th=14, char_th=100, char_dim=20, init_scale=0.05, force_cpu=True),
+            EncodeOverTime(FusedRecurrentEncoder(60), mask=False),
             shared_parameters=True
         ),
         word_embed_layer=None,
         embed_mapper=SequenceMapperSeq(
-            HighwayLayer(activation="relu"),
-            HighwayLayer(activation="relu"),
             DropoutLayer(0.8),
-            BiRecurrentMapper(LstmCellSpec(100)),
+            recurrent_layer,
+            DropoutLayer(0.8),
         ),
         question_mapper=None,
         context_mapper=None,
         memory_builder=NullBiMapper(),
         attention=BiAttention(TriLinear(bias=True), True),
-        match_encoder=SequenceMapperSeq(FullyConnected(200, activation="tanh"),
+        match_encoder=SequenceMapperSeq(FullyConnected(200, activation="relu"),
+                                        ResidualLayer(SequenceMapperSeq(
+                                            DropoutLayer(0.8),
+                                            recurrent_layer,
+                                            DropoutLayer(0.8),
+                                            StaticAttentionSelf(TriLinear(bias=True), ConcatWithProduct()),
+                                            FullyConnected(200, activation="relu")
+                                        )),
                                         DropoutLayer(0.8)),
-        predictor=WithFixedContextPredictionLayer(
-            ResidualLayer(BiRecurrentMapper(LstmCellSpec(100))),
-            AttentionEncoder(post_process=MapperSeq(FullyConnected(30, activation="tanh"), DropoutLayer(0.8))),
-            WithProjectedProduct(include_tiled=True),
+        predictor=BoundsPredictor(
             ChainBiMapper(
-                first_layer=BiRecurrentMapper(LstmCellSpec(80)),
-                second_layer=BiRecurrentMapper(LstmCellSpec(80))
+                first_layer=recurrent_layer,
+                second_layer=recurrent_layer
             ),
-            aggregate="sum"
         )
     )
 
@@ -79,7 +84,7 @@ def main():
                             )
     eval = [LossEvaluator(), TfTriviaQaBoundedSpanEvaluator([4, 8])]
     data.load_preprocess("triviaqa-web-merge400-tfidf1.pkl.gz")
-    trainer.start_training(data, model, train_params, eval, trainer.ModelDir(out), notes, False)
+    trainer.start_training(data, model, train_params, eval, trainer.ModelDir(out), notes)
 
 
 if __name__ == "__main__":

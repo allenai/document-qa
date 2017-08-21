@@ -2,6 +2,8 @@ import unicodedata
 
 import sys
 
+from utils import ResourceLoader
+
 try:
   import ujson as json
 except ImportError:
@@ -102,6 +104,9 @@ class TriviaQaSpanCorpus(Configurable):
             return None
         with open(verified_dir, "rb") as f:
             return pickle.load(f)
+
+    def get_resource_loader(self):
+        return ResourceLoader()
 
     @property
     def name(self):

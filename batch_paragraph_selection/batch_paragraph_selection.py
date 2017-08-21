@@ -660,7 +660,7 @@ if __name__ == "__main__":
     print("Loading...")
     docs = corp.get_train_docs()
     print("Building features....")
-    df = build_features(docs, corp.get_resource_loader(), None, None, seed=0, dev=corp.get_dev_docs())
+    df = build_features(docs, corp.get_resource_loader, None, None, seed=0, dev=corp.get_dev_docs())
 
     print("Classifier..,")
     get_classifier_dev_scores(df)

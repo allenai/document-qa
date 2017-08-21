@@ -1,18 +1,20 @@
 import trainer
-from data_processing.paragraph_qa import ContextLenKey, ContextLenBucketedKey
-from data_processing.qa_data import FixedParagraphQaTrainingData, Batcher
+from data_processing.paragraph_qa import ContextLenKey, ContextLenBucketedKey, DocumentQaTrainingData
 from dataset import ShuffledBatcher, ClusteredBatcher
 from doc_qa_models import Attention
 from encoder import DocumentAndQuestionEncoder, SingleSpanAnswerEncoder
-from evaluator import LossEvaluator, SpanEvaluator, SentenceSpanEvaluator
+from evaluator import LossEvaluator, SpanEvaluator
 from nn.attention import BiAttention
 from nn.embedder import FixedWordEmbedder, CharWordEmbedder, LearnedCharEmbedder
-from nn.layers import NullBiMapper, NullMapper, SequenceMapperSeq, ReduceLayer, Conv1d, HighwayLayer
+from nn.layers import NullBiMapper, NullMapper, SequenceMapperSeq, ReduceLayer, Conv1d, HighwayLayer, ChainConcat, \
+    DropoutLayer
 from nn.prediction_layers import ChainConcatPredictor
-from nn.recurrent_layers import BiRecurrentMapper, LstmCellSpec
+from nn.recurrent_layers import BiRecurrentMapper, LstmCellSpec, CudnnLstm
 from nn.similarity_layers import TriLinear
+from nn.span_prediction import BoundsPredictor
+from squad.build_squad_dataset import SquadCorpus
+from squad.squad_eval import SentenceSpanEvaluator, SquadSpanEvaluator, BoundedSquadSpanEvaluator
 from trainer import SerializableOptimizer, TrainParams
-from squad.squad import SquadCorpus
 from utils import get_output_name_from_cli
 
 
@@ -29,44 +31,50 @@ def main():
     out = get_output_name_from_cli()
 
     train_params = TrainParams(SerializableOptimizer("Adam", dict(learning_rate=0.001)),
-                               num_epochs=12, ema=0.999,
+                               num_epochs=12, ema=0.999, async_encoding=10,
                                log_period=30, eval_period=1000, save_period=1000,
                                eval_samples=dict(dev=None, train=8000))
+
+    # recurrent_layer = BiRecurrentMapper(LstmCellSpec(100, keep_probs=0.8))
+    # recurrent_layer = FusedLstm()
+    recurrent_layer = SequenceMapperSeq(DropoutLayer(0.8), CudnnLstm(100))
 
     model = Attention(
         encoder=DocumentAndQuestionEncoder(SingleSpanAnswerEncoder()),
         word_embed=FixedWordEmbedder(vec_name="glove.6B.100d", word_vec_init_scale=0, learn_unk=False),
         char_embed=CharWordEmbedder(
             embedder=LearnedCharEmbedder(16, 49, 8),
-            layer=ReduceLayer("max", Conv1d(100, 5, 0.8)),
+            layer=ReduceLayer("max", Conv1d(100, 5, 0.8), mask=False),
             shared_parameters=True
         ),
         word_embed_layer=None,
         embed_mapper=SequenceMapperSeq(
             HighwayLayer(activation="relu"), HighwayLayer(activation="relu"),
-            BiRecurrentMapper(LstmCellSpec(100, keep_probs=0.8))),
+            recurrent_layer),
         question_mapper=None,
         context_mapper=None,
         memory_builder=NullBiMapper(),
         attention=BiAttention(TriLinear(bias=True), True),
         match_encoder=NullMapper(),
-        predictor= ChainConcatPredictor(
-            start_layer=SequenceMapperSeq(
-                BiRecurrentMapper(LstmCellSpec(100, keep_probs=0.8)),
-                BiRecurrentMapper(LstmCellSpec(100, keep_probs=0.8))),
-            end_layer=BiRecurrentMapper(LstmCellSpec(100, keep_probs=0.8))
+        predictor= BoundsPredictor(
+            ChainConcat(
+                start_layer=SequenceMapperSeq(
+                    recurrent_layer,
+                    recurrent_layer),
+                end_layer=recurrent_layer
+            )
         )
     )
 
     with open(__file__, "r") as f:
         notes = f.read()
 
-    eval = [LossEvaluator(), SpanEvaluator(), SentenceSpanEvaluator()]
+    eval = [LossEvaluator(), SquadSpanEvaluator(), BoundedSquadSpanEvaluator([18]), SentenceSpanEvaluator()]
 
     corpus = SquadCorpus()
     train_batching = ClusteredBatcher(60, ContextLenBucketedKey(3), True, False)
     eval_batching = ClusteredBatcher(60, ContextLenKey(), False, False)
-    data = FixedParagraphQaTrainingData(corpus, None, train_batching, eval_batching)
+    data = DocumentQaTrainingData(corpus, None, train_batching, eval_batching)
 
     trainer.start_training(data, model, train_params, eval, trainer.ModelDir(out), notes, False)
 

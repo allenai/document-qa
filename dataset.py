@@ -84,6 +84,28 @@ class ListBatcher(Configurable):
         raise NotImplementedError()
 
 
+class FixedOrderBatcher(ListBatcher):
+    def __init__(self, batch_size: int, truncate_batches=False):
+        self.batch_size = batch_size
+        self.truncate_batches = truncate_batches
+
+    def get_fixed_batch_size(self):
+        return None if self.truncate_batches else self.batch_size
+
+    def get_epoch(self, data: List):
+        n_batches = len(data) // self.batch_size
+        for i in range(n_batches):
+            yield data[i*self.batch_size:(i + 1)*self.batch_size]
+        if self.truncate_batches and (len(data) % self.batch_size) > 0:
+            yield data[self.batch_size * (len(data) // self.batch_size):]
+
+    def epoch_size(self, n_elements):
+        size = n_elements // self.batch_size
+        if self.truncate_batches and (n_elements % self.batch_size) > 0:
+            size += 1
+        return size
+
+
 class ShuffledBatcher(ListBatcher):
     def __init__(self,
                  batch_size: int,
@@ -92,7 +114,7 @@ class ShuffledBatcher(ListBatcher):
         self.truncate_batches = truncate_batches
 
     def get_fixed_batch_size(self):
-        return None if self.truncate_batches is None else self.batch_size
+        return None if self.truncate_batches else self.batch_size
 
     def get_epoch(self, data: List):
         data = list(data)
@@ -122,7 +144,7 @@ class ClusteredBatcher(ListBatcher):
         self.truncate_batches = truncate_batches
 
     def get_fixed_batch_size(self):
-        return None if self.truncate_batches is None else self.batch_size
+        return None if self.truncate_batches else self.batch_size
 
     def get_epoch(self, data: List):
         data = sorted(data, key=self.clustering)

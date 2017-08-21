@@ -9,8 +9,7 @@ from encoder import DocumentAndQuestionEncoder
 from model import ModelOutput, Model
 from nn.embedder import WordEmbedder, CharWordEmbedder
 from nn.layers import SequenceMapper, SequenceBiMapper, AttentionMapper, SequenceEncoder, \
-    SequenceMapperWithContext, MapMulti
-from nn.prediction_layers import SequencePredictionLayer, AttentionPredictionLayer
+    SequenceMapperWithContext, MapMulti, SequencePredictionLayer, AttentionPredictionLayer
 from utils import ResourceLoader
 
 
@@ -78,7 +77,7 @@ class DocumentQuestionModel(Model):
                 q, c = self.char_embed.embed(is_train,
                                              (input_tensors[enc.question_chars], q_mask),
                                              (input_tensors[enc.context_chars], c_mask))
-            q_embed.append(q)
+                q_embed.append(q)
             c_embed.append(c)
 
         if enc.question_words in input_tensors:
@@ -97,6 +96,9 @@ class DocumentQuestionModel(Model):
         if enc.question_features in input_tensors:
             q_embed.append(input_tensors.get(enc.question_features))
             c_embed.append(input_tensors.get(enc.context_features))
+
+        print(q_embed)
+        print(c_embed)
 
         q_embed = tf.concat(q_embed, axis=2)
         c_embed = tf.concat(c_embed, axis=2)

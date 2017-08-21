@@ -74,6 +74,8 @@ class Configurable(object):
             v = getattr(self, key, None)
             if isinstance(v, Configurable):
                 out[key] = v.get_config()
+            elif hasattr(v, "get_config"):  # for keras objects
+                out[key] = {"name": v.__class__.__name__, "params": v.get_config()}
             else:
                 out[key] = v
         return out

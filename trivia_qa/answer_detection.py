@@ -104,18 +104,10 @@ class CarefulAnswerDetector(object):
         for answer in normalized_aliases:
             tokens = []
             for token in answer:
-                token = re.escape(token)
-                if all(x.isdigit() for x in token):
-                    ix = len(token) % 3
-                    if ix == 0:
-                        ix = 3
-                    regex = token[:ix] + "".join(",?" + token[i:i + 3] for i in range(ix, len(token), 3))
-                    tokens.append(regex)
+                if len(token) > 1:
+                    tokens.append(token + "s?")
                 else:
-                    if len(token) > 1:
-                        tokens.append(token + "s?")
-                    else:
-                        tokens.append(token)
+                    tokens.append(token)
             if tokens[-1] == "s":
                 tokens[-1] = "s?"
 

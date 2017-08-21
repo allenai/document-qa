@@ -277,7 +277,7 @@ class ParagraphSelectionTrainingData(TrainingData):
         return DocumentQaStats(self._train)
 
     def get_resource_loader(self) -> ResourceLoader:
-        return self.corpus.get_resource_loader()
+        return self.corpus.get_resource_loader
 
     def get_train(self) -> Dataset:
         self._load_data()

@@ -1,11 +1,15 @@
 import json
-from typing import List, Dict
+from threading import Thread, Event
+from typing import List, Dict, Union
 
 import numpy as np
 import tensorflow as tf
+from tqdm import tqdm
 
 from configurable import Configurable
-from data_processing.paragraph_qa import ParagraphAndQuestion
+from data_processing.paragraph_qa import ParagraphAndQuestion, DocParagraphAndQuestion
+from data_processing.span_data import compute_span_f1
+from dataset import Dataset
 from model import ModelOutput, Model
 from utils import NumpyEncoder, flatten_iterable
 
@@ -129,6 +133,79 @@ class RecordQuestionId(Evaluator):
         return Evaluation({}, dict(question_id=[x.question_id for x in data]))
 
 
+class SpanProbability(Evaluator):
+    def __init__(self, sum=True):
+        self.sum = sum
+
+    def tensors_needed(self, model):
+        return dict(p1=model.prediction.start_probs, p2=model.prediction.end_probs)
+
+    def evaluate(self, data: List[ParagraphAndQuestion], true_len, p1, p2):
+        start_probs = []
+        end_probs = []
+        for ix, point in enumerate(data):
+            start_prob = 0
+            end_prob = 0
+            for start, end in point.answer.answer_spans:
+                if self.sum:
+                    start_prob += p1[ix][start]
+                    end_prob += p2[ix][end]
+                else:
+                    start_prob = max(p1[ix][start], start_prob)
+                    end_prob = max(p2[ix][end], end_prob)
+
+            start_probs.append(start_prob)
+            end_probs.append(end_prob)
+        start_probs = np.array(start_probs)
+        end_probs = np.array(end_probs)
+        prefix = "span-prob/"
+        return Evaluation({prefix + "start": np.mean(start_probs),
+                           prefix + "span": np.mean(start_probs*end_probs),
+                           prefix + "end": np.mean(end_probs)})
+
+
+def span_scores(data: List[Union[ParagraphAndQuestion, DocParagraphAndQuestion]], prediction):
+    scores = np.zeros((len(data), 2))
+    for i in range(len(data)):
+        para = data[i]
+
+        pred_span = tuple(prediction[i])
+
+        span_correct = False
+        span_max_f1 = 0
+        answer = data[i].answer
+        for (start, end) in answer.answer_spans:
+            answer_span = (start, end)
+            span_max_f1 = max(span_max_f1, compute_span_f1(answer_span, pred_span))
+            if answer_span == pred_span:
+                span_correct = True
+
+        scores[i] = [span_correct, span_max_f1]
+
+    return scores
+
+
+class SpanEvaluator(Evaluator):
+    def __init__(self, bound: List[int]):
+        self.bound = bound
+
+    def tensors_needed(self, model):
+        return {str(b): model.prediction.get_best_span(b)[0] for b in self.bound}
+
+    def evaluate(self, data: List[ParagraphAndQuestion], true_len, **kwargs):
+        ev = Evaluation({})
+        for b in self.bound:
+            best_spans = kwargs[str(b)]
+            scores = span_scores(data, best_spans).sum(axis=0) / true_len
+            prefix = "b%d/"%b
+            bound_eval = Evaluation({
+                prefix + "accuracy": scores[0],
+                prefix + "f1": scores[1],
+            })
+            ev.add(bound_eval)
+        return ev
+
+
 class RecordSpanPrediction(Evaluator):
     def __init__(self, bound: int, prefix=None):
         self.bound = bound
@@ -151,69 +228,152 @@ class RecordSpanPrediction(Evaluator):
         return Evaluation({}, results)
 
 
-def run_evaluators(prediction: ModelOutput, model: Model, sess: tf.Session,
-                   evaluators: List[Evaluator],  iter_batches, percent_filtered=None) -> Evaluation:
-    tensors_needed = []
-    for ev in evaluators:
-        tensors_needed.append(ev.tensors_needed(prediction))
-    return run_evaluators_with(tensors_needed, model, sess, evaluators, iter_batches, percent_filtered)
+class EvaluatorRunner(object):
+    def __init__(self, evaluators: List[Evaluator], model: Model):
+        self.evaluators = evaluators
+        self.tensors_needed = None
+        self.model = model
 
+    def set_input(self, output: ModelOutput):
+        tensors_needed = []
+        for ev in self.evaluators:
+            tensors_needed.append(ev.tensors_needed(output))
+        self.tensors_needed = tensors_needed
 
-def run_evaluators_with(tensors_needed: List[Dict], model: Model, sess: tf.Session,
-                   evaluators: List[Evaluator], iter_batches, percent_filtered=None) -> Evaluation:
-    all_tensors_needed = list(set(flatten_iterable(x.values() for x in tensors_needed)))
+    def run_evaluators(self, sess: tf.Session, dataset: Dataset, name, n_sample=None, feed_dict=None) -> Evaluation:
+        all_tensors_needed = list(set(flatten_iterable(x.values() for x in self.tensors_needed)))
 
-    tensors = {x: [] for x in all_tensors_needed}
+        tensors = {x: [] for x in all_tensors_needed}
 
-    data_used = []
-
-    for batch in iter_batches:
-        feed_dict = model.encode(batch, is_train=False)
-        output = sess.run(all_tensors_needed, feed_dict=feed_dict)
-        data_used += batch
-        for i in range(len(all_tensors_needed)):
-            tensors[all_tensors_needed[i]].append(output[i])
-
-    # flatten the input
-    for k in all_tensors_needed:
-        v = tensors[k]
-        if len(k.shape) == 0:
-            v = np.array(v)  # List of scalars
-        elif any(x is None for x in k.shape.as_list()):
-            # Variable sized tensors, so convert to flat python-list
-            v = flatten_iterable(v)
+        if n_sample is None:
+            batches, n_batches = dataset.get_epoch(), len(dataset)
         else:
-            v = np.concatenate(v, axis=0)  # concat along the batch dim
-        tensors[k] = v
+            batches, n_batches = dataset.get_samples(n_sample)
 
-    if percent_filtered is None:
-        true_len = len(data_used)
-    else:
-        true_len = len(data_used) * 1/(1 - percent_filtered)
+        data_used = []
 
-    combined = None
-    for ev, needed in zip(evaluators, tensors_needed):
-        args = {k: tensors[v] for k, v in needed.items()}
-        evaluation = ev.evaluate(data_used, true_len, **args)
-        if combined is None:
-            combined = evaluation
+        for batch in tqdm(batches, total=n_batches, desc=name, ncols=80):
+            feed_dict = self.model.encode(batch, is_train=False)
+            output = sess.run(all_tensors_needed, feed_dict=feed_dict)
+            data_used += batch
+            for i in range(len(all_tensors_needed)):
+                tensors[all_tensors_needed[i]].append(output[i])
+
+        # flatten the input
+        for k in all_tensors_needed:
+            v = tensors[k]
+            if len(k.shape) == 0:
+                v = np.array(v)  # List of scalars
+            elif any(x is None for x in k.shape.as_list()):
+                # Variable sized tensors, so convert to flat python-list
+                v = flatten_iterable(v)
+            else:
+                v = np.concatenate(v, axis=0)  # concat along the batch dim
+            tensors[k] = v
+
+        percent_filtered = dataset.percent_filtered()
+        if percent_filtered is None:
+            true_len = len(data_used)
         else:
-            combined.add(evaluation)
+            true_len = len(data_used) * 1 / (1 - percent_filtered)
 
-    return combined
+        combined = None
+        for ev, needed in zip(self.evaluators, self.tensors_needed):
+            args = {k: tensors[v] for k, v in needed.items()}
+            evaluation = ev.evaluate(data_used, true_len, **args)
+            if evaluation is None:
+                raise ValueError(ev)
+            if combined is None:
+                combined = evaluation
+            else:
+                combined.add(evaluation)
+
+        return combined
 
 
-# deprecated, here To not break picke
-class SquadSpanEvaluator(Evaluator):
-    def __init__(self):
-        raise ValueError("Deprecated")
+class AysncEvaluatorRunner(object):
+    def __init__(self, evaluators: List[Evaluator], model: Model, queue_size: int):
+        placeholders = model.get_placeholders()
+        self.eval_queue = tf.FIFOQueue(queue_size, [x.dtype for x in placeholders],
+                                  name="eval_queue")
+        self.enqueue_op = self.eval_queue.enqueue(placeholders)
+        self.evaluators = evaluators
+        self.queue_size = self.eval_queue.size()
+        self.model = model
+        self.tensors_needed = None
 
+    def set_input(self, output: ModelOutput):
+        tensors_needed = []
+        for ev in self.evaluators:
+            tensors_needed.append(ev.tensors_needed(output))
+        self.tensors_needed = tensors_needed
 
-class TriviaQaBoundedSpanEvaluator(Evaluator):
-    def __init__(self):
-        raise ValueError("Deprecated")
+    def run_evaluators(self, sess: tf.Session, dataset, name, n_sample, feed_dict) -> Evaluation:
+        all_tensors_needed = list(set(flatten_iterable(x.values() for x in self.tensors_needed)))
 
+        tensors = {x: [] for x in all_tensors_needed}
 
-class TfTriviaQaBoundedSpanEvaluator(Evaluator):
-    def __init__(self):
-        raise ValueError("Deprecated")
+        data_used = []
+        if n_sample is None:
+            batches, n_batches = dataset.get_epoch(), len(dataset)
+        else:
+            batches, n_batches = dataset.get_samples(n_sample)
+
+        enqueue_error = Event()
+
+        def enqueue_eval():
+            try:
+                for data in batches:
+                    encoded = self.model.encode(data, False)
+                    data_used.append(data)
+                    sess.run(self.enqueue_op, encoded)
+            except Exception as e:
+                enqueue_error.set()
+                raise e
+
+        th = Thread(target=enqueue_eval)
+
+        th.daemon = True
+        th.start()
+        for _ in tqdm(range(n_batches), total=n_batches, desc=name, ncols=80):
+            if enqueue_error.is_set():
+                raise ValueError("Enqueue thread crashed")
+            output = sess.run(all_tensors_needed, feed_dict=feed_dict)
+            for i in range(len(all_tensors_needed)):
+                tensors[all_tensors_needed[i]].append(output[i])
+        th.join()
+
+        if sess.run(self.queue_size) != 0:
+            raise RuntimeError()
+
+        # flatten the input
+        for k in all_tensors_needed:
+            v = tensors[k]
+            if len(k.shape) == 0:
+                v = np.array(v)  # List of scalars -> array
+            elif any(x is None for x in k.shape.as_list()):
+                # Variable sized tensors, so convert to flat python-list
+                v = flatten_iterable(v)
+            else:
+                v = np.concatenate(v, axis=0)  # concat along the batch dim
+            tensors[k] = v
+
+        # flatten the data if it consists of batches
+        if isinstance(data_used[0], List):
+            data_used = flatten_iterable(data_used)
+
+        if dataset.percent_filtered() is None:
+            true_len = len(data_used)
+        else:
+            true_len = len(data_used) * 1 / (1 - dataset.percent_filtered())
+
+        combined = None
+        for ev, needed in zip(self.evaluators, self.tensors_needed):
+            args = {k: tensors[v] for k, v in needed.items()}
+            evaluation = ev.evaluate(data_used, true_len, **args)
+            if combined is None:
+                combined = evaluation
+            else:
+                combined.add(evaluation)
+
+        return combined

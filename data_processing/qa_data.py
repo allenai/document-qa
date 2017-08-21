@@ -210,3 +210,72 @@ class ParagraphAndQuestionDatasetBuilder(DatasetBuilder):
 
     def build_dataset(self, data, evidence, is_train: bool) -> Dataset:
         return ParagraphAndQuestionDataset(data, self.train_batching)
+
+
+class ParagraphQaTrainingData(TrainingData):
+    """ Training data where the documents are split into (paragraph, question) pairs """
+
+    def __init__(self,
+                 corpus,
+                 percent_train_dev: Optional[float],
+                 train_batcher: ListBatcher,
+                 eval_batcher: ListBatcher,
+                 data_filters: List[ParagraphQuestionFilter] = None):
+        self.percent_train_dev = percent_train_dev
+        self.eval_batcher = eval_batcher
+        self.train_batcher = train_batcher
+        self.corpus = corpus
+        self.data_filters = data_filters
+        self._train = None
+        self._dev = None
+        self._dev_len = None
+        self._train_len = None
+
+    def _preprocess(self, x):
+        return x, len(x)
+
+    @property
+    def name(self):
+        return self.corpus.name
+
+    def _load_data(self):
+        if self._train is not None:
+            return
+        print("Loading data for: " + self.corpus.name)
+        self._train, self._train_len = self._preprocess(self.corpus.get_train())
+        if self.percent_train_dev is None:
+            dev = self.corpus.get_dev()
+            if dev is not None:
+                self._dev, self._dev_len = self._preprocess(self.corpus.get_dev())
+        else:
+            raise NotImplemented()
+        if self.data_filters is not None:
+            self._dev = apply_filters(self._dev, self.data_filters, "dev")
+            self._train = apply_filters(self._train, self.data_filters, "train")
+
+    def get_train(self) -> Dataset:
+        self._load_data()
+        return ParagraphAndQuestionDataset(self._train, self.train_batcher)
+
+    def get_train_corpus(self):
+        self._load_data()
+        return QaCorpusLazyStats(self._train)
+
+    def get_eval(self) -> Dict[str, Dataset]:
+        self._load_data()
+        eval_sets = dict(train=ParagraphAndQuestionDataset(self._train, self.eval_batcher, self._train_len))
+        if self._dev is not None:
+            eval_sets["dev"] = ParagraphAndQuestionDataset(self._dev, self.eval_batcher, self._dev_len)
+        return eval_sets
+
+    def get_resource_loader(self) -> ResourceLoader:
+        return self.corpus.get_resource_loader()
+
+    def __getstate__(self):
+        state = self.__dict__
+        state["_train"] = None
+        state["_dev"] = None
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__ = state
