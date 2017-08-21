@@ -387,45 +387,35 @@ class DropNames(WordEmbedder):
 
     def __init__(self,
                  vec_name: str,
+                 selector,
                  word_vec_init_scale: float = 0,
                  keep_probs: float=0.5,
-                 kind: str="name_unk",
-                 learn_unk: bool = False,
-                 named_thresh=0.9):
+                 batch: bool=True,
+                 swapped_flag: bool = False,
+                 kind: str="shuffle",
+                 learn_unk: bool = False):
+        self.swapped_flag = swapped_flag
         self.kind = kind
+        self.batch = batch
         self.keep_probs = keep_probs
         self.learn_unk = learn_unk
         self.word_vec_init_scale = word_vec_init_scale
         self.vec_name = vec_name
-        self.named_thresh = named_thresh
+        self.selector = selector
 
         # corpus stats we need to keep around
-        self._word_counts = None
-        self._word_counts_lower = None
-        self._stop = None
         self._name_vecs_start = 0
         self._name_vecs_end = 0
+        self._swap_start = None
+        self._swap_end = None
 
         self._word_to_ix = None
         self._word_emb_mat = None
 
     def set_vocab(self, corpus, loader: ResourceLoader, special_tokens):
         if special_tokens is not None and len(special_tokens) > 0:
-            raise ValueError()
-        self._word_counts = corpus.get_context_counts()
-        self._word_counts_lower = Counter()
-        for k,v in self._word_counts.items():
-            self._word_counts_lower[k.lower()] += v
-        self._stop = set(stopwords.words('english'))
-
-    def is_named(self, word):
-        if word[0].isupper() and word[1:].islower():
-            wl = word.lower()
-            if wl not in self._stop:
-                lc = self._word_counts_lower[wl]
-                if lc == 0 or (self._word_counts[word] / lc) > self.named_thresh:
-                    return True
-        return False
+            raise NotImplementedError()
+        self.selector.init(corpus.get_word_counts())
 
     def is_vocab_set(self):
         return True
@@ -464,7 +454,7 @@ class DropNames(WordEmbedder):
             for word in voc:
                 if word in self._word_to_ix:
                     continue  # in case we already added due after seeing a capitalized version of `word`
-                if self.is_named(word):
+                if self.selector.select(word):
                     names.append(word)
                     continue
                 if word in word_to_vec:
@@ -500,72 +490,58 @@ class DropNames(WordEmbedder):
             print("Have %d named (and %d name vecs), %d other" % (
                 len(names), len(name_mat), len(mat)))
 
-            self._word_emb_mat = tf.concat(matrix_list, axis=0)
+            if self.swapped_flag:
+                szs = [x.shape.as_list()[0] for x in matrix_list]
+                self._swap_start = sum(szs)
+                self._swap_end = self._swap_start + szs[-1]
+                matrix_list.append(matrix_list[-1])
+                flags = tf.concat([tf.zeros(self._swap_start),
+                                   tf.ones(szs[-1])], axis=0)
+                flags = tf.expand_dims(flags, 1)
+                self._word_emb_mat = tf.concat(matrix_list, axis=0)
+                self._word_emb_mat = tf.concat([self._word_emb_mat, flags], axis=1)
+            else:
+                self._swap_start = self._name_vecs_start + 1
+                self._swap_end = self._name_vecs_end
+                self._word_emb_mat = tf.concat(matrix_list, axis=0)
+
+    def _drop_names(self, ix):
+        unique_words, unique_idx = tf.unique(ix)
+        u_words = tf.shape(unique_words)[0]
+        to_drop = tf.logical_and(unique_words >= self._name_vecs_start,
+                                 tf.random_uniform((u_words,)) > self.keep_probs)
+        if self.kind == "name_unk":
+            replace = tf.fill((u_words,), self._name_vecs_start)
+        elif self.kind == "unk":
+            replace = tf.ones((u_words,), dtype=tf.int32)
+        elif self.kind == "shuffle":
+            replace = tf.random_uniform(tf.shape(unique_words), self._swap_start,
+                                        self._swap_end, dtype=tf.int32)
+        else:
+            raise NotImplementedError()
+        unique_words = tf.where(to_drop, replace, unique_words)
+        return tf.gather(unique_words, unique_idx)
+
+    def drop_names_batch(self, words):
+        all_words = tf.concat(words, axis=1)
+        dropped = self._drop_names(tf.reshape(all_words, (-1, )))
+        dropped = tf.reshape(dropped, tf.shape(all_words))
+        out = tf.split(dropped, [tf.shape(x)[1] for x in words], axis=1, num=len(words))
+        return out
 
     def drop_names(self, words):
         all_words = tf.concat(words, axis=1)
-
-        if self.kind in ["name_unk", "unk", "shuffle"]:
-            def drop_names(ix):
-                unique_words, unique_idx = tf.unique(ix)
-                u_words = tf.shape(unique_words)[0]
-                to_drop = tf.logical_and(unique_words >= self._name_vecs_start,
-                                         tf.random_uniform((u_words,)) > self.keep_probs)
-                if self.kind == "name_unk":
-                    replace = tf.fill((u_words,), self._name_vecs_start)
-                elif self.kind == "unk":
-                    replace = tf.ones((u_words,), dtype=tf.int32)
-                elif self.kind == "shuffle":
-                    replace = tf.random_uniform(tf.shape(unique_words), self._name_vecs_start, self._name_vecs_end,
-                                                dtype=tf.int32)
-                else:
-                    raise ValueError()
-                unique_words = tf.where(to_drop, replace, unique_words)
-                return tf.gather(unique_words, unique_idx)
-
-            dropped_words = tf.map_fn(drop_names, all_words)
-            dropped_words = tf.split(dropped_words, [tf.shape(x)[1] for x in words], axis=1, num=len(words))
-
-            batch_dim = all_words.shape.as_list()[0]
-            return [tf.nn.embedding_lookup(self._word_emb_mat, x) for x in dropped_words]
-        else:
-            dim = self._word_emb_mat.shape.as_list()[1]
-            def drop_names(ix):
-                unique_words, unique_idx = tf.unique(ix)
-                u_words = tf.shape(unique_words)[0]
-                # Build a vector for each word in `u_words`, by either using a replace vec
-                # or a vec from our embed matrix
-                to_drop = tf.logical_and(unique_words >= self._name_vecs_start,
-                                         tf.random_uniform((u_words,)) > self.keep_probs)
-                replace = tf.random_uniform((u_words, dim), -0.5, 0.5)
-                replace = tf.concat([replace, tf.ones((u_words, 1), dtype=tf.float32)], axis=1)
-
-                if self.kind == "project_placeholder":
-                    replace = tf.matmul(replace, tf.get_variable("placeholder_weight", (dim, dim),
-                                                                 initializer=tf.eye(dim, dtype=tf.float32)))
-                    replace += tf.get_variable("placeholder_bias", (1, dim), tf.float32, tf.zeros_initializer())
-
-                g = tf.gather(self._word_emb_mat, unique_words)
-                g = tf.concat([g, tf.zeros((tf.shape(g)[0], 1), tf.float32)], axis=1)
-                vecs = tf.where(to_drop, replace, g)
-                out = tf.nn.embedding_lookup(vecs, unique_idx)
-                return out
-
-            embed = tf.map_fn(drop_names, all_words, dtype=tf.float32)
-            out = tf.split(embed, [tf.shape(x)[1] for x in words], axis=1, num=len(words))
-            # Shape inference needs a bit of help here, I am getting shape (?, ?, ?) for out
-            batch_dim = all_words.shape.as_list()[0]
-            for x in out:
-                x.set_shape(tf.TensorShape([batch_dim, None, dim+1]))
-            print(out)
-            return out
+        dropped_words = tf.map_fn(self._drop_names, all_words)
+        dropped_words = tf.split(dropped_words, [tf.shape(x)[1] for x in words], axis=1, num=len(words))
+        return dropped_words
 
     def embed(self, is_train, *word_ix):
         with tf.device("/cpu:0"):
             words, _ = zip(*word_ix)
-            return tf.cond(is_train, lambda: self.drop_names(words), lambda:
-            [tf.nn.embedding_lookup(self._word_emb_mat, x) for x in words])
-            # [tf.concat([tf.nn.embedding_lookup(self._word_emb_mat, x), tf.zeros((tf.shape(x)[0], tf.shape(x)[1], 1), tf.float32)], axis=2) for x in words])
+            words = tf.cond(is_train,
+                            lambda: self.drop_names_batch(words) if self.batch else self.drop_names(words),
+                            lambda: words)
+            return [tf.nn.embedding_lookup(self._word_emb_mat, x) for x in words]
 
     def __getstate__(self):
         state = dict(self.__dict__)

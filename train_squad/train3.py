@@ -7,7 +7,7 @@ from doc_qa_models import Attention
 from encoder import DocumentAndQuestionEncoder, SingleSpanAnswerEncoder
 from evaluator import LossEvaluator
 from nn.attention import StaticAttention, StaticAttentionSelf, AttentionEncoder
-from nn.embedder import FixedWordEmbedder, CharWordEmbedder, LearnedCharEmbedder
+from nn.embedder import FixedWordEmbedder, CharWordEmbedder, LearnedCharEmbedder, DropNames
 from nn.layers import NullBiMapper, NullMapper, SequenceMapperSeq, DropoutLayer, FullyConnected, ChainBiMapper, \
     ConcatWithProduct, WithProjectedProduct, \
     MapperSeq, ResidualLayer, MergeWith, VariationalDropoutLayer
@@ -18,8 +18,10 @@ from nn.span_prediction import WithFixedContextPredictionLayer, SpanFromBoundsPr
 from squad.build_squad_dataset import SquadCorpus
 from trainer import SerializableOptimizer, TrainParams
 
+
 from squad.squad_eval import BoundedSquadSpanEvaluator
 from utils import get_output_name_from_cli
+from data_processing.text_utils import NameDetector
 
 
 def main():
@@ -30,7 +32,7 @@ def main():
                                num_epochs=30, log_period=30, eval_period=1200, save_period=1200,
                                eval_samples=dict(dev=None, train=8000))
 
-    dim = 100
+    dim = 80
     recurrent_layer = CudnnGru(dim)
 
     model = Attention(
@@ -38,8 +40,8 @@ def main():
         word_embed_layer=None,
         # word_embed=DropNames(vec_name="glove.840B.300d", word_vec_init_scale=0, learn_unk=False,
         #                      keep_probs=0.7, kind="shuffle"),
-        word_embed=DropNames(vec_name="glove.840B.300d", word_vec_init_scale=0, learn_unk=False,
-                             keep_probs=0.6, kind="shuffle"),
+        word_embed=DropNames(selector=NameDetector(), vec_name="glove.840B.300d", word_vec_init_scale=0,
+                             swapped_flag=False, learn_unk=False, keep_probs=0.6, kind="shuffle"),
         char_embed=CharWordEmbedder(
             LearnedCharEmbedder(word_size_th=14, char_th=50, char_dim=20, init_scale=0.1, force_cpu=True),
             EncodeOverTime(FusedRecurrentEncoder(60), mask=True),

@@ -16,6 +16,20 @@ extra_split_chars_re = re.compile("(" + "|".join(extra_split_tokens) + ")")
 double_quote_re = re.compile("\"|``|''")
 space_re = re.compile("[ \u202f]")
 
+WEEK_DAYS = {"Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"}
+MONTHS = {"January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
+          "November", "December",
+          "Jan.", "Feb.", "Mar.", "Apr.", "Aug.", "Sept.", "Sep.", "Oct.",  "Nov.", "Dec."}
+HONORIFIC = {"Ltd", "Sr", "Jr", "Mr", "Mrs", "Ms", "Dr",
+             "Ltd.", "Sr.", "Jr.", "Mr.", "Mrs.", "Ms.", "Dr.",
+             "Miss", "Madam", "Sir", "Majesty", "Saint", "Prof"}
+TITLE = {"Princess", "King", "Queen", "Prince", "Duke", "Lord", "Lady",
+         "Archduke", "Archduchess", "Earl", "Baron", "Baroness", "Marquis",  "Marquess",
+         "Senator", "Representative", "Count", "Countess", "Viscount", "Viscountess",
+         "Emperor", "Empress", "Viceroy", "Pope", "Pastor", "Cardinal", "Priest",
+         "President", "Mayor", "Governor", "Admiral", "Captain", "Colonel", "Major",
+         "Sergeant", 'Judge'}
+
 
 def post_split_tokens(tokens: List[str]) -> List[str]:
     """ Apply a small amount of extra splitting to the given tokens, this is in particular to avoid UNK tokens
@@ -152,3 +166,43 @@ class NltkPlusStopWords(Configurable):
 
     def __setstate__(self, state):
         self.__init__(**state)
+
+
+class NameDetector(Configurable):
+    squad_exceptions = {
+        "Congress", "Olympic", "St", "Bible", "Android", "Bactria",
+        "Coke", "Pepsi", "Google", "Mac", "Facebook",
+        "Irreplaceable", "Privy", "Def", "Bactrian", "Fe", "Boo",
+        "Bang", "Atlas",
+        "Co.", "Co", "Inc.", "Inc", "Hz", "St."}
+
+    def __init__(self):
+        self.stop = None
+        self.word_counts = None
+        self.word_counts_lower = None
+
+    def init(self, word_counts):
+        print("Loading...")
+        stop = set(self.squad_exceptions)
+        stop.update(stopwords.words('english'))
+        stop.update(TITLE)
+        stop.update(HONORIFIC)
+        stop.update(WEEK_DAYS)
+        stop.update(x + "s" for x in WEEK_DAYS)
+        stop.update(MONTHS)
+        self.stop = {x.lower() for x in stop}
+        self.word_counts = word_counts
+        word_counts_lower = Counter()
+        for k, v in word_counts.items():
+            word_counts_lower[k.lower()] += v
+        self.word_counts_lower = word_counts_lower
+
+    def select(self, word):
+        if word[0].isupper() and word[1:].islower() and len(word) > 0:
+            wl = word.lower()
+            if wl not in self.stop:
+                lc = self.word_counts_lower[wl]
+                if lc == 0 or (self.word_counts[word] / lc) > 0.9:
+                    return True
+        return False
+

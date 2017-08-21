@@ -286,27 +286,6 @@ class ContextFeatures(ParagraphSelectorFeaturizer):
         return np.repeat(para_features, len(questions), axis=0)
 
 
-class NameDetector(object):
-    def __init__(self, docs: List[Document]):
-        counts = Counter()
-        for doc in docs:
-            for para in doc.paragraphs:
-                for question in para.questions:
-                    counts.update(question.words)
-                for sent in para.context:
-                    counts.update(sent)
-        self.counts = counts
-        self.lower_counts = Counter()
-
-        for word, c in counts.items():
-            self.lower_counts[word.lower()] += c
-
-    def is_name(self, word):
-        if len(word) > 1 and word[0].isupper() and word[1:].islower():
-            lc = self.lower_counts[word.lower()]
-            if lc == 0 or self.counts[word]/lc > 0.9:
-                return word
-
 
 # ac = re.compile("[A-Z][A-Z\.?]+s?$")
 # def extract_question_abrivations(words):
