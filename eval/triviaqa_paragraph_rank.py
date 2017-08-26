@@ -8,7 +8,7 @@ from tqdm import tqdm
 import trainer
 from data_processing.document_splitter import TopTfIdf, MergeParagraphs
 from data_processing.preprocessed_corpus import PreprocessedData, preprocess_par
-from data_processing.qa_data import ParagraphAndQuestion, ParagraphAndQuestionDataset, NoShuffleBatcher, Batcher
+from data_processing.qa_data import SentencesAndQuestion, ParagraphAndQuestionDataset, NoShuffleBatcher, Batcher
 from data_processing.text_utils import NltkPlusStopWords
 from dataset import ListBatcher, ClusteredBatcher
 from evaluator import Evaluator, Evaluation, RecordSpanPrediction, RecordQuestionId, LossEvaluator

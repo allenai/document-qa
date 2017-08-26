@@ -58,7 +58,7 @@ def _squad_answer_detector(paragraph: Paragraph,
         if (start, end) not in answer_spans:
             extracted = normalize_answer(paragraph.get_original_text(start, end))
             if any(extracted == x for x in correct_answer_text):
-                raise ValueError("Missed an answer span!")  # Sanity check, we should have extracted this
+                raise RuntimeError("Missed an answer span!")  # Sanity check, we should have extracted this
             else:
                 # normally due to the correct text being cut off mid word, or otherwise text that does not
                 # land between our tokens

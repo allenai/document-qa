@@ -4,7 +4,7 @@ import numpy as np
 from tqdm import tqdm
 
 from data_processing.document_splitter import MergeParagraphs, ContainsQuestionWord, DocumentSplitter, \
-    ExtractedParagraph
+    AnnotatedParagraph
 from data_processing.preprocessed_corpus import PreprocessedData
 from data_processing.qa_data import Batcher
 from data_processing.text_utils import NltkPlusStopWords, WordNormalizer
@@ -48,7 +48,7 @@ def paragraph_stats(corpus, splitter: DocumentSplitter, sample):
         # q_words = set(norm.normalize(w) for w in q_words)
 
         text = corpus.evidence.get_document(doc.doc_id)
-        para = splitter.split(text, doc.answer_spans)
+        para = splitter.split_annotated(text, doc.answer_spans)
         n_para.append(len(para))
         n_answers += [len(x.answer_spans) for x in para]
 
@@ -90,7 +90,7 @@ def paragraph_stats(corpus, splitter: DocumentSplitter, sample):
     #     print("%s: %d" % (k, v))
 
 
-def print_paragraph(question: TriviaQaQuestion, para: ExtractedParagraph):
+def print_paragraph(question: TriviaQaQuestion, para: AnnotatedParagraph):
     print(" ".join(question.question))
     print(question.answer.all_answers)
     context = flatten_iterable(para.text)
@@ -128,7 +128,7 @@ def contains_question_word():
         text = data.evidence.get_document(doc.doc_id, splits.reads_first_n)
         q_tokens = set(x.lower() for x in q.question)
         q_tokens -= stop
-        for para in splits.split(text, doc.answer_spans):
+        for para in splits.split_annotated(text, doc.answer_spans):
             # if para.start == 0:
             #     continue
             if len(para.answer_spans) == 0:

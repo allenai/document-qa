@@ -7,11 +7,19 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics import pairwise_distances
 
 from configurable import Configurable
+from data_processing.text_utils import NltkPlusStopWords
 from trivia_qa.evidence_corpus import TriviaQaEvidenceCorpusTxt
 from utils import flatten_iterable
 
 
 class ExtractedParagraph(object):
+    def __init__(self, text: List[List[str]], start: int, end: int):
+        self.text = text
+        self.start = start
+        self.end = end
+
+
+class AnnotatedParagraph(object):
     __slots__ = ["text", "start", "end", "answer_spans"]
 
     def __init__(self, text: List[List[str]], start: int, end: int, answer_spans: np.ndarray):
@@ -26,7 +34,7 @@ class ExtractedParagraph(object):
 
 
 class ParagraphFilter(Configurable):
-    def prune(self, question, paragraphs: List[ExtractedParagraph]) -> List[ExtractedParagraph]:
+    def prune(self, question, paragraphs: List[AnnotatedParagraph]) -> List[AnnotatedParagraph]:
         raise NotImplementedError()
 
 
@@ -35,7 +43,7 @@ class ContainsQuestionWord(ParagraphFilter):
         self.stop = stop
         self.allow_first = allow_first
 
-    def prune(self, question, paragraphs: List[ExtractedParagraph]):
+    def prune(self, question, paragraphs: List[AnnotatedParagraph]):
         q_words = {x.lower() for x in question}
         q_words -= self.stop.words
         output = []
@@ -58,22 +66,105 @@ class TopTfIdf(ParagraphFilter):
     def __init__(self, stop, n_to_select: int):
         self.stop = stop
         self.n_to_select = n_to_select
+        self._tfidf = TfidfVectorizer(strip_accents="unicode", stop_words=self.stop.words)
 
-    def prune(self, question, paragraphs: List[ExtractedParagraph]):
-        tfidf = TfidfVectorizer(strip_accents="unicode", stop_words=self.stop.words)
+    def prune(self, question, paragraphs: List[AnnotatedParagraph]):
+        tfidf = self._tfidf
         text = []
         for para in paragraphs:
             text.append(" ".join(" ".join(s) for s in para.text))
         try:
             para_features = tfidf.fit_transform(text)
             q_features = tfidf.transform([" ".join(question)])
-        except ValueError as e:
-            print("TfIdf error: " + str(e))
+        except ValueError:
             return []
 
         dists = pairwise_distances(q_features, para_features, "cosine").ravel()
         sorted_ix = np.argsort(dists)
         return [paragraphs[i] for i in sorted_ix[:self.n_to_select] if dists[i] > 0]
+
+
+class ShallowOpenWebRanker(ParagraphFilter):
+    TFIDF_W = 5.13365065
+    LOG_WORD_START_W = 0.46022765
+    FIRST_W = -0.08611607
+    LOWER_WORD_W = 0.0499123
+    WORD_W = -0.15537181
+
+    def __init__(self, n_to_select):
+        self.n_to_select = n_to_select
+        self._stop = NltkPlusStopWords(True).words
+        self._tfidf = TfidfVectorizer(strip_accents="unicode", stop_words=self._stop)
+
+    def get_features(self, question: List[str], paragraphs: List[List[AnnotatedParagraph]]):
+        scores = self.score_paragraphs(question, flatten_iterable(paragraphs))
+        # return scores
+        return np.expand_dims(scores, 1)
+
+    def get_feature_names(self):
+        return ["Score"]
+
+    def score_paragraphs(self, question, paragraphs: List[AnnotatedParagraph]):
+        # return np.zeros(len(paragraphs))
+        tfidf = self._tfidf
+        text = []
+        for para in paragraphs:
+            text.append(" ".join(" ".join(s) for s in para.text))
+        try:
+            para_features = tfidf.fit_transform(text)
+            q_features = tfidf.transform([" ".join(question)])
+        except ValueError:
+            return []
+
+        q_words = {x for x in question if x.lower() not in self._stop}
+        q_words_lower = {x.lower() for x in q_words}
+        word_matches_features = np.zeros((len(paragraphs), 2))
+        for para_ix, para in enumerate(paragraphs):
+            found = set()
+            found_lower = set()
+            for sent in para.text:
+                for word in sent:
+                    if word in q_words:
+                        found.add(word)
+                    elif word.lower() in q_words_lower:
+                        found_lower.add(word.lower())
+            word_matches_features[para_ix, 0] = len(found)
+            word_matches_features[para_ix, 1] = len(found_lower)
+
+        tfidf = pairwise_distances(q_features, para_features, "cosine").ravel()
+        starts = np.array([p.start for p in paragraphs])
+        log_word_start = np.log(starts/400.0 + 1)
+        first = starts == 0
+        scores = tfidf * self.TFIDF_W + self.LOG_WORD_START_W * log_word_start + self.FIRST_W * first +\
+                 self.LOWER_WORD_W * word_matches_features[:, 1] + self.WORD_W * word_matches_features[:, 0]
+        # return np.stack([tfidf, log_word_start, first, word_matches_features[:, 0],
+        #                  word_matches_features[:, 1], scores], axis=1)
+        return scores
+
+    def prune(self, question, paragraphs: List[AnnotatedParagraph]):
+        scores = self.score_paragraphs(question, paragraphs)
+        sorted_ix = np.argsort(scores)
+        return [paragraphs[i] for i in sorted_ix[:self.n_to_select]]
+
+    def __getstate__(self):
+        return dict(n_to_select=self.n_to_select)
+
+    def __setstate__(self, state):
+        return self.__init__(state['n_to_select'])
+
+
+# any_2_word_match: 0.0471
+# any_2_word_lower_match: -0.0634
+# first: 0.1001
+# log_word_start: -0.4644
+# all-tfidf: -7.0414
+
+class First(ParagraphFilter):
+    def __init__(self, n_to_select: int):
+        self.n_to_select = n_to_select
+
+    def prune(self, question, paragraphs: List[AnnotatedParagraph]):
+        return paragraphs[:self.n_to_select]
 
 
 class DocumentSplitter(Configurable):
@@ -89,9 +180,19 @@ class DocumentSplitter(Configurable):
         """ only requires the first `n` tokens of the documents, or None """
         return None
 
-    def split(self, doc: List[List[List[str]]], spans: np.ndarray) -> List[ExtractedParagraph]:
+    def split(self, doc: List[List[List[str]]]) -> List[ExtractedParagraph]:
         raise NotImplementedError()
 
+    def split_annotated(self, doc: List[List[List[str]]], spans: np.ndarray) -> List[AnnotatedParagraph]:
+        out = []
+        for para in self.split(doc):
+            para_spans = spans[np.logical_and(spans[:, 0] >= para.start, spans[:, 1] < para.end)] - para.start
+            out.append(AnnotatedParagraph(para.text, para.start, para.end, para_spans))
+        return out
+
+# first: 0.0247
+# log_word_start: -0.4654
+# all-tfidf: -7.7801
 
 class Truncate(DocumentSplitter):
     """ map a document to a single paragraph of the first `max_tokens` tokens """
@@ -106,18 +207,18 @@ class Truncate(DocumentSplitter):
     def reads_first_n(self):
         return self.max_tokens
 
-    def split(self, doc: List[List[List[str]]], spans: np.ndarray):
+    def split(self, doc: List[List[List[str]]]):
         output = []
         cur_tokens = 0
         for para in doc:
             for sent in para:
                 if cur_tokens + len(sent) > self.max_tokens:
                     output.append(sent[:self.max_tokens - cur_tokens])
-                    return [ExtractedParagraph(output, 0, self.max_tokens, spans[spans[:, 1] < self.max_tokens])]
+                    return [AnnotatedParagraph(output, 0, self.max_tokens, spans[spans[:, 1] < self.max_tokens])]
                 else:
                     cur_tokens += len(sent)
                     output.append(sent)
-        return [ExtractedParagraph(output, 0, cur_tokens, spans[spans[:, 1] < self.max_tokens])]
+        return [ExtractedParagraph(output, 0, cur_tokens)]
 
 
 class MergeParagraphs(DocumentSplitter):
@@ -142,7 +243,7 @@ class MergeParagraphs(DocumentSplitter):
     def max_tokens(self):
         return self.max_tokens
 
-    def split(self, doc: List[List[List[str]]], spans: np.ndarray):
+    def split(self, doc: List[List[List[str]]]):
         all_paragraphs = []
 
         on_doc_token = 0  # the word in the document the current paragraph starts at
@@ -167,16 +268,16 @@ class MergeParagraphs(DocumentSplitter):
                     if self.pad > 0:
                         pad_with = min(self.max_tokens - cur_tokens, self.pad)
                         on_paragraph += extract_tokens(para, self.max_tokens - cur_tokens)
-                        all_paragraphs.append(ExtractedParagraph(on_paragraph, on_doc_token, start_token+pad_with, None))
+                        all_paragraphs.append(ExtractedParagraph(on_paragraph, on_doc_token, start_token + pad_with))
                     else:
-                        all_paragraphs.append(ExtractedParagraph(on_paragraph, on_doc_token, start_token, None))
+                        all_paragraphs.append(ExtractedParagraph(on_paragraph, on_doc_token, start_token))
                     on_paragraph = []
                     cur_tokens = 0
 
                 if n_words >= self.max_tokens:  # either truncate the given paragraph, or begin a new paragraph
                     text = extract_tokens(para, self.max_tokens)
                     all_paragraphs.append(ExtractedParagraph(text, start_token,
-                                                             start_token+self.max_tokens, None))
+                                                             start_token + self.max_tokens))
                     on_doc_token = end_token
                 else:
                     on_doc_token = start_token
@@ -187,10 +288,7 @@ class MergeParagraphs(DocumentSplitter):
                 cur_tokens += n_words
 
         if len(on_paragraph) > 0:
-            all_paragraphs.append(ExtractedParagraph(on_paragraph, on_doc_token, word_ix, None))
-
-        for para in all_paragraphs:
-            para.answer_spans = spans[np.logical_and(spans[:, 0] >= para.start, spans[:, 1] < para.end)] - para.start
+            all_paragraphs.append(ExtractedParagraph(on_paragraph, on_doc_token, word_ix))
 
         return all_paragraphs
 
@@ -233,7 +331,7 @@ def test_splitter(splitter: DocumentSplitter, n_sample, n_answer_spans, seed=Non
         flattened = flatten_iterable(flatten_iterable(text))
         answer_strs = set(tuple(flattened[s:e+1]) for s,e in fake_answers)
 
-        paragraphs = splitter.split(text, fake_answers)
+        paragraphs = splitter.split_annotated(text, fake_answers)
 
         for para in paragraphs:
             text = flatten_iterable(para.text)

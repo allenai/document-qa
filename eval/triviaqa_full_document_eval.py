@@ -10,27 +10,31 @@ from tqdm import tqdm
 import trainer
 from data_processing.document_splitter import DocumentSplitter, MergeParagraphs, ParagraphFilter, ContainsQuestionWord, \
     TopTfIdf
-from data_processing.qa_data import ParagraphAndQuestionDataset, NoShuffleBatcher
+from data_processing.preprocessed_corpus import preprocess_par
+from data_processing.qa_training_data import ParagraphAndQuestionDataset
+from data_processing.span_data import TokenSpans
 from data_processing.text_utils import NltkPlusStopWords
+from dataset import FixedOrderBatcher
 from evaluator import Evaluator, Evaluation
-from model import ModelOutput
 from trainer import ModelDir
 from trivia_qa.build_span_corpus import TriviaQaWebDataset, TriviaQaOpenDataset
 from trivia_qa.evidence_corpus import TriviaQaEvidenceCorpusTxt
 from trivia_qa.read_data import TriviaQaQuestion
+from trivia_qa.training_data import DocumentParagraphQuestion, ExtractMultiParagraphs
 from trivia_qa.trivia_qa_eval import f1_score as trivia_f1_score
-from trivia_qa.triviaqa_training_data import TriviaQaAnswer, DocumentParagraphQuestion
+from trivia_qa.trivia_qa_eval import exact_match_score as trivia_em_score
 from utils import ResourceLoader, flatten_iterable
 
 
 class RecordParagraphSpanPrediction(Evaluator):
     """ Computes the best span in tensorflow, meaning which we expect to be faster and
     does not require us having to keep the entire set of output logits in RAM """
-    def __init__(self, bound: int):
+    def __init__(self, bound: int, record_text_ans: bool):
         self.bound = bound
+        self.record_text_ans = record_text_ans
 
-    def tensors_needed(self, model):
-        span, score = model.prediction.get_best_span(self.bound)
+    def tensors_needed(self, prediction):
+        span, score = prediction.get_best_span(self.bound)
         return dict(spans=span, model_scores=score)
 
     def evaluate(self, data: List[DocumentParagraphQuestion], true_len, **kargs):
@@ -38,120 +42,70 @@ class RecordParagraphSpanPrediction(Evaluator):
         spans, model_scores = np.array(kargs["spans"]), np.array(kargs["model_scores"])
 
         pred_f1s = np.zeros(len(data))
+        pred_em = np.zeros(len(data))
         oracle_f1s = np.zeros(len(data))
+        text_answers = []
 
         print("Scoring...")
-        for i in tqdm(range(len(data)), total=len(data)):
+        for i in tqdm(range(len(data)), total=len(data), ncols=80):
             point = data[i]
-            if point.answer is None:
+            if point.answer is None and not self.record_text_ans:
                 continue
-            text = flatten_iterable(point.context)
+            text = point.get_context()
             pred_span = spans[i]
             pred_text = " ".join(text[pred_span[0]:pred_span[1] + 1])
+            if self.record_text_ans:
+                text_answers.append(pred_text)
+                if point.answer is None:
+                    continue
+
             f1 = 0
-            for answer in data[i].answer.answer_aliases:
+            em = False
+            for answer in data[i].answer.answer_text:
                 f1 = max(f1, trivia_f1_score(pred_text, answer))
+                if not em:
+                    em = trivia_em_score(pred_text, answer)
+
             pred_f1s[i] = f1
+            pred_em[i] = em
 
             oracle_f1 = 0
             for s,e in point.answer.answer_spans:
                 pred_text = " ".join(text[s:e+1])
-                for answer in point.answer.answer_aliases:
+                for answer in point.answer.answer_text:
                     oracle_f1 = max(oracle_f1, trivia_f1_score(pred_text, answer))
             oracle_f1s[i] = oracle_f1
 
         results = {}
         results["n_answers"] = [0 if x.answer is None else len(x.answer.answer_spans) for x in data]
+        if self.record_text_ans:
+            results["text_answer"] = text_answers
         results["predicted_score"] = model_scores
         results["predicted_start"] = spans[:, 0]
         results["predicted_end"] = spans[:, 1]
         results["text_f1"] = pred_f1s
+        results["text_em"] = pred_em
         results["oracle_f1"] = oracle_f1s
         results["para_start"] = [x.para_range[0] for x in data]
         results["para_end"] = [x.para_range[1] for x in data]
-        results["quid"] = [x.q_id for x in data]
+        results["question_id"] = [x.question_id for x in data]
         results["doc_id"] = [x.doc_id for x in data]
         return Evaluation({}, results)
-
-
-class RecordParagraphResult(Evaluator):
-    def tensors_needed(self, prediction: ModelOutput):
-        super().tensors_needed(prediction)
-
-
-def eval(model_dir: ModelDir, batch_size: int,
-         test_questions: List[TriviaQaQuestion],
-         document_splitter: DocumentSplitter,
-         paragraph_filter: Optional[ParagraphFilter],
-         corpus: TriviaQaEvidenceCorpusTxt,
-         n_questions: Optional[int], output: Optional[str]=None, ema=False):
-
-    if n_questions is not None:
-        test_questions.sort(key=lambda x:x.question_id)
-        np.random.RandomState(0).shuffle(test_questions)
-        test_questions = test_questions[:n_questions]
-
-    print("Loading docs...")
-    questions = []
-    n_pairs = 0
-    n_filtered = 0
-    for q in tqdm(test_questions):
-        for doc in q.all_docs:
-            n_pairs += 1
-            text = corpus.get_document(doc.doc_id, document_splitter.reads_first_n)
-            if text is None:
-                raise ValueError()
-            paragraphs = document_splitter.split(text, doc.answer_spans)
-            unfiltered_len = len(paragraphs)
-            if paragraph_filter is not None:
-                paragraphs = paragraph_filter.prune(q.question, paragraphs)
-                n_filtered += unfiltered_len - len(paragraphs)
-
-            for para in paragraphs:
-                answer = TriviaQaAnswer(para.answer_spans, q.answer.all_answers)
-                questions.append(DocumentParagraphQuestion(q.question_id, doc.doc_id, (para.start, para.end),
-                                                           q.question, para.text, answer))
-
-    print("Split %d q-doc pairs into %d q-paragraph pairs (%d filtered)" % (n_pairs, len(questions), n_filtered))
-    # Reverse so our first batch will be the largest (so OOMs happen early)
-    questions = sorted(questions, key=lambda x: (len(x.context), len(x.question)), reverse=True)
-
-    print("Done, starting eval")
-
-    checkpoint = model_dir.get_latest_checkpoint()
-    data = ParagraphAndQuestionDataset(questions, NoShuffleBatcher(batch_size, True))
-
-    model = model_dir.get_model()
-    evaluation = runner.test(model,
-                             [RecordParagraphSpanPrediction(8)],
-                             [data], ResourceLoader(), checkpoint, ema, None)[0]
-
-    print("Saving result")
-    output_file = join(model_dir.get_eval_dir(), output)
-
-    if output_file.endswith("json"):
-        with open(output_file, "w") as f:
-            json.dump(evaluation.per_sample, f)
-    elif output_file.endswith("pkl"):
-        with open(output_file, "wb") as f:
-            pickle.dump(evaluation.per_sample, f)
-    elif output_file.endswith("csv"):
-        import pandas as pd
-        df = pd.DataFrame(evaluation.per_sample)
-        df.to_csv(output_file, index=False)
-    else:
-        raise ValueError("Unrecognized file format")
 
 
 def main():
     parser = argparse.ArgumentParser(description='')
     parser.add_argument('model', help='name of output to exmaine')
-    parser.add_argument('output', type=str)
+    parser.add_argument('-p', '--paragraph_output', type=str, help="Save fine grained results for each paragraph")
+    parser.add_argument('-q', '--question_predictions', type=str, help="Save predictions for each question")
+    parser.add_argument('-d', '--question_doc_predictions', type=str, help="Save predictions for each question-doc pair")
+    parser.add_argument('-e', '--ema', action="store_true")
     parser.add_argument('-n', '--n_sample', type=int, default=None)
+    parser.add_argument('-a', '--async', type=int, default=10)
     parser.add_argument('-s', '--splitter', type=str, default="merge-400",
                         choices=["merge-400", "merge-800"])
-    parser.add_argument('-f', '--filter', type=str, default="none",
-                        choices=["contains-question-word", "tfidf", "none"])
+    parser.add_argument('-f', '--filter', type=str, default="tfidf-6",
+                        choices=["contains-question-word", "tfidf-6", "tfidf-10", "none"])
     parser.add_argument('-b', '--batch_size', type=int, default=200)
     parser.add_argument('-c', '--corpus',
                         choices=["web-dev", "web-verified-dev", "web-train",
@@ -165,20 +119,20 @@ def main():
         dataset = TriviaQaWebDataset()
         corpus = dataset.evidence
         if args.corpus == "web-dev":
-            data = dataset.get_dev()
+            test_questions = dataset.get_dev()
         elif args.corpus == "web-verified-dev":
-            data = dataset.get_verified()
+            test_questions = dataset.get_verified()
         elif args.corpus == "web-train":
-            data = dataset.get_train()
+            test_questions = dataset.get_train()
         else:
             raise RuntimeError()
     else:
         dataset = TriviaQaOpenDataset()
         corpus = dataset.evidence
         if args.corpus == "open-dev":
-            data = dataset.get_dev()
+            test_questions = dataset.get_dev()
         elif args.corpus == "open-train":
-            data = dataset.get_train()
+            test_questions = dataset.get_train()
         else:
             raise RuntimeError()
 
@@ -189,23 +143,97 @@ def main():
 
     if args.filter == "contains-question-word":
         para_filter = ContainsQuestionWord(NltkPlusStopWords(punctuation=True))
-    elif args.filter == "tfidf":
-        para_filter = TopTfIdf(NltkPlusStopWords(punctuation=True), 6)
+    elif args.filter.startswith("tfidf-"):
+        para_filter = TopTfIdf(NltkPlusStopWords(punctuation=True), int(args.filter[6:]))
     else:
         para_filter = None
 
-    eval(model_dir, args.get_fixed_batch_size, data, splitter, para_filter,
-         corpus, args.n_sample, args.output, True)
+    n_questions = args.n_sample
+    if n_questions is not None:
+        test_questions.sort(key=lambda x:x.question_id)
+        np.random.RandomState(0).shuffle(test_questions)
+        test_questions = test_questions[:n_questions]
 
+    print("Building question/paragraph pairs...")
+    prep = ExtractMultiParagraphs(splitter, para_filter, require_an_answer=False)
+    prepped_data = preprocess_par(test_questions, corpus, prep, 6, 1000)
 
-def tmp():
-    with open("/tmp/test.pkl", "rb") as f:
-        data = pickle.load(f)
-        print(data)
+    data = []
+    for q in prepped_data.data:
+        for p in q.paragraphs:
+            data.append(DocumentParagraphQuestion(q.question_id, p.doc_id,
+                                                 (p.start, p.end), q.question,
+                                                 p.text, TokenSpans(q.answer_text, p.answer_spans)))
+
+    n_filtered = len(test_questions) - prepped_data.true_len
+
+    print("Split %d q-doc pairs into %d q-paragraph pairs (%d filtered)" % (
+        sum(len(x.all_docs) for x in test_questions), len(data), n_filtered))
+
+    # Reverse so our first batch will be the largest (so OOMs happen early)
+    questions = sorted(data, key=lambda x: (x.n_context_words, len(x.question)), reverse=True)
+
+    print("Done, starting eval")
+
+    checkpoint = model_dir.get_latest_checkpoint()
+    test_questions = ParagraphAndQuestionDataset(questions, FixedOrderBatcher(args.batch_size, True))
+
+    model = model_dir.get_model()
+    evaluation = trainer.test(model,
+                             [RecordParagraphSpanPrediction(8, True)],
+                              {args.corpus:test_questions}, ResourceLoader(), checkpoint, args.ema, args.async)[args.corpus]
+
+    import pandas as pd
+    df = pd.DataFrame(evaluation.per_sample)
+    df.sort_values(["question_id", "doc_id", "predicted_score"], inplace=True, ascending=False)
+
+    q_pred = df.groupby(["question_id"]).first()
+    print("Question EM: %.4f" % q_pred["text_em"].mean())
+    print("Question F1: %.4f" % q_pred["text_f1"].mean())
+
+    doc_pred = df.groupby(["question_id", "doc_id"]).first()
+    print("Doc-Question EM: %.4f" % doc_pred["text_em"].mean())
+    print("Doc-Question F1: %.4f" % doc_pred["text_f1"].mean())
+
+    print("Para-Question EM: %.4f" % df["text_em"].mean())
+    print("Para-Question F1: %.4f" % df["text_f1"].mean())
+
+    output_file = args.paragraph_output
+    if output_file is not None:
+        print("Saving paragraph result")
+        if output_file.endswith("json"):
+            with open(output_file, "w") as f:
+                json.dump(evaluation.per_sample, f)
+        elif output_file.endswith("pkl"):
+            with open(output_file, "wb") as f:
+                pickle.dump(evaluation.per_sample, f)
+        elif output_file.endswith("csv"):
+            import pandas as pd
+            df = pd.DataFrame(evaluation.per_sample)
+            df.to_csv(output_file, index=False)
+        else:
+            raise ValueError("Unrecognized file format")
+
+    # if args.question_predictions is not None:
+    #     print("Saving question predictions")
+    #     pred = {}
+    #     for quid, group in df.groupby(["question_id"]):
+    #         selected = group["predicted_score"].argmax()
+    #         pred[quid] = group["text_answer"][selected]
+    #     with open(args.question_predictions, "w") as f:
+    #         json.dump(evaluation.per_sample, f)
+    #
+    # if args.question_doc_predictions is not None:
+    #     print("Saving question-doc predictions")
+    #     pred = {}
+    #     for id, group in df.groupby(["question_id", "doc_id"]):
+    #         selected = group["predicted_score"].argmax()
+    #         pred[id] = group["text_answer"][selected]
+    #     with open(args.question_doc_predictions, "w") as f:
+    #         json.dump(evaluation.per_sample, f)
 
 if __name__ == "__main__":
     main()
-    # tmp()
 
 
 

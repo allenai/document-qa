@@ -25,7 +25,7 @@ from utils import NumpyEncoder, flatten_iterable
 class ModelDir(object):
     def __init__(self, name: str):
         if isabs(name):
-            print("WARNING!!!, using an absolute paths for models name will break restoring "
+            print("WARNING!!!, using an absolute paths for models name can break restoring "
                   "the model if the model directory is used")
         self.dir = name
 
@@ -182,10 +182,15 @@ def save_train_start(out,
         pickle.dump(train, f)
 
 
-def _build_train_ops(loss, train_params):
+def _build_train_ops(train_params):
     """ Bulid ops we should run during training, including learning, EMA, and summary ops"""
     global_step = tf.get_variable('global_step', shape=[], dtype='int32',
                                   initializer=tf.constant_initializer(0), trainable=False)
+
+    loss = tf.get_collection(tf.GraphKeys.LOSSES)
+    if len(loss) == 0:
+        raise RuntimeError("No losses found in losses collection")
+    loss = tf.add_n(loss, name="loss")
 
     summary_tensor = tf.summary.merge([[tf.summary.tensor_summary("loss", loss)] +
                                        tf.get_collection(tf.GraphKeys.SUMMARIES)])
@@ -193,20 +198,13 @@ def _build_train_ops(loss, train_params):
 
     regularizers = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
     if len(regularizers) > 0:
-        regularization_loss = tf.add_n(regularizers)
+        regularization_loss = tf.add_n(regularizers, name="regularization_loss")
         if train_params.regularization_weight is not None:
             train_objective = train_objective + regularization_loss * train_params.regularization_weight
         else:
             train_objective = train_objective + regularization_loss
     else:
         regularization_loss = None
-
-    auxillary_tasks = tf.get_collection("auxillary_losses")
-    if len(auxillary_tasks) > 0:
-        auxillary_loss = tf.add_n(auxillary_tasks)
-        train_objective = train_objective + auxillary_loss
-    else:
-        auxillary_loss = None
 
     opt = train_params.opt.get()
     train_opt = opt.apply_gradients(opt.compute_gradients(train_objective), global_step=global_step)
@@ -238,14 +236,13 @@ def _build_train_ops(loss, train_params):
     if train_params.loss_ema is not None:
         loss_ema = tf.train.ExponentialMovingAverage(decay=train_params.loss_ema, name="LossEMA", zero_debias=True)
 
-        if regularization_loss is None and auxillary_loss is None:
+        if regularization_loss is None:
             ema_op = loss_ema.apply([loss])
             train_opt = tf.group(train_opt, ema_op)
             ema_var = loss_ema.average(loss)
             summary_tensor = tf.summary.merge([tf.summary.scalar("training-ema/loss", ema_var), summary_tensor])
         else:
-            to_track = [loss, train_objective] + [x for x in [regularization_loss, auxillary_loss] if
-                                                  x is not None]
+            to_track = [loss, train_objective, regularization_loss]
             ema_op = loss_ema.apply(to_track)
             train_opt = tf.group(train_opt, ema_op)
             tensor_vars = [
@@ -255,9 +252,6 @@ def _build_train_ops(loss, train_params):
             if regularization_loss is not None:
                 tensor_vars.append(tf.summary.scalar("training-ema/regularization-loss",
                                                      loss_ema.average(regularization_loss)))
-            if auxillary_loss is not None:
-                tensor_vars.append(tf.summary.scalar("training-ema/auxillary-loss",
-                                                     loss_ema.average(auxillary_loss)))
             summary_tensor = tf.summary.merge([tensor_vars, summary_tensor])
 
     return loss, summary_tensor, train_opt, global_step
@@ -376,7 +370,7 @@ def _train(model: Model,
         saver.restore(sess, parameter_checkpoint)
         saver = None
 
-    loss, summary_tensor, train_opt, global_step = _build_train_ops(pred.loss, train_params)
+    loss, summary_tensor, train_opt, global_step = _build_train_ops(train_params)
 
     # Pre-compute tensors we need at evaluations time
     eval_tensors = []
@@ -406,7 +400,6 @@ def _train(model: Model,
 
     print("Start training!")
 
-    batch_time = 0
     on_step = sess.run(global_step)
     if save_start:
         summary_writer.add_graph(sess.graph, global_step=on_step)
@@ -421,6 +414,7 @@ def _train(model: Model,
             for s in evaluation.to_summaries(name + "-"):
                 summary_writer.add_summary(s, on_step)
 
+    batch_time = 0
     for epoch in range(train_params.num_epochs):
         for batch_ix, batch in enumerate(train.get_epoch()):
             t0 = time.perf_counter()
@@ -430,10 +424,10 @@ def _train(model: Model,
             encoded = model.encode(batch, True)
 
             if get_summary:
-                loss, summary, _ = sess.run([pred.loss, summary_tensor, train_opt], feed_dict=encoded)
+                summary, _ = sess.run([summary_tensor, train_opt], feed_dict=encoded)
             else:
                 summary = None
-                loss, _ = sess.run([pred.loss, train_opt], feed_dict=encoded)
+                sess.run([train_opt], feed_dict=encoded)
 
             batch_time += time.perf_counter() - t0
             if get_summary:
@@ -472,7 +466,7 @@ def test(model: Model, evaluators, datasets: Dict[str, Dataset], loader, checkpo
 
     if aysnc_encoding:
         evaluator_runner = AysncEvaluatorRunner(evaluators, model, aysnc_encoding)
-        inputs = evaluator_runner.eval_queue.dequeue()
+        inputs = evaluator_runner.dequeue_op
     else:
         evaluator_runner = EvaluatorRunner(evaluators, model)
         inputs = model.get_placeholders()
@@ -559,7 +553,7 @@ def _train_async(model: Model,
 
     print("Setting up model prediction / tf...")
 
-    loss, summary_tensor, train_opt, global_step = _build_train_ops(pred.loss, train_params)
+    loss, summary_tensor, train_opt, global_step = _build_train_ops(train_params)
 
     # Pre-compute tensors we need at evaluations time
     eval_tensors = []
@@ -629,10 +623,10 @@ def _train_async(model: Model,
                     raise RuntimeError("Enqueue thread crashed!")
 
                 if get_summary:
-                    loss, summary, _ = sess.run([pred.loss, summary_tensor, train_opt], feed_dict=train_dict)
+                    summary, _ = sess.run([summary_tensor, train_opt], feed_dict=train_dict)
                 else:
                     summary = None
-                    loss, _ = sess.run([pred.loss, train_opt], feed_dict=train_dict)
+                    sess.run([train_opt], feed_dict=train_dict)
 
                 batch_time += time.perf_counter() - t0
                 if summary is not None:

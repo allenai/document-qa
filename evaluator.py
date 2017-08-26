@@ -7,10 +7,11 @@ import tensorflow as tf
 from tqdm import tqdm
 
 from configurable import Configurable
-from data_processing.paragraph_qa import ParagraphAndQuestion, DocParagraphAndQuestion
+from data_processing.multi_paragraph_qa import DocumentParagraph
+from data_processing.qa_training_data import ContextAndQuestion
 from data_processing.span_data import compute_span_f1
 from dataset import Dataset
-from model import ModelOutput, Model
+from model import Model, Prediction
 from utils import NumpyEncoder, flatten_iterable
 
 
@@ -65,7 +66,7 @@ def log_evaluation(eval: Evaluation, data_used, output_file=None):
 class Evaluator(Configurable):
     """ Class to generate statistics on a model's output for some data"""
 
-    def tensors_needed(self, prediction: ModelOutput):
+    def tensors_needed(self, prediction: Prediction):
         """ Return all tensor variables needed by this evaluator in a dict, the results will
         be passed into `build_summary` """
         pass
@@ -81,41 +82,26 @@ class Evaluator(Configurable):
 
 class LossEvaluator(Evaluator):
 
-    def tensors_needed(self, prediction):
-        return dict(loss=prediction.loss)
+    def tensors_needed(self, _):
+        return dict(loss=tf.add_n(tf.get_collection(tf.GraphKeys.LOSSES)))
 
-    def evaluate(self, data: List[ParagraphAndQuestion], true_len, loss):
+    def evaluate(self, data, true_len, loss):
         return Evaluation({"loss": np.mean(loss)})
 
 
 class RegularizerLossEvaluator(Evaluator):
 
-    def tensors_needed(self, prediction):
+    def tensors_needed(self, _):
         regularizers = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
         if len(regularizers) == 0:
             return {}
         else:
             return dict(reg=tf.add_n(regularizers))
 
-    def evaluate(self, data: List[ParagraphAndQuestion], true_len, reg=None):
+    def evaluate(self, data: List[ContextAndQuestion], true_len, reg=None):
         if reg is None:
             return Evaluation({})
         return Evaluation({"regularization-loss": np.mean(reg)})
-
-
-class AuxillaryLossEvaluator(Evaluator):
-
-    def tensors_needed(self, prediction):
-        aux = tf.get_collection("auxillary_losses")
-        if len(aux) == 0:
-            return {}
-        else:
-            return dict(reg=tf.add_n(aux))
-
-    def evaluate(self, data: List[ParagraphAndQuestion], true_len, reg=None):
-        if reg is None:
-            return Evaluation({})
-        return Evaluation({"auxillary_loss": np.mean(reg)})
 
 
 def record_span_predictions(predictions, name):
@@ -126,21 +112,26 @@ def record_span_predictions(predictions, name):
 
 
 class RecordQuestionId(Evaluator):
-    def tensors_needed(self, prediction: ModelOutput):
+    def tensors_needed(self, _):
         return dict()
 
     def evaluate(self, data, true_len, **kwargs):
-        return Evaluation({}, dict(question_id=[x.question_id for x in data]))
+        out = dict(question_id=[x.question_id for x in data])
+        if isinstance(data[0], DocumentParagraph):
+            out.update(dict(doc_id=[x.doc_id for x in data],
+                       start=np.array([x.start for x in data]),
+                       end=np.array([x.end for x in data])))
+        return Evaluation({}, out)
 
 
 class SpanProbability(Evaluator):
     def __init__(self, sum=True):
         self.sum = sum
 
-    def tensors_needed(self, model):
-        return dict(p1=model.prediction.start_probs, p2=model.prediction.end_probs)
+    def tensors_needed(self, prediction):
+        return dict(p1=prediction.start_probs, p2=prediction.end_probs)
 
-    def evaluate(self, data: List[ParagraphAndQuestion], true_len, p1, p2):
+    def evaluate(self, data: List[ContextAndQuestion], true_len, p1, p2):
         start_probs = []
         end_probs = []
         for ix, point in enumerate(data):
@@ -164,7 +155,7 @@ class SpanProbability(Evaluator):
                            prefix + "end": np.mean(end_probs)})
 
 
-def span_scores(data: List[Union[ParagraphAndQuestion, DocParagraphAndQuestion]], prediction):
+def span_scores(data: List[ContextAndQuestion], prediction):
     scores = np.zeros((len(data), 2))
     for i in range(len(data)):
         para = data[i]
@@ -189,10 +180,10 @@ class SpanEvaluator(Evaluator):
     def __init__(self, bound: List[int]):
         self.bound = bound
 
-    def tensors_needed(self, model):
-        return {str(b): model.prediction.get_best_span(b)[0] for b in self.bound}
+    def tensors_needed(self, prediction):
+        return {str(b): prediction.get_best_span(b)[0] for b in self.bound}
 
-    def evaluate(self, data: List[ParagraphAndQuestion], true_len, **kwargs):
+    def evaluate(self, data: List[ContextAndQuestion], true_len, **kwargs):
         ev = Evaluation({})
         for b in self.bound:
             best_spans = kwargs[str(b)]
@@ -211,11 +202,11 @@ class RecordSpanPrediction(Evaluator):
         self.bound = bound
         self.prefix = prefix
 
-    def tensors_needed(self, model):
-        span, score = model.prediction.get_best_span(self.bound)
+    def tensors_needed(self, prediction):
+        span, score = prediction.get_best_span(self.bound)
         return dict(spans=span, model_scores=score)
 
-    def evaluate(self, data: List[ParagraphAndQuestion], true_len, **kargs):
+    def evaluate(self, data: List[ContextAndQuestion], true_len, **kargs):
         spans, model_scores = kargs["spans"], kargs["model_scores"]
         if self.prefix is None:
             prefix = "bound-%d-" % self.bound
@@ -234,10 +225,10 @@ class EvaluatorRunner(object):
         self.tensors_needed = None
         self.model = model
 
-    def set_input(self, output: ModelOutput):
+    def set_input(self, prediction: Prediction):
         tensors_needed = []
         for ev in self.evaluators:
-            tensors_needed.append(ev.tensors_needed(output))
+            tensors_needed.append(ev.tensors_needed(prediction))
         self.tensors_needed = tensors_needed
 
     def run_evaluators(self, sess: tf.Session, dataset: Dataset, name, n_sample=None, feed_dict=None) -> Evaluation:
@@ -297,15 +288,18 @@ class AysncEvaluatorRunner(object):
         self.eval_queue = tf.FIFOQueue(queue_size, [x.dtype for x in placeholders],
                                   name="eval_queue")
         self.enqueue_op = self.eval_queue.enqueue(placeholders)
+        self.dequeue_op = self.eval_queue.dequeue()
+        for x,p in zip(placeholders, self.dequeue_op):
+            p.set_shape(x.shape)
         self.evaluators = evaluators
         self.queue_size = self.eval_queue.size()
         self.model = model
         self.tensors_needed = None
 
-    def set_input(self, output: ModelOutput):
+    def set_input(self, prediction: Prediction):
         tensors_needed = []
         for ev in self.evaluators:
-            tensors_needed.append(ev.tensors_needed(output))
+            tensors_needed.append(ev.tensors_needed(prediction))
         self.tensors_needed = tensors_needed
 
     def run_evaluators(self, sess: tf.Session, dataset, name, n_sample, feed_dict) -> Evaluation:

@@ -5,7 +5,7 @@ from typing import List, Optional
 
 from config import CORPUS_DIR, NIKET_QA
 from configurable import Configurable
-from data_processing.qa_data import ParagraphAndQuestion, ParagraphQaTrainingData
+from data_processing.qa_data import SentencesAndQuestion, ParagraphQaTrainingData
 from data_processing.span_data import TokenSpans
 from data_processing.text_utils import get_paragraph_tokenizer
 from data_processing.word_vectors import load_word_vectors
@@ -147,7 +147,7 @@ def build(source_file, tokenizer):
                     occ = np.zeros([0, 2], dtype=np.int32)
                 else:
                     occ = np.array(occ, dtype=np.int32)
-                questions.append(ParagraphAndQuestion(context, word_tokenize(question["question"]),
+                questions.append(SentencesAndQuestion(context, word_tokenize(question["question"]),
                                                       TokenSpans(answers, occ), question["id"]))
 
             para_id += 1
@@ -165,6 +165,14 @@ def main(tokenizer):
     print("Done!")
 
 
+def count():
+    data = NiketCorpus()
+    l = np.array(flatten_iterable([(e-s+1) for s,e in x.answer.answer_spans] for x  in data.get_train()))
+    print(l.mean())
+    print((l == 1).mean())
+
+
 if __name__ == "__main__":
-    main("NLTK_AND_CLEAN")
+    count()
+    # main("NLTK_AND_CLEAN")
 

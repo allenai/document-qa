@@ -27,7 +27,8 @@ from trivia_qa.read_data import iter_trivia_question, TriviaQaQuestion
 
 """
 Build span-level training data from the raw trivia-qa inputs, in particular annotates each question/doc
-with the places the question answer's occur within the document and saves the resulting dataset
+with the places the question answer's occur within the document and saves the resulting dataset.
+Assumes the evidence corpus has already been preprocessed 
 """
 
 
@@ -61,7 +62,7 @@ def build_dataset(name, tokenizer, train_files,
         print("Adding answers for %s question" % name)
         corpus = TriviaQaEvidenceCorpusTxt(file_map)
         questions = compute_answer_spans_par(questions, corpus, tokenizer, answer_detector, n_process)
-        for q in questions:  # Sanity check, we should have answers for everything
+        for q in questions:  # Sanity check, we should have answers for everything (even if of size 0)
             for doc in q.all_docs:
                 if doc.doc_id in file_map:
                     if doc.answer_spans is None:

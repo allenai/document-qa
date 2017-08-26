@@ -11,7 +11,7 @@ from configurable import Configurable
 from data_processing.text_utils import NltkPlusStopWords
 from dataset import TrainingData, Dataset, ListDataset
 from trivia_qa.read_data import TriviaQaQuestion
-from utils import split, flatten_iterable, partition, ResourceLoader
+from utils import split, flatten_iterable, group, ResourceLoader
 
 
 class Preprocessor(Configurable):
@@ -46,16 +46,13 @@ class LazyCorpusStatistics(object):
         return counts
 
 
-class TextDataset(ListDataset):
-    @property
-    def batch_size(self):
-        return None if self.batching.truncate_batches else self.batching.get_fixed_batch_size
+class FilteredData(object):
+    def __init__(self, data: List, true_len: int):
+        self.data = data
+        self.true_len = true_len
 
-    def get_vocab(self):
-        voc = set()
-        for x in self.data:
-            voc.update(x.get_text())
-        return voc
+    def __add__(self, other):
+        return FilteredData(self.data + other.data, self.true_len + other.true_len)
 
 
 def _preprocess_and_count(questions: List[TriviaQaQuestion], evidence, preprocessor: Preprocessor):
@@ -77,7 +74,7 @@ def preprocess_par(questions: List[TriviaQaQuestion], evidence, preprocessor,
     else:
         from multiprocessing import Pool
         chunks = split(questions, n_processes)
-        chunks = flatten_iterable([partition(c, chunk_size) for c in chunks])
+        chunks = flatten_iterable([group(c, chunk_size) for c in chunks])
         print("Processing %d chunks with %d processes" % (len(chunks), n_processes))
         pbar = tqdm(total=len(questions), desc=name, ncols=80)
         lock = Lock()
@@ -97,38 +94,6 @@ def preprocess_par(questions: List[TriviaQaQuestion], evidence, preprocessor,
         for r in results[1:]:
             output += r
         return output
-
-
-def tmp_clean(data):
-    import re
-    # n_para = sum(len(x.word_features) for x in data)
-    out = []
-    stop = NltkPlusStopWords(True).words
-    # tmp = re.compile("\w\w+")
-    # tmp = re.compile(".*")
-    # print("Zero TFIDF")
-    for x in data.data:
-        x.word_features[:] = 0
-        # x.features[:, :-1] = 0
-        # keep = np.any(np.reshape(x.word_features, (len(x.word_features), -1)) != 0, axis=1)
-        # x.word_features = x.word_features[:, :, 0:1]
-        for ix, word in enumerate(x.question):
-            word = word.lower()
-            if word in stop:
-                # if word in stop or tmp.fullmatch(word) is None:
-                x.word_features[:, ix, :] = 0
-        # x.word_features[:, :, 3:] = 0
-        # x.word_features[:, :, 2] = 0
-        # x.word_features[:, :, 5] = 0
-        # x.features = x.features[keep]
-        # out.append(x)
-    return data
-    # out_n_para = sum(len(x.word_features) for x in out)
-    # print("Keep %d/%d (%.4f) questions and %d/%d (%.4f) paragraph" %
-    #       (len(out), len(data), len(out)/len(data),
-    #        out_n_para, out_n_para, out_n_para/n_para
-    #        ))
-    # return out
 
 
 class PreprocessedData(TrainingData):
@@ -159,10 +124,10 @@ class PreprocessedData(TrainingData):
         return self.corpus.name
 
     def cache_preprocess(self, filename):
-        if self.sample > 0 or self.sample_dev > 0 or self.hold_out_train is not None:
-            raise ValueError()
+        # if self.sample is not None or self.sample_dev is not None or self.hold_out_train is not None:
+        #     raise ValueError()
         if filename.endswith("gz"):
-            handle = gzip.open
+            handle = lambda a,b: gzip.open(a, b, compresslevel=3)
         else:
             handle = open
         with handle(filename, "wb") as f:

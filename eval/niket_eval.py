@@ -26,6 +26,7 @@ def main():
     parser.add_argument('-n', '--sample_questions', type=int, default=None)
     parser.add_argument('--answer_bounds', nargs='+', type=int, default=[4])
     parser.add_argument('-b', '--batch_size', type=int, default=200)
+    parser.add_argument('-s', '--step', type=int, default=None)
     parser.add_argument('-c', '--corpus', choices=["dev", "train", "test"], default="dev")
     parser.add_argument('--ema', action="store_true")
     args = parser.parse_args()
@@ -53,7 +54,11 @@ def main():
         evaluators.append(RecordSpanPrediction(args.answer_bounds[0]))
         evaluators.append(RecordQuestionId())
 
-    checkpoint = join(model_dir.save_dir, "checkpoint-1680-1680")
+    if args.step is None:
+        checkpoint = model_dir.get_latest_checkpoint()
+    else:
+        checkpoint = model_dir.get_checkpoint(args.step)
+    print(checkpoint)
     evaluation = trainer.test(model_dir.get_model(), evaluators, {args.corpus: dataset},
                               corpus.get_resource_loader(), checkpoint, args.ema)[args.corpus]
 

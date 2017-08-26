@@ -9,7 +9,7 @@ from os.path import exists
 from data_processing.text_utils import get_paragraph_tokenizer
 from trivia_qa.read_data import iter_trivia_question
 from trivia_qa.trivia_qa_eval import normalize_answer, f1_score
-from utils import flatten_iterable, partition, split
+from utils import flatten_iterable, group, split
 
 import numpy as np
 

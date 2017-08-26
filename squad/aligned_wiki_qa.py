@@ -12,6 +12,7 @@ from utils import flatten_iterable
 QA using the original wiki article (instead of just the paragraphs used in SQaUD)
 """
 
+
 class DocumentQuestion(object):
     def __init__(self, words: List[str], question_id: str, paragraph_num: int, answer: Answer):
         self.words = words

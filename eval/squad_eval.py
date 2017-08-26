@@ -4,11 +4,10 @@ import json
 import numpy as np
 
 import trainer
-from data_processing.paragraph_qa import split_docs
-from data_processing.qa_data import ParagraphAndQuestionDataset
+from data_processing.qa_training_data import ParagraphAndQuestionDataset
 from dataset import FixedOrderBatcher
 from evaluator import RecordQuestionId, RecordSpanPrediction
-from squad.build_squad_dataset import SquadCorpus
+from squad.squad_data import SquadCorpus, split_docs
 from squad.squad_eval import BoundedSquadSpanEvaluator
 from trainer import ModelDir
 from utils import flatten_iterable, transpose_lists, print_table

@@ -6,7 +6,6 @@ import tensorflow as tf
 from nltk.corpus import stopwords
 
 from configurable import Configurable
-from data_processing.paragraph_qa import ParagraphAndQuestion
 from nn.layers import SqueezeLayer, Updater, Encoder
 from utils import ResourceLoader
 
@@ -32,6 +31,13 @@ class WordEmbedder(Configurable):
 
     def context_word_to_ix(self, word, is_train):
         raise NotImplementedError()
+
+    def query_once(self):
+        """
+        Should the embedder be queried once for each unique word in the input, or once for each word.
+        Can be used to support placeholders
+        """
+        return False
 
     def init(self, word_vec_loader, voc: Iterable[str]):
         raise NotImplementedError()
@@ -181,7 +187,7 @@ class FixedWordEmbedder(WordEmbedder):
         self._word_emb_mat = None
         self._special_tokens = None
 
-    def set_vocab(self, data: List[ParagraphAndQuestion], loader: ResourceLoader, special_tokens: List[str]):
+    def set_vocab(self, _, loader: ResourceLoader, special_tokens: List[str]):
         if special_tokens is not None:
             self._special_tokens = sorted(special_tokens)
 
@@ -208,7 +214,12 @@ class FixedWordEmbedder(WordEmbedder):
         return 1
 
     def init(self, loader: ResourceLoader, voc: Iterable[str]):
-        word_to_vec = loader.load_word_vec(self.vec_name, voc)
+        if voc is not None:
+            word_to_vec = loader.load_word_vec(self.vec_name, voc)
+        else:
+            word_to_vec = loader.load_word_vec(self.vec_name)
+            voc = set(word_to_vec.keys())
+
         self._word_to_ix = {}
 
         dim = next(iter(word_to_vec.values())).shape[0]
@@ -383,6 +394,174 @@ class PartialTrainEmbedder(WordEmbedder, Configurable):
         return dict(version=self.version, state=state)
 
 
+class FixedPlaceholders(Configurable):
+    def __init__(self, n_placeholder, init):
+        self.n_placeholder = n_placeholder
+        self.init = init
+
+    def get(self, dim: int, dtype=tf.float32):
+        return self.init((self.n_placeholder, dim), dtype)
+
+
+class DropNamesV2(WordEmbedder):
+
+    def __init__(self,
+                 vec_name: str,
+                 selector,
+                 word_vec_init_scale: float = 0,
+                 keep_probs: float=0.5,
+                 swap_unk: bool=True,
+                 swapped_flag: bool=False,
+                 kind: str="shuffle",
+                 learn_unk: bool = False,
+                 learn_name_unk: bool = False,):
+        self.kind = kind
+        self.swap_unk = swap_unk
+        self.swapped_flag = swapped_flag
+        self.keep_probs = keep_probs
+        self.learn_unk = learn_unk
+        self.word_vec_init_scale = word_vec_init_scale
+        self.vec_name = vec_name
+        self.selector = selector
+        self.learn_name_unk = learn_name_unk
+
+        self._name_unk = None
+        self._swap_start = None
+        self._swap_end = None
+
+        self._word_to_ix = None
+        self._word_emb_mat = None
+
+    def set_vocab(self, corpus, loader: ResourceLoader, special_tokens):
+        if special_tokens is not None and len(special_tokens) > 0:
+            raise NotImplementedError()
+        self.selector.init(corpus.get_word_counts())
+
+    def query_once(self):
+        return True
+
+    def get_word(self, word, is_train):
+        is_name = self.selector.select(word)
+        if is_train and is_name and np.random.random() > self.keep_probs:
+            return np.random.randint(self._swap_start, self._swap_end)
+        ix = self._word_to_ix.get(word, 1)
+        if ix == 1:
+            if is_name:
+                if self.swap_unk:
+                    return np.random.randint(self._swap_start, self._swap_end)
+                else:
+                    return self._name_unk
+            return self._word_to_ix.get(word.lower(), 1)
+        else:
+            return ix
+
+    def context_word_to_ix(self, word, is_train):
+        return self.get_word(word, is_train)
+
+    def question_word_to_ix(self, word, is_train):
+        return self.get_word(word, is_train)
+
+    def init(self, loader: ResourceLoader, voc: Iterable[str]):
+        with tf.device("/cpu:0"):
+            word_to_vec = loader.load_word_vec(self.vec_name)
+            self._word_to_ix = {}
+
+            dim = next(iter(word_to_vec.values())).shape[0]
+
+            null_embed = tf.zeros((1, dim), dtype=tf.float32)
+            unk_embed = tf.get_variable(shape=(1, dim), name="unk_embed",
+                                        dtype=tf.float32, trainable=self.learn_unk,
+                                        initializer=tf.random_uniform_initializer(-self.word_vec_init_scale,
+                                                                                  self.word_vec_init_scale))
+            matrix_list = [null_embed, unk_embed]
+            ix = len(matrix_list)
+
+            mat = []
+            names = []
+            for word in voc:
+                if word in self._word_to_ix:
+                    continue  # in case we already added due after seeing a capitalized version of `word`
+                if self.selector.select(word):
+                    names.append(word)
+                    continue
+                if word in word_to_vec:
+                    mat.append(word_to_vec[word])
+                    self._word_to_ix[word] = ix
+                    ix += 1
+                else:
+                    lower = word.lower()  # Full back to the lower-case version
+                    if lower in word_to_vec and lower not in self._word_to_ix:
+                        mat.append(word_to_vec[lower])
+                        self._word_to_ix[lower] = ix
+                        ix += 1
+            matrix_list.append(np.array(mat))
+
+            name_start = ix
+            if self.swap_unk:
+                name_unk = tf.get_variable(shape=(1, dim), name="name_unk",
+                                           trainable=self.learn_name_unk, dtype=tf.float32,
+                                           initializer=tf.random_uniform_initializer(-self.word_vec_init_scale,
+                                                                                      self.word_vec_init_scale))
+                self._name_unk = name_start
+                matrix_list.append(name_unk)
+                ix += 1
+            else:
+                self._name_unk = None
+
+            # if ix != sum(x.shape.as_list()[0] for x in matrix_list):
+            #     raise RuntimeError()
+
+            name_mat = []
+            for name in names:
+                vec = word_to_vec.get(name)
+                if vec is not None:
+                    name_mat.append(vec)
+                    self._word_to_ix[name] = ix
+                    ix += 1
+            matrix_list.append(np.array(name_mat))
+            name_end = ix
+
+            print("Have %d named (and %d name vecs), %d other" % (
+                len(names), len(name_mat), len(mat)))
+
+            if self.kind == "shuffle":
+                if self.swapped_flag:
+                    sz = len(matrix_list[-1])
+                    self._swap_start = name_end
+                    self._swap_end = self._swap_start + sz
+                    matrix_list.append(matrix_list[-1])
+                else:
+                    self._swap_start = name_start + 1
+                    self._swap_end = name_end
+            elif isinstance(self.kind, FixedPlaceholders):
+                matrix_list.append(self.kind.get(dim))
+                self._swap_start = name_end
+                self._swap_end = name_end + matrix_list[-1].shape.as_list()[-1]
+            else:
+                raise ValueError()
+
+            self._word_emb_mat = tf.concat(matrix_list, axis=0)
+
+            if self.swapped_flag:
+                flags = tf.concat([tf.zeros(self._swap_start),
+                                   tf.ones(self._swap_end - self._swap_start)], axis=0)
+                flags = tf.expand_dims(flags, 1)
+                self._word_emb_mat = tf.concat([self._word_emb_mat, flags], axis=1)
+
+    def embed(self, is_train, *word_ix):
+        with tf.device("/cpu:0"):
+            return [tf.nn.embedding_lookup(self._word_emb_mat, x[0]) for x in word_ix]
+
+    def __getstate__(self):
+        state = dict(self.__dict__)
+        state["_word_emb_mat"] = None  # we will rebuild these anyway
+        state["_word_to_ix"] = None
+        return dict(version=self.version, state=state)
+
+    def __setstate__(self, state):
+        super().__setstate__(state)
+
+
 class DropNames(WordEmbedder):
 
     def __init__(self,
@@ -490,20 +669,30 @@ class DropNames(WordEmbedder):
             print("Have %d named (and %d name vecs), %d other" % (
                 len(names), len(name_mat), len(mat)))
 
-            if self.swapped_flag:
-                szs = [x.shape.as_list()[0] for x in matrix_list]
-                self._swap_start = sum(szs)
-                self._swap_end = self._swap_start + szs[-1]
-                matrix_list.append(matrix_list[-1])
-                flags = tf.concat([tf.zeros(self._swap_start),
-                                   tf.ones(szs[-1])], axis=0)
-                flags = tf.expand_dims(flags, 1)
-                self._word_emb_mat = tf.concat(matrix_list, axis=0)
-                self._word_emb_mat = tf.concat([self._word_emb_mat, flags], axis=1)
+            if self.kind == "shuffle":
+                if self.swapped_flag:
+                    szs = [x.shape.as_list()[0] for x in matrix_list]
+                    self._swap_start = sum(szs)
+                    self._swap_end = self._swap_start + szs[-1]
+                    matrix_list.append(matrix_list[-1])
+                else:
+                    self._swap_start = self._name_vecs_start + 1
+                    self._swap_end = self._name_vecs_end
+                    self._word_emb_mat = tf.concat(matrix_list, axis=0)
+            elif isinstance(self.kind, FixedPlaceholders):
+                matrix_list.append(self.kind.get(dim))
+                self._swap_start = self._name_vecs_end
+                self._swap_end = self._name_vecs_end + matrix_list[-1].shape.as_list()[-1]
             else:
-                self._swap_start = self._name_vecs_start + 1
-                self._swap_end = self._name_vecs_end
-                self._word_emb_mat = tf.concat(matrix_list, axis=0)
+                raise ValueError()
+
+            self._word_emb_mat = tf.concat(matrix_list, axis=0)
+
+            if self.swapped_flag:
+                flags = tf.concat([tf.zeros(self._swap_start),
+                                   tf.ones(self._swap_end - self._swap_start)], axis=0)
+                flags = tf.expand_dims(flags, 1)
+                self._word_emb_mat = tf.concat([self._word_emb_mat, flags], axis=1)
 
     def _drop_names(self, ix):
         unique_words, unique_idx = tf.unique(ix)

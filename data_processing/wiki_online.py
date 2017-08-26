@@ -22,19 +22,6 @@ RAW_CACHE = "/tmp/cache.json"  # TODO remove?
 WIKI_API = "https://en.wikipedia.org/w/api.php"
 
 
-class WikiParagraph(object):
-    def __init__(self, paragraph_num: int, section: List[str], text: List[List[str]]):
-        self.paragraph_num = paragraph_num
-        self.section = section
-        self.text = text
-
-
-class WikiArticle(object):
-    def __init__(self, title: str, paragraphs: List[WikiParagraph]):
-        self.title = title
-        self.paragraphs = paragraphs
-
-
 def align_paragraphs(paragraphs1: List[List[str]], paragraphs2: List[List[str]]):
     # Simple bag-of-words approach seems to work fine
     cv = CountVectorizer(stop_words="english")
@@ -57,6 +44,7 @@ def show_alignment_errors(para1, para2, r, c, keep):
             lines2.append(" ".join(para2[j]))
 
     return HtmlDiff(tabsize=4, wrapcolumn=120).make_file(lines1, lines2)
+
 
 def show_complete_alignment(para1, para2, r, c):
     lines1 = []

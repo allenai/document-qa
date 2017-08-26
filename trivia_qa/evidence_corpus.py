@@ -11,7 +11,7 @@ import sys
 
 import unicodedata
 
-from utils import partition, split, iter_and_log, flatten_iterable
+from utils import group, split, iter_and_log, flatten_iterable
 from tqdm import tqdm
 import re
 from config import CORPUS_DIR
@@ -109,7 +109,7 @@ def build_vocab(corpus, override=False, n_processes=1):
         from multiprocessing import Pool
         pool = Pool(n_processes)
         chunks = split(doc_ids, n_processes)
-        chunks = flatten_iterable(partition(x, 10000) for x in chunks)
+        chunks = flatten_iterable(group(x, 10000) for x in chunks)
         voc = set()
         for v in pool.starmap(extract_voc, [[corpus, c] for c in chunks]):
             voc.update(v)
@@ -125,13 +125,8 @@ class TriviaQaEvidenceCorpusTxt(object):
     _split_all = re.compile("[\n ]")
     _split_para = re.compile("\n\n+")  # FIXME we should not have saved document w/extra spaces...
 
-    def __init__(self, file_id_map=None, type=None):
-        if type is None:
-            self.directory = join(CORPUS_DIR, "triviaqa/evidence")
-        else:
-            if type not in ["web", "wikipedia"]:
-                raise ValueError()
-            self.directory = join(CORPUS_DIR, "triviaqa/evidence", type)
+    def __init__(self, file_id_map=None):
+        self.directory = join(CORPUS_DIR, "triviaqa/evidence")
         self.file_id_map = file_id_map
 
     def get_vocab(self):
@@ -213,146 +208,5 @@ class TriviaQaEvidenceCorpusTxt(object):
 
 
 if __name__ == "__main__":
-    build_vocab(TriviaQaEvidenceCorpusTxt(), n_processes=1, override=True)
-    # build_tokenized_corpus("/Users/chrisc/Programming/data/trivia-qa/evidence", "NLTK_AND_CLEAN",
-    #                          join(CORPUS_DIR, "triviaqa/evidence"), override=False, n_processes=1)
+    build_vocab(TriviaQaEvidenceCorpusTxt(), n_processes=4, override=True)
 
-
-
-# def build_numpy_corpus(input_root, tokenizer, output_dir, skip_dirs=False, override=False):
-#     all_files = gather_files(input_root, output_dir, skip_dirs)
-#
-#     sent_tokenize, word_tokenize = get_paragraph_tokenizer(tokenizer)
-#
-#     if exists(join(output_dir, "vocab.txt")):
-#         with open(join(output_dir, "vocab.txt"), "r") as vocab_file:
-#             vocab_file.readlines()
-#             word_ix = {w.rstrip(): i for i,w in enumerate(vocab_file)}
-#     else:
-#         word_ix = {}
-#         with open(join(output_dir, "vocab.txt"), "w"):
-#             pass
-#
-#     with open(join(output_dir, "vocab.txt"), "a") as vocab_file:
-#         # for filename in tqdm(all_files):
-#         for filename in iter_and_log(all_files, 500):
-#             out_file = filename[:filename.rfind(".")] + ".npy"
-#             out_file = join(output_dir, out_file)
-#             if not override and exists(out_file):
-#                 continue
-#
-#             with open(join(input_root, filename), "r") as f:
-#                 text = f.read().strip()
-#             paragraphs = [[word_tokenize(sent) for sent in sent_tokenize(para)] for para in text.split("\n")]
-#
-#             count = 0
-#             for para in paragraphs:
-#                 count += sum(len(s) for s in para) + len(para) + 1
-#             doc_array = np.empty(count, dtype=np.int32)
-#             array_ix = 0
-#             for i, para in enumerate(paragraphs):
-#                 doc_array[array_ix] = -2
-#                 array_ix += 1
-#                 for sent in para:
-#                     doc_array[array_ix] = -1
-#                     array_ix += 1
-#                     for word in sent:
-#                         ix = word_ix.get(word)
-#                         if ix is None:
-#                             ix = len(word_ix)
-#                             vocab_file.write(word)
-#                             vocab_file.write("\n")
-#                             word_ix[word] = ix
-#                         doc_array[array_ix] = ix
-#                         array_ix += 1
-#             # Store the raw bytes in little endian format because storing with np.save
-#             # adds quite a lot of overhead to reading back the data for these small arrays
-#             doc_array.astype(np.dtype('<i4'), copy=False).tofile(out_file)
-#
-#         def build_numpy_savez_corpus(input_root, tokenizer, output_dir, override=False, partial=True):
-#             sent_tokenize, word_tokenize = get_paragraph_tokenizer(tokenizer)
-#             word_ix = {}
-#             vocab = []
-#
-#             # output_file = join(output_dir, "corpus-c.npz")
-#             # if exists(output_file):
-#             #     if not override:
-#             #         print("Loading current state")
-#             #         f = np.load(output_file)
-#             #         word_ix = {w: i for i, w in enumerate(f["vocab"])}
-#             #         docs = {k: f[k] for k in f.files if k != "vocab"}
-#             #     else:
-#             #         remove(output_file)
-#             #         docs = {}
-#             # else:
-#             #     docs = {}
-#
-#             corpus_array = []
-#             for root, dirs, filenames in walk(input_root):
-#                 if len(filenames) == 0:
-#                     continue
-#                 path_to = relpath(root, input_root)
-#                 filenames = [join(path_to, x) for x in filenames]
-#
-#                 output = join(output_dir, relpath(root, input_root))
-#                 if not exists(output):
-#                     makedirs(output)
-#
-#                 if len(filenames) > 0:
-#                     print("Processing %d files in directory %s" % (len(filenames), root))
-#                 else:
-#                     continue
-#
-#                 docs = {}
-#                 for filename in iter_and_log(filenames, 500):
-#                     # for filename in tqdm(filenames):
-#                     with open(join(input_root, filename), "r") as f:
-#                         text = f.read().strip()
-#                     paragraphs = [[word_tokenize(sent) for sent in sent_tokenize(para)] for para in text.split("\n")]
-#
-#                     # Took the json from getting too bulky, we kept sentences joined by spaces, the tokenization can be
-#                     # recovered by .split(" ")
-#                     count = 0
-#                     for para in paragraphs:
-#                         count += sum(len(s) for s in para) + len(para) + 1
-#                     doc_array = np.empty(count, dtype=np.int32)
-#                     array_ix = 0
-#                     for i, para in enumerate(paragraphs):
-#                         doc_array[array_ix] = -2
-#                         array_ix += 1
-#                         for sent in para:
-#                             doc_array[array_ix] = -1
-#                             array_ix += 1
-#                             for word in sent:
-#                                 ix = word_ix.get(word)
-#                                 if ix is None:
-#                                     ix = len(vocab)
-#                                     word_ix[word] = ix
-#                                     vocab.append(word)
-#                                 doc_array[array_ix] = ix
-#                                 array_ix += 1
-#
-#                     docs[filename] = doc_array
-#
-#                 for k, v in docs.items():
-#                     np.s
-#                 with open("/tmp/corpus-pickle.pkl", "wb") as f:
-#                     pickle.dump(docs, f)
-#                 return
-# class TriviaQaEvidenceCorpusBinary(object):
-#     """ Corpus of the tokenized text from the given TriviaQa evidence documents """
-#     def __init__(self, file_id_map):
-#         # self.corpus = JsonDocumentCorpus("/tmp/evidence")
-#         self.directory = join(CORPUS_DIR, "triviaqa/evidence-np")
-#         self.file_id_map = file_id_map
-#
-#     def get_document(self, doc_id, n_tokens=None, flat=True):
-#         file_id = self.file_id_map.get(doc_id)
-#         if file_id is None:
-#             return None
-#
-#         file_id = join(self.directory, file_id + ".npy")
-#         if not exists(file_id):
-#             return None
-#
-#         return np.fromfile(file_id, dtype=np.int32)

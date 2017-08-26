@@ -261,7 +261,7 @@ def build_questions(json_questions, title_to_file, require_filename):
         ans = q.get("Answer")
         valid_attempt = q.get("QuestionVerifiedEvalAttempt", False)
         if valid_attempt and not q["QuestionPartOfVerifiedEval"]:
-            continue
+            continue  # don't both with questions in the verified set that were rejected
         if ans is not None:
             answer_type = ans["Type"]
             if answer_type == "WikipediaEntity":

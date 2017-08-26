@@ -8,8 +8,7 @@ from typing import List
 import numpy as np
 
 import config
-from data_processing.paragraph_qa import Answer
-from data_processing.paragraph_qa import Question, Document, Paragraph, DocumentCorpus
+from squad.squad_data import Question, Document, Paragraph
 from data_processing.span_data import ParagraphSpan, ParagraphSpans
 from data_processing.text_utils import get_paragraph_tokenizer, convert_to_spans, post_split_tokens, clean_text, \
     get_word_span, space_re
@@ -18,11 +17,6 @@ from utils import flatten_iterable
 """
 Script to build a corpus from SQUAD training data with `DocumentSpans` answers 
 """
-
-
-class SquadCorpus(DocumentCorpus):
-    def __init__(self):
-        super().__init__("squad")
 
 
 def clean_title(title):
@@ -65,6 +59,7 @@ def parse_squad_data(source, name, tokenizer="NLTK") -> List[Document]:
             for question_ix, question in enumerate(para['qas']):
                 question_text = word_tokenize(question['question'])
                 question_text = [clean_text(x) for x in question_text]
+                answer_text = []
                 answer_spans = []
                 for answer_ix, answer in enumerate(question['answers']):
                     answer_raw = answer['text']
@@ -128,7 +123,6 @@ def parse_squad_data(source, name, tokenizer="NLTK") -> List[Document]:
 def main():
     parser = argparse.ArgumentParser()
     source_dir = join(expanduser("~"), "data", "squad")
-    parser.add_argument('-w', "--wikititles", default=True, action='store_true')
     parser.add_argument('-s', "--source_dir", default=source_dir)
     parser.add_argument('-t', "--name", default="squad")
     parser.add_argument("--tokenizer", default="NLTK", type=str)

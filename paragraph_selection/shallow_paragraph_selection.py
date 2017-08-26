@@ -1,4 +1,4 @@
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 from typing import List
 import pandas as pd
 import pickle
@@ -9,15 +9,16 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import KFold
 from tqdm import tqdm
 
-from data_analysis.analyze_full_document_eval import compute_model_scores
-from data_processing.document_splitter import Truncate, MergeParagraphs, TopTfIdf, ExtractedParagraph, DocumentSplitter
+from data_analysis.analyze_full_document_eval import compute_model_scores, compute_cumsum
+from data_processing.document_splitter import Truncate, MergeParagraphs, TopTfIdf, AnnotatedParagraph, DocumentSplitter, \
+    ShallowOpenWebRanker
 from data_processing.text_utils import NltkPlusStopWords, WordNormalizer
 from paragraph_selection.paragraph_selection_featurizer import LocalTfIdfFeatures, ParagraphOrderFeatures, \
-    NusedWordFeatures, NGramMatchingFeaturizer, ParagraphFeatures
-from trivia_qa.build_span_corpus import TriviaQaWebDataset
+    NGramMatchingFeaturizer, ParagraphFeatures, WordMatchingFeaturizer
+from trivia_qa.build_span_corpus import TriviaQaWebDataset, TriviaQaOpenDataset
 from trivia_qa.evidence_corpus import TriviaQaEvidenceCorpusTxt
-from trivia_qa.read_data import TriviaQaQuestion
-from utils import flatten_iterable, print_table, split, partition
+from trivia_qa.read_data import TriviaQaQuestion, TagMeEntityDoc, SearchEntityDoc, SearchDoc
+from utils import flatten_iterable, print_table, split, group
 
 
 def build_features(questions: List[TriviaQaQuestion], splitter: DocumentSplitter,
@@ -32,25 +33,36 @@ def build_features(questions: List[TriviaQaQuestion], splitter: DocumentSplitter
         if log_every is not None and i % log_every == 0:
             print("On question %d" % i)
         paragraphs = []
+        doc_features = []
         for doc in question.all_docs:
             text = corpus.get_document(doc.doc_id)
-            split = splitter.split(text, doc.answer_spans)
-            paragraphs.extend(split)
+            split = splitter.split_annotated(text, doc.answer_spans)
+            paragraphs.append(split)
             doc_ids += [doc.doc_id for _ in range(len(split))]
+            fe = np.zeros(5)
+            if isinstance(doc, TagMeEntityDoc):
+                fe[0] = 1
+            elif isinstance(doc, SearchEntityDoc):
+                fe[1] = 1
+            elif isinstance(doc, SearchDoc):
+                fe[2] = 1
+                fe[3] = doc.rank
+                fe[4] = np.log(1 + doc.rank)
+            doc_features.append(np.tile(np.expand_dims(fe, 0), [len(split), 1]))
 
-        paragraph_features = []
+        paragraph_features = [np.concatenate(doc_features, axis=0)]
         for fe in featurizers:
             para_fe = fe.get_features(question.question, paragraphs)
             paragraph_features.append(para_fe)
 
+        paragraphs = flatten_iterable(paragraphs)
         n_answers += [len(x.answer_spans) for x in paragraphs]
         q_uids += [question.question_id for _ in range(len(paragraphs))]
         q_features = np.concatenate(paragraph_features, axis=1)
-        # q_features -= q_features.mean(axis=0)
         all_feautres.append(q_features)
         para_ranges.append(np.array([(x.start, x.end) for x in paragraphs]))
 
-    feature_names = flatten_iterable(x.get_feature_names() for x in featurizers)
+    feature_names = ["tag_me", "search_ent", "search_web", "rank", "log_rank"] + flatten_iterable(x.get_feature_names() for x in featurizers)
     all_feautres = np.concatenate(all_feautres)
     para_ranges = np.concatenate(para_ranges, axis=0)
     data = dict(quid=q_uids, doc_id=doc_ids, n_answers=n_answers,
@@ -67,7 +79,7 @@ def build_features_par(questions: List[TriviaQaQuestion], splitter: DocumentSpli
     else:
         from multiprocessing import Pool
         chunks = split(questions, n_processes)
-        chunks = flatten_iterable([partition(c, chunk_size) for c in chunks])
+        chunks = flatten_iterable([group(c, chunk_size) for c in chunks])
         print("Processing %d chunks with %d processes" % (len(chunks), n_processes))
         pool = Pool(n_processes)
         pbar = tqdm(total=len(questions))
@@ -111,13 +123,12 @@ def get_classifier_cv_scores(df, features, clf, n_splits=2):
         clf.fit(X[train_ix], y[train_ix])
         predictions[test_ix] = clf.predict_proba(X[test_ix])[:, 1]
 
-    df["cv_predictions"] = predictions
+    return predictions
 
 
 def get_classifier_train_scores(df, features, clf):
     clf.fit(df[features].values, df.label.values)
-    df["train_predictions"] = clf.predict_proba(df[features].values)[:, 1]
-    # df["train_predictions"] = clf.predict(df[features].values)
+    return clf.predict_proba(df[features].values)[:, 1]
 
 
 class SplitterStats(object):
@@ -129,7 +140,7 @@ class SplitterStats(object):
         self.n_tokens = 0
         self.max_tokens = 0
 
-    def update(self, paragraph: List[ExtractedParagraph]):
+    def update(self, paragraph: List[AnnotatedParagraph]):
         total = sum(len(x.answer_spans) for x in paragraph)
         n_tokens = sum(sum(len(s) for s in x.text) for x in paragraph)
         self.n_answers += total
@@ -160,10 +171,10 @@ def check_upper_bounds():
             total += 1
             text = dataset.evidence.get_document(doc.doc_id)
             flattened = flatten_iterable(text)
-            stats["all"].update([ExtractedParagraph(flattened, 0, sum(len(x) for x in flattened),
-                                                   doc.answer_spans)])
+            stats["all"].update([AnnotatedParagraph(flattened, 0, sum(len(x) for x in flattened),
+                                                    doc.answer_spans)])
             for name, (splitter, para_filter) in splitters.items():
-                para = splitter.split(text, doc.answer_spans)
+                para = splitter.split_annotated(text, doc.answer_spans)
                 if para_filter is not None:
                     para = para_filter.prune(q.question, para)
                 for i in range(1, 5):
@@ -178,8 +189,9 @@ def check_upper_bounds():
 
 
 def train_oracle():
-    stop = NltkPlusStopWords()
-    norm = WordNormalizer()
+    stop = NltkPlusStopWords(True)
+    lower_norm = WordNormalizer(True)
+    upper_norm = WordNormalizer(False)
 
     if exists("/tmp/cache.pkl"):
         print("Loading from cache...")
@@ -187,27 +199,48 @@ def train_oracle():
             existing = pickle.load(f)
     else:
         existing = None
+    # existing = None
 
-    featurizers = [LocalTfIdfFeatures(stop),
-                   ParagraphOrderFeatures(),
-                   ParagraphFeatures(),
-                   NusedWordFeatures(NGramMatchingFeaturizer(None, norm, (1, 1)))]
-    # featurizers = []
+    featurizers = [
+        # LocalTfIdfFeatures(stop, per_document=False, name="all-tfidf"),
+        # LocalTfIdfFeatures(stop, per_document=False, normalization=lower_norm, name="all-normalized-tfidf"),
+        # LocalTfIdfFeatures(stop, per_document=False, normalization=upper_norm, name="all-normalized-tfidf-upper"),
+        # LocalTfIdfFeatures(stop, per_document=True, name="doc-tfidf"),
+        # ParagraphOrderFeatures(),
+        # ParagraphFeatures(),
+        # WordMatchingFeaturizer(NGramMatchingFeaturizer(stop, lower_norm, (1, 2)))
+        ShallowOpenWebRanker(6)
+    ]
 
-    dataset = TriviaQaWebDataset()
+    dataset = TriviaQaOpenDataset()
+    # dataset = TriviaQaWebDataset()
+
     index_features = ["quid", "doc_id", "para_start", "para_end"]
 
-    if existing is None:
+    if True or existing is None:
         print("Load questions")
-        questions = dataset.get_train()
-        questions = np.random.RandomState(5).choice(questions, 1000, replace=False)
+        all_questions = dataset.get_train()
+
+        if existing is None:
+            questions = [q for q in all_questions if any(len(x.answer_spans) > 0 for x in q.all_docs)]
+            print("%d/%d (%.4f) have an answer" % (len(questions), len(all_questions), len(questions) / len(all_questions)))
+            questions = np.random.RandomState(5).choice(questions, 1500, replace=False)
+        else:
+            ids = set(existing["quid"])
+            questions = [q for q in all_questions if q.question_id in ids]
 
         print("Build features")
         df = build_features_par(questions, MergeParagraphs(400),
-                        dataset.evidence, featurizers, n_processes=2, chunk_size=500)
+                        dataset.evidence, featurizers, n_processes=3, chunk_size=500)
 
         if existing is not None:
+            print("Mergin")
+            print("n_answers" in existing.columns)
+            remove = [x for x in df.columns if x in existing.columns and x not in index_features]
+            for x in remove:
+                del df[x]
             df = df.merge(existing, on=index_features, copy=False)
+            print("n_answers" in df.columns)
         else:
             print("Caching...")
             with open("/tmp/cache.pkl", "wb") as f:
@@ -223,99 +256,81 @@ def train_oracle():
     print(features)
     clf = LogisticRegression(C=10000)
     # get_classifier_cv_scores(df, features, clf, 5)
-    get_classifier_train_scores(df, features, clf)
+    # features = ['all-normalized-tfidf', 'all-normalized-tfidf-upper', 'all-tfidf', 'any_2_word_lower_match', 'any_2_word_match',
+    #  'any_2_word_normalized_match', 'any_3_word_lower_match', 'any_3_word_match', 'any_3_word_normalized_match',
+    #  'doc-tfidf', 'first', 'inv_len', 'inv_word_start', 'len', 'log_len', 'log_word_start', 'mean_2_word_lower_match',
+    #  'mean_2_word_match', 'mean_2_word_normalized_match', 'mean_3_word_lower_match', 'mean_3_word_match',
+    #  'mean_3_word_normalized_match', 'sum_2_word_lower_match', 'sum_2_word_match', 'sum_2_word_normalized_match',
+    #  'sum_3_word_lower_match', 'sum_3_word_match', 'sum_3_word_normalized_match', 'word_start']
+    # df["train_all"] = get_classifier_cv_scores(df, features, clf)
+
+    features = ['all-tfidf',
+                'log_word_start', 'first',
+                # 'inv_len', 'len', 'log_len',
+                'any_2_word_lower_match', 'any_2_word_match', #'any_2_word_normalized_match',
+                # 'any_3_word_lower_match', 'any_3_word_match'
+                # 'mean_2_word_lower_match', 'mean_2_word_match', 'mean_2_word_normalized_match',
+                # 'sum_2_word_lower_match', 'sum_2_word_match', 'sum_2_word_normalized_match'
+                ]
+    df["subset1"] = get_classifier_cv_scores(df, features, clf)
+
+    features = ['all-tfidf',
+                'log_word_start', 'first',
+                "tag_me", "search_ent", "search_web", "rank", "log_rank",
+                # 'inv_len', 'len', 'log_len',
+                'any_2_word_lower_match', 'any_2_word_match',# 'any_2_word_normalized_match',
+                # 'any_3_word_lower_match', 'any_3_word_match'
+                # 'mean_2_word_lower_match', 'mean_2_word_match', 'mean_2_word_normalized_match',
+                # 'sum_2_word_lower_match', 'sum_2_word_match', 'sum_2_word_normalized_match'
+                ]
+    df["subset2"] = get_classifier_train_scores(df, features, clf)
+
     print(clf.coef_.shape)
+    print(clf.coef_)
     for name, val in sorted(zip(features, clf.coef_[0]), key=lambda x:abs(x[1])):
         print("%s: %.4f" % (name, val))
 
-    # print((df["label"] == (df["train_predictions"] > 0.5)).mean())
+    # print(df[["all-tfidf", "a"]][:12])
+    # print(df["a"][:12])
+    # print(df[["log_word_start", "b"]][:12])
+    # print(df["b"][:12])
+    # print(df[["first", "c"]][:12])
 
-    scores = {}
-    score_features = [("local-tfidf-dist", True), ("para_start", True), ("train_predictions", False)]
+    # print(df[["any_2_word_match", "d"]][:12])
+    # print(df[["any_2_word_lower_match", "e"]][:12])
+    #
+    # print(df["e"].mean())
+    # print(df["any_2_word_lower_match"].mean())
+    #
+    # print(df["d"].mean())
+    # print(df["any_2_word_match"].mean())
+
+
+    scores = OrderedDict()
+    n_answers = OrderedDict()
+    score_features = [("all-tfidf", True),
+                      # ("all-normalized-tfidf-upper", True),
+                      # ("all-normalized-tfidf", True),
+                      ("para_start", True), ("subset1", False), ("subset2", False),
+                      ("Score", True)
+                      ]
     for fe, asc in score_features:
-        clf.fit(df[[fe]].values, df.label)
-        pred = clf.predict_proba(df[[fe]].values)[:, 1]
-        print(fe)
-        print((df["label"] == (pred > 0.5)).mean())
-
+        # clf.fit(df[[fe]].values, df.label)
+        # pred = clf.predict_proba(df[[fe]].values)[:, 1]
         df.sort_values(["quid", fe], inplace=True, ascending=asc)
-        clf_scores = compute_model_scores(df, target_score="label", max_over="label", by_doc=True)
-        scores[fe] = clf_scores
+        scores[fe] = compute_model_scores(df, target_score="label", max_over="label", by_doc=False)
+        n_answers[fe] = compute_cumsum(df, "n_answers", by_doc=False)
 
     cols = list(scores.keys())
     rows = [["Rank"] + cols]
-    for i in range(10):
+    for i in range(12):
         rows.append(["%d" % (i+1)] + ["%.4f" % scores[k][i] for k in cols])
     print_table(rows)
 
-
-def label_clf():
-    stop = NltkPlusStopWords()
-    norm = WordNormalizer()
-    dataset = TriviaQaWebDataset()
-
-    print("Load questions")
-    questions = dataset.get_dev() + dataset.get_train()
-
-    print("Load labels")
-    dev = pd.read_csv("/Users/chrisc/Desktop/open-dev-eval-400.csv")
-    dev = pd.read_csv("/Users/chrisc/Desktop/bidaf-sum-answers/dev-merge-800.csv")
-    dev["source"] = "dev"
-
-    train = pd.read_csv("/Users/chrisc/Desktop/bidaf-sum-answers/train-merge-800-3k.csv")
-    train["source"] = "train"
-
-    rng = np.random.RandomState(0)
-    quids = set(rng.choice(list(set(dev.quid)), 2000, replace=False))
-    quids.update(rng.choice(list(set(train.quid)), 0, replace=False))
-
-    labels = pd.concat([train, dev], axis=0, ignore_index=True)
-    labels = labels[[x in quids for x in labels.quid]]
-    questions = [q for q in questions if q.question_id in quids]
-    del train, dev
-
-    print("Build features")
-    fe = build_features_par(questions, MergeParagraphs(400),
-                        dataset.evidence,
-                        [
-                                # TfIdfFeatures(tf_idf(dataset.evidence, 10000)),
-                                # ParagraphOrderFeatures(),
-                                # FastLocalTfIdfFeatures(stop, None),
-                                LocalTfIdfFeatures(stop),
-                            # SumWordFeatures(TfIdfFeatures(stop, norm)),
-                            #     NusedWordFeatures(WordMatchingFeaturizer(stop, norm))
-                         ], n_processes=2)
-
-    index_features = ["quid", "doc_id", "para_start", "para_end"]
-    df = labels.merge(fe, on=index_features, copy=False)
-    features = [x for x in fe.columns if x not in index_features]
-
-    df["label"] = df["text_f1"] > 0.9
-
-    print("Classifying")
-    get_classifier_dev_scores(df, features)
-
-    #
-    # df = df[df.source == "dev"]
-    # acc = ((df.clf_train_predictions > 0.5) == (df.label == 1)).mean()
-    # print("Accuracy = %.4f" % acc)
-
-    scores = {}
-    features = [("clf_train_predictions", False), ("local-tfidf-dist", True)]
-    # features = [("local-tfidf-dist", True)]
-    for fe, asc in features:
-        print(fe)
-        df.sort_values(["quid", fe], inplace=True, ascending=asc)
-        clf_scores = compute_model_scores(df, by_doc=True)
-        scores[fe] = clf_scores
-
-    df.sort_values(["quid", "para_start", "para_end"], inplace=True)
-    scores["FirstN"] = compute_model_scores(df, by_doc=True)
-
-    cols = list(scores.keys())
+    cols = list(n_answers.keys())
     rows = [["Rank"] + cols]
-    for i in range(10):
-        rows.append(["%d" % (i+1)] + ["%.4f" % scores[k][i] for k in cols])
+    for i in range(12):
+        rows.append(["%d" % (i+1)] + ["%.4f" % n_answers[k][i] for k in cols])
     print_table(rows)
 
 

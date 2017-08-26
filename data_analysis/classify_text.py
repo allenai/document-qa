@@ -7,13 +7,13 @@ import numpy as np
 from nltk.corpus import stopwords
 from squad.build_squad_data import SquadCorpus
 
-from data_processing.paragraph_qa import ParagraphAndQuestion
+from data_processing.paragraph_qa import SentencesAndQuestion
 from data_processing.text_features import is_number
 from utils import flatten_iterable
 
 
 class AnswerCat(object):
-    def __init__(self, para: ParagraphAndQuestion, answer_tokens: List[str],
+    def __init__(self, para: SentencesAndQuestion, answer_tokens: List[str],
                  any_num: List[bool], careful_num: List[bool],
                  is_cap: List[bool], is_upper: List[bool]):
         self.para = para

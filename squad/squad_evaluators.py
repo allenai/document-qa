@@ -2,8 +2,7 @@ from typing import List, Union
 
 import numpy as np
 
-from data_processing.paragraph_qa import DocParagraphAndQuestion
-from data_processing.qa_data import ParagraphAndQuestion
+from data_processing.qa_training_data import ContextAndQuestion, SentencesAndQuestion
 from data_processing.span_data import compute_span_f1, get_best_span, get_best_in_sentence_span
 from evaluator import Evaluator, Evaluation
 from squad.squad_official_evaluation import exact_match_score as squad_official_em_score
@@ -15,7 +14,7 @@ SQuAD specific evalation
 """
 
 
-def squad_span_scores(data: List[Union[ParagraphAndQuestion, DocParagraphAndQuestion]], prediction):
+def squad_span_scores(data: List[ContextAndQuestion], prediction):
     scores = np.zeros((len(data), 4))
     for i in range(len(data)):
         para = data[i]
@@ -43,8 +42,8 @@ def squad_span_scores(data: List[Union[ParagraphAndQuestion, DocParagraphAndQues
     return scores
 
 
-def squad_span_evaluation(data: List[ParagraphAndQuestion],
-                           true_len: int, prediction, prefix=""):
+def squad_span_evaluation(data: List[ContextAndQuestion],
+                          true_len: int, prediction, prefix=""):
     scores = squad_span_scores(data, prediction).sum(axis=0) / true_len
     return Evaluation({
         prefix + "accuracy": scores[0],
@@ -58,7 +57,7 @@ class SquadSpanEvaluator(Evaluator):
     def tensors_needed(self, model):
         return dict(p1=model.prediction.start_probs, p2=model.prediction.end_probs)
 
-    def evaluate(self, data: List[ParagraphAndQuestion], true_len, p1, p2):
+    def evaluate(self, data: List[ContextAndQuestion], true_len, p1, p2):
         best_spans = [get_best_span(p1[i], p2[i]) for i in range(len(p1))]
         return squad_span_evaluation(data, true_len, [x[0] for x in best_spans], "span/")
 
@@ -67,10 +66,10 @@ class BoundedSquadSpanEvaluator(Evaluator):
     def __init__(self, bound: List[int]):
         self.bound = bound
 
-    def tensors_needed(self, model):
-        return {str(b): model.prediction.get_best_span(b)[0] for b in self.bound}
+    def tensors_needed(self, prediction):
+        return {str(b): prediction.get_best_span(b)[0] for b in self.bound}
 
-    def evaluate(self, data: List[ParagraphAndQuestion], true_len, **kwargs):
+    def evaluate(self, data: List[ContextAndQuestion], true_len, **kwargs):
         ev = Evaluation({})
         for b in self.bound:
             best_spans = kwargs[str(b)]
@@ -80,11 +79,39 @@ class BoundedSquadSpanEvaluator(Evaluator):
 
 class SentenceSpanEvaluator(Evaluator):
 
-    def tensors_needed(self, model):
-        return dict(p1=model.prediction.start_probs, p2=model.prediction.end_probs)
+    def tensors_needed(self, prediction):
+        return dict(p1=prediction.start_probs, p2=prediction.end_probs)
 
-    def evaluate(self, data: List[ParagraphAndQuestion], true_len, p1, p2):
+    def evaluate(self, data: List[SentencesAndQuestion], true_len, p1, p2):
         best_spans = [get_best_in_sentence_span(p1[i], p2[i], [len(x) for x in data[i].context]) for i in range(len(p1))]
         return squad_span_evaluation(data, true_len, [x[0] for x in best_spans], "sr/")
 
 
+class SquadConfidenceEvaluator(Evaluator):
+    def __init__(self, bound: int):
+        self.bound = bound
+
+    def tensors_needed(self, prediction):
+        spans, conf = prediction.get_best_span(self.bound)
+        return dict(none_conf=prediction.none_prob,
+                    spans=spans,
+                    conf=conf)
+
+    def evaluate(self, data: List[ContextAndQuestion], true_len, **kargs):
+        from scipy.stats import spearmanr
+
+        scores = squad_span_scores(data, kargs["spans"])
+        has_answer_per = sum(len(x.answer.answer_spans) > 0 for x in data) / len(data)
+        none_conf = kargs["none_conf"]
+        true_len *= has_answer_per
+        aggregated_scores = scores.sum(axis=0) / true_len
+        prefix ="b%d/" % self.bound
+        ev = Evaluation({
+            prefix + "accuracy": aggregated_scores[0],
+            prefix + "f1": aggregated_scores[1],
+            prefix + "text-accuracy": aggregated_scores[2],
+            prefix + "text-f1": aggregated_scores[3],
+            prefix + "text-f1-spearman-r": spearmanr(none_conf, scores[:, 3])[0],
+            prefix + "span-accuracy-spearman-r": spearmanr(none_conf, scores[:, 0])[0]
+        })
+        return ev

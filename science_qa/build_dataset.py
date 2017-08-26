@@ -14,8 +14,13 @@ from os import mkdir
 import time
 from tqdm import tqdm
 
-from config import NDMC_DEV, CORPUS_DIR, NDMC_TRAIN1
+from config import NDMC_DEV, CORPUS_DIR, NDMC_TRAIN1, NDDA_DEV, NDMC_TRAIN2, NDMC_TRAIN3
+from data_processing.preprocessed_corpus import Preprocessor, DatasetBuilder
+from data_processing.qa_data import WordCounts
 from data_processing.text_utils import get_paragraph_tokenizer
+from dataset import Dataset
+from mc_encoder import McQuestion, McDataset
+from utils import flatten_iterable
 
 
 class ElasticSearchParagraph(object):
@@ -36,6 +41,9 @@ class McAnswerOption(object):
 
     def to_json(self):
         return self.__dict__
+
+    def __repr__(self) -> str:
+        return str(self.answer)
 
 
 class AristoMcQuestion(object):
@@ -106,6 +114,46 @@ class AristoMcCorpus(object):
         return [AristoMcQuestion.from_json(x) for x in data]
 
 
+class ExtractQueryParagraph(Preprocessor):
+    def __init__(self, n_tokens: int):
+        self.max_tokens = n_tokens
+
+    def preprocess(self, question: List[AristoMcQuestion], _) -> List[McQuestion]:
+        out = []
+        for q in question:
+            n_tokens = 0
+            text = []
+            for para in q.paragraphs:
+                for sent in para:
+                    if len(sent) + n_tokens < self.max_tokens:
+                        text.append(sent)
+                        n_tokens += len(sent)
+                    elif n_tokens != self.max_tokens:
+                        text.append(sent[:self.max_tokens-n_tokens])
+            out.append(McQuestion(q.question_id, q.question, [x.answer for x in q.answer_options],
+                                  text, q.answer))
+        return out
+
+
+class BuildMcTrainingData(DatasetBuilder):
+    def __init__(self, train_batcher, eval_batcher):
+        self.train_batcher = train_batcher
+        self.eval_batcher = eval_batcher
+
+    def build_stats(self, data) -> object:
+        wc = Counter()
+        for point in data:
+            wc.update(point.question)
+            for sent in point.context:
+                wc.update(sent)
+            for ans in point.answer_options:
+                wc.update(ans)
+        return WordCounts(wc)
+
+    def build_dataset(self, data, evidence, is_train: bool) -> Dataset:
+        return McDataset(data, self.train_batcher if is_train else self.eval_batcher)
+
+
 def build_question(tokenizer, max_to_keep, cache, question_id, question, answer_text):
     question_id = str(question_id)
     cache_file = join(cache, question_id + ".json")
@@ -134,7 +182,7 @@ def build_question(tokenizer, max_to_keep, cache, question_id, question, answer_
             json.dump([decomposed, query, hits], f)
 
     selections = decomposed["selections"]
-    if len(selections) != 4:
+    if len(selections) <= 1:
         raise ValueError()
 
     answer_options = [McAnswerOption(x["answer"], x["focus"], x["assertion"]) for x in decomposed["selections"]]
@@ -151,6 +199,31 @@ def build_question(tokenizer, max_to_keep, cache, question_id, question, answer_
         out.append(ElasticSearchParagraph(text, paragraph["searchScore"], paragraph["index"]))
 
     return AristoMcQuestion(question_id, question_tokens, question, query, answer_options, out, answer)
+
+
+def build_da_question(tokenizer, max_to_keep, cache, question_id, question, answer_text):
+    print("!!")
+    question_id = str(question_id)
+    cache_file = join(cache, question_id + ".json")
+    word_tokenize, sent_tokenize = get_paragraph_tokenizer(tokenizer)
+
+    # if exists(join(cache, cache_file)):
+    #     with open(cache_file, "r") as f:
+    #         data = json.load(f)
+    #     decomposed, query, hits = data
+    # else:
+    print(question)
+    query = {"searchQuery": {"text": question}, "maxResults": max_to_keep, "sourceTypes": ["elasticsearch"]}
+    response = requests.post("http://aristo-background-knowledge.dev.ai2:8091/search", json=query)
+    if response.status_code != 200:
+        raise ValueError()
+
+        # hits = response.json()
+    # response.close()
+
+        # with open(cache_file, "w") as f:
+        #     json.dump([query, hits], f)
+    return
 
 
 def _build_question_tuple(x):
@@ -180,20 +253,82 @@ def build_mc_data(source, max_to_keep=50, tokenizer: str= "NLTK_AND_CLEAN", n_th
         return out
 
 
+def _build_da_question_tuple(x):
+    return build_da_question(*x)
+
+
+def build_da_data(source, max_to_keep=50, tokenizer: str= "NLTK_AND_CLEAN", n_threads=1):
+    cache = "/tmp/mc-cache"
+
+    data = pd.read_csv(source)
+    if data["isMultipleChoice"].any():
+        raise ValueError()
+    if data["hasDiagram"].any():
+        raise ValueError()
+
+    points = list(data[["id", "questionText", "answerText"]].itertuples(index=False, name=None))
+    if n_threads == 1:
+        return [build_da_question(tokenizer, max_to_keep, cache, *x) for x in tqdm(points)]
+    else:
+        from multiprocessing.pool import ThreadPool
+        pbar = tqdm(total=len(points))
+        out = []
+        with ThreadPool(n_threads) as pool:
+            for r in pool.imap_unordered(_build_da_question_tuple, [([tokenizer, max_to_keep, cache]+list(x)) for x in points]):
+                pbar.update(1)
+                out.append(r)
+        return out
+
+
 def build_mc_corpus(max_to_keep=50, tokenizer: str="NLTK_AND_CLEAN"):
-    print("Buliding dev...")
-    dev = build_mc_data(NDMC_DEV, max_to_keep, tokenizer, n_threads=1)
+    # print("Buliding dev...")
+    # dev = build_mc_data(NDMC_DEV, max_to_keep, tokenizer, n_threads=1)
 
     print("Buliding train...")
-    train = build_mc_data(NDMC_TRAIN1)
+    train = build_mc_data(NDMC_TRAIN3, 1)
+    # train = None
 
-    print("Saving..")
-    AristoMcCorpus.build(train, dev)
-    print("Done!")
-    corp = AristoMcCorpus()
-    corp.get_train()
-    corp.get_dev()
+    # print("Saving..")
+    # AristoMcCorpus.build(train, dev)
+    # print("Done!")
+    # corp = AristoMcCorpus()
+    # corp.get_train()
+    # corp.get_dev()
+
+
+def check():
+    data = []
+    for x in [NDMC_TRAIN3]:
+        data.append(pd.read_csv(x))
+    print(len(set(flatten_iterable(x.id for x in data))))
+
+    cache = "/tmp/mc-cache"
+    missing = 0
+    for q in flatten_iterable(list(x.id) for x in data):
+        q = str(q)
+        cache_file = join(cache, q + ".json")
+        if not exists(join(cache, cache_file)):
+            missing += 1
+
+    print(missing)
+
+
+def build_da_corpus(max_to_keep=50, tokenizer: str="NLTK_AND_CLEAN"):
+    print("Buliding dev...")
+    # dev = build_da_data(NDDA_DEV, max_to_keep, tokenizer, n_threads=1)
+
+    print("Buliding train...")
+    train = build_mc_data(NDMC_TRAIN3)
+    train = None
+    #
+    # print("Saving..")
+    # AristoMcCorpus.build(train, dev)
+    # print("Done!")
+    # corp = AristoMcCorpus()
+    # corp.get_train()
+    # corp.get_dev()
 
 
 if __name__ == "__main__":
+    # check()
     build_mc_corpus()

@@ -19,16 +19,18 @@ space_re = re.compile("[ \u202f]")
 WEEK_DAYS = {"Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"}
 MONTHS = {"January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
           "November", "December",
-          "Jan.", "Feb.", "Mar.", "Apr.", "Aug.", "Sept.", "Sep.", "Oct.",  "Nov.", "Dec."}
-HONORIFIC = {"Ltd", "Sr", "Jr", "Mr", "Mrs", "Ms", "Dr",
-             "Ltd.", "Sr.", "Jr.", "Mr.", "Mrs.", "Ms.", "Dr.",
-             "Miss", "Madam", "Sir", "Majesty", "Saint", "Prof"}
+          "Jan.", "Feb.", "Mar.", "Jul.", "Jun.", "Apr.", "Aug.", "Sept.", "Sep.", "Oct.", "Nov.", "Dec.",
+          "Jan",  "Feb",  "Mar",  "Jul",  "Jun",  "Apr",  "Aug",  "Sept",  "Sep",  "Oct",  "Nov",  "Dec"}
+HONORIFIC = {"Ltd", "Lt", "Sgt", "Sr", "Jr", "Mr", "Mrs", "Ms", "Dr",
+             "Ltd.", "Lt.", "Sgt.", "Sr.", "Jr.", "Mr.", "Mrs.", "Ms.", "Dr.",
+             "Miss", "Madam", "Sir", "Majesty", "Saint", "Prof", "Private"}
 TITLE = {"Princess", "King", "Queen", "Prince", "Duke", "Lord", "Lady",
          "Archduke", "Archduchess", "Earl", "Baron", "Baroness", "Marquis",  "Marquess",
          "Senator", "Representative", "Count", "Countess", "Viscount", "Viscountess",
          "Emperor", "Empress", "Viceroy", "Pope", "Pastor", "Cardinal", "Priest",
          "President", "Mayor", "Governor", "Admiral", "Captain", "Colonel", "Major",
-         "Sergeant", 'Judge'}
+         "Sergeant", "Judge", "Mama", "Papa"}
+PLANETS = {"Mercury", "Venus", "Earth", "Mars", "Jupiter", "Saturn", "Uranus", "Neptune", "Pluto"}
 
 
 def post_split_tokens(tokens: List[str]) -> List[str]:
@@ -170,11 +172,18 @@ class NltkPlusStopWords(Configurable):
 
 class NameDetector(Configurable):
     squad_exceptions = {
-        "Congress", "Olympic", "St", "Bible", "Android", "Bactria",
-        "Coke", "Pepsi", "Google", "Mac", "Facebook",
-        "Irreplaceable", "Privy", "Def", "Bactrian", "Fe", "Boo",
-        "Bang", "Atlas",
+        "Congress", "Senate", "Olympic", "St", "Bible", "Android", "Bactria",
+        "Nobel", "Mount", "Excalibur", "Internationale",
+        "Coke", "Pepsi", "Google", "Mac",
+        "Facebook", "Twitter", "Wikipedia", "Google", "Amazon", "Airways",
+        "Irreplaceable", "Privy", "Def", "Prev", "Bactrian", "Fe", "Boo",
+        "Bang", "Atlas", "Corp", "Academy",
         "Co.", "Co", "Inc.", "Inc", "Hz", "St."}
+
+    @property
+    def version(self):
+        # Expanded words
+        return 1
 
     def __init__(self):
         self.stop = None
@@ -187,6 +196,7 @@ class NameDetector(Configurable):
         stop.update(stopwords.words('english'))
         stop.update(TITLE)
         stop.update(HONORIFIC)
+        stop.update(PLANETS)
         stop.update(WEEK_DAYS)
         stop.update(x + "s" for x in WEEK_DAYS)
         stop.update(MONTHS)
@@ -198,7 +208,7 @@ class NameDetector(Configurable):
         self.word_counts_lower = word_counts_lower
 
     def select(self, word):
-        if word[0].isupper() and word[1:].islower() and len(word) > 0:
+        if word[0].isupper() and word[1:].islower() and len(word) > 1:
             wl = word.lower()
             if wl not in self.stop:
                 lc = self.word_counts_lower[wl]

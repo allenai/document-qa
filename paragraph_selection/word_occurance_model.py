@@ -10,10 +10,9 @@ from configurable import Configurable
 from data_processing.document_splitter import DocumentSplitter, ParagraphFilter
 from data_processing.preprocessed_corpus import Preprocessor, DatasetBuilder, TextDataset, \
     LazyCorpusStatistics
-from data_processing.qa_data import Batcher
 from dataset import Dataset
 from encoder import QuestionEncoder, DocumentAndQuestionEncoder, MultiContextAndQuestionEncoder
-from model import Model, ModelOutput, Prediction
+from model import Model, Prediction
 from nn.embedder import WordEmbedder, CharWordEmbedder
 from nn.layers import SequenceEncoder, SequenceMapper, get_keras_initialization, MergeLayer, AttentionMapper, Mapper
 from nn.ops import VERY_NEGATIVE_NUMBER
@@ -119,7 +118,7 @@ class OccuranceFeaturizer(Preprocessor):
                     no_answer_pruned += 1
                     continue
                 text = evidence.get_document(doc.doc_id)
-                split = self.splitter.split(text, doc.answer_spans)
+                split = self.splitter.split_annotated(text, doc.answer_spans)
                 if self.para_filter is not None:
                     split = self.para_filter.prune(question.question, split)
                 if self.prune_no_answer and not any(len(x.answer_spans) > 0 for x in split):

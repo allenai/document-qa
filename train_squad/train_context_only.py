@@ -1,6 +1,6 @@
 import trainer
 from data_processing.document_splitter import MergeParagraphs, TopTfIdf
-from data_processing.paragraph_qa import ContextLenKey, ContextLenBucketedKey, DocumentQaTrainingData
+from data_processing.qa_training_data import ContextLenKey, ContextLenBucketedKey
 from data_processing.text_utils import NltkPlusStopWords
 from dataset import ListBatcher, ClusteredBatcher
 from doc_qa_models import ContextOnly
@@ -10,9 +10,9 @@ from nn.embedder import FixedWordEmbedder, DropNames
 from nn.layers import NullBiMapper, FullyConnected
 from nn.recurrent_layers import CudnnGru
 from nn.span_prediction import BoundsPredictor
-from squad.build_squad_dataset import SquadCorpus
+from squad.squad_data import SquadCorpus, DocumentQaTrainingData
+from squad.squad_evaluators import BoundedSquadSpanEvaluator
 from trainer import SerializableOptimizer, TrainParams
-from squad.squad_eval import BoundedSquadSpanEvaluator, SentenceSpanEvaluator
 from trivia_qa.build_span_corpus import TriviaQaWebDataset
 from utils import get_output_name_from_cli
 
@@ -21,13 +21,13 @@ def main():
     out = get_output_name_from_cli()
 
     train_params = TrainParams(SerializableOptimizer("Adadelta", dict(learning_rate=1.0)),
-                               num_epochs=16, eval_period=150, log_period=30,
+                               num_epochs=16, eval_period=900, log_period=30,
                                async_encoding=5,
-                               save_period=8000, eval_samples=dict(train=6000, dev=6000))
+                               save_period=900, eval_samples=dict(train=6000, dev=6000))
 
     model = ContextOnly(
         DocumentAndQuestionEncoder(SingleSpanAnswerEncoder()),
-        DropNames(vec_name="glove.840B.300d", learn_unk=False, word_vec_init_scale=0, kind="shuffle"),
+        FixedWordEmbedder(vec_name="glove.6B.100d", word_vec_init_scale=0, learn_unk=False),
         None,
         FullyConnected(50),
         BoundsPredictor(NullBiMapper())
@@ -38,7 +38,7 @@ def main():
     eval_batching = ClusteredBatcher(45, ContextLenKey(), False, False)
     data = DocumentQaTrainingData(corpus, None, train_batching, eval_batching)
 
-    eval = [LossEvaluator(), BoundedSquadSpanEvaluator(bound=[17]), SentenceSpanEvaluator()]
+    eval = [LossEvaluator(), BoundedSquadSpanEvaluator(bound=[17])]
     trainer.start_training(data, model, train_params, eval, trainer.ModelDir(out), "")
 
 if __name__ == "__main__":

@@ -3,10 +3,9 @@ from typing import List, Optional, Dict, Union
 import tensorflow as tf
 from tensorflow import Tensor
 
-from data_processing.paragraph_qa import DocumentQaStats
-from data_processing.qa_data import ParagraphAndQuestionDataset
+from data_processing.qa_training_data import ParagraphAndQuestionDataset
 from encoder import DocumentAndQuestionEncoder
-from model import ModelOutput, Model
+from model import Model, Prediction
 from nn.embedder import WordEmbedder, CharWordEmbedder
 from nn.layers import SequenceMapper, SequenceBiMapper, AttentionMapper, SequenceEncoder, \
     SequenceMapperWithContext, MapMulti, SequencePredictionLayer, AttentionPredictionLayer
@@ -33,7 +32,7 @@ class DocumentQuestionModel(Model):
         self.encoder = encoder
         self._is_train_placeholder = None
 
-    def init(self, corpus: DocumentQaStats, loader: ResourceLoader):
+    def init(self, corpus, loader: ResourceLoader):
         if self.word_embed is not None:
             self.word_embed.set_vocab(corpus, loader, corpus.special_tokens)
         if self.char_embed is not None:
@@ -97,9 +96,6 @@ class DocumentQuestionModel(Model):
             q_embed.append(input_tensors.get(enc.question_features))
             c_embed.append(input_tensors.get(enc.context_features))
 
-        print(q_embed)
-        print(c_embed)
-
         q_embed = tf.concat(q_embed, axis=2)
         c_embed = tf.concat(c_embed, axis=2)
 
@@ -110,7 +106,7 @@ class DocumentQuestionModel(Model):
                              is_train,
                              question_embed, question_mask,
                              context_embed, context_mask,
-                             answer) -> ModelOutput:
+                             answer) -> Prediction:
         raise NotImplemented()
 
     def encode(self, batch: List, is_train: bool):
@@ -133,7 +129,7 @@ class ContextOnly(DocumentQuestionModel):
     def _get_predictions_for(self, is_train,
                              question_embed, question_mask,
                              context_embed, context_mask,
-                             answer) -> ModelOutput:
+                             answer) -> Prediction:
         with tf.variable_scope("encode"):
             self.context_encoder.apply(is_train, context_embed, context_mask)
 
@@ -167,7 +163,7 @@ class Attention(DocumentQuestionModel):
     def _get_predictions_for(self, is_train,
                              question_rep, question_mask,
                              context_rep, context_mask,
-                             answer) -> ModelOutput:
+                             answer) -> Prediction:
         if self.embed_mapper is not None:
             with tf.variable_scope("map_embed"):
                 context_rep = self.embed_mapper.apply(is_train, context_rep, context_mask)
@@ -230,7 +226,7 @@ class AttentionAndEncode(DocumentQuestionModel):
     def _get_predictions_for(self, is_train,
                              question_rep, question_mask,
                              context_rep, context_mask,
-                             answer) -> ModelOutput:
+                             answer) -> Prediction:
         if self.embed_mapper is not None:
             with tf.variable_scope("map_embed"):
                 context_rep = self.embed_mapper.apply(is_train, context_rep, context_mask)

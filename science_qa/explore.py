@@ -5,12 +5,13 @@ from os.path import join
 
 import requests
 
-from science_qa.build_dataset import AristoMcCorpus, AristoMcQuestion
+from science_qa.build_dataset import AristoMcCorpus
+from utils import flatten_iterable
 
 
 def main():
-    # corp = AristoMcCorpus()
-    # x = corp.get_train()
+    corp = AristoMcCorpus()
+    questions = corp.get_train()
 
     questions = []
     for filename in sorted(listdir("/tmp/mc-cache/")):
@@ -24,8 +25,18 @@ def main():
     # np.random.RandomState(0).shuffle(questions)
 
     # for ix, q in enumerate(questions):
-    #      = p
-    #     print(decomposed)
+        # print(" ".join(q.question))
+        # text = flatten_iterable(flatten_iterable(para.text) for para in q.paragraphs)
+        # print(len(text))
+        # print(q.answer_options[q.answer])
+        # print(sum(sum(len(s) for s in para.text) for para in q.paragraphs))
+        # print(q.paragraphs[0].text)
+        # break
+        # text = flatten_iterable(x.text for x in q.paragraphs)
+        # print(len(text))
+        # print(text[0])
+        # print(text[0][0])
+        # print([" ".join([" ".join(s) for s in x.text]) for x in q.paragraphs])
     # for q in x:
     #     print(q.raw_question)
     #     response = requests.get("http://aristo-docker.dev.ai2:8087/decompose", {"text": q.raw_question})

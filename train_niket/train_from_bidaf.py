@@ -27,11 +27,11 @@ def main():
     args = parser.parse_args()
 
     train_params = TrainParams(SerializableOptimizer("Adam", dict(learning_rate=0.001)),
-                               max_checkpoints_to_keep=5, eval_at_zero=True,
+                               max_checkpoints_to_keep=7, eval_at_zero=True,
                                eval_samples={},
-                               num_epochs=50, log_period=10*6, eval_period=40*6, save_period=40*6)
+                               num_epochs=10, log_period=10*2, eval_period=80, save_period=80)
 
-    train_batching = ClusteredBatcher(10, ContextLenBucketedKey(3), True, True)
+    train_batching = ClusteredBatcher(30, ContextLenBucketedKey(3), True, True)
     eval_batching = ClusteredBatcher(50, ContextLenKey(), False, True)
     data = NiketTrainingData(None, train_batching, eval_batching)
 
@@ -46,7 +46,7 @@ def main():
     trainer.start_training(data, model, train_params,
                            [LossEvaluator(), SpanEvaluator([1, 2, 3, 4, 5]), SpanProbability()],
                            ModelDir(args.name + "-" + datetime.now().strftime("%m%d-%H%M%S")),
-                           notes, None)
+                           notes, init_from)
 
 
 if __name__ == "__main__":

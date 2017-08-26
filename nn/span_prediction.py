@@ -5,7 +5,7 @@ from tensorflow import Tensor
 from tensorflow.contrib.layers import fully_connected
 
 from configurable import Configurable
-from model import Prediction, ModelOutput
+from model import Prediction
 from nn.layers import SequenceBiMapper, MergeLayer, Mapper, get_keras_initialization, SequenceMapper, SequenceEncoder, \
     FixedMergeLayer, AttentionPredictionLayer, SequencePredictionLayer
 from nn.ops import VERY_NEGATIVE_NUMBER, exp_mask
@@ -69,12 +69,15 @@ class ConfidencePrediction(Prediction):
         self.end_logits = end_logits
         self.non_op_logit = non_op_logit
 
-    def get_best_span(self, bound: int):
+    def get_best_span(self, bound: int, use_prob: bool=False):
+        # if use_prob:
         return best_span_from_bounds(self.start_logits, self.end_logits, bound)
+        # else:
+        #     return best_span_from_bounds(self.start_probs, self.end_probs, bound)
 
 
 class SpanFromBoundsPredictor(Configurable):
-    def predict(self, answer, start_logits, end_logits, mask) -> ModelOutput:
+    def predict(self, answer, start_logits, end_logits, mask) -> Prediction:
         raise NotImplementedError()
 
 
@@ -82,7 +85,7 @@ class IndependentBounds(SpanFromBoundsPredictor):
     def __init__(self, aggregate="sum"):
         self.aggregate = aggregate
 
-    def predict(self, answer, start_logits, end_logits, mask) -> ModelOutput:
+    def predict(self, answer, start_logits, end_logits, mask) -> Prediction:
         masked_start_logits = exp_mask(start_logits, mask)
         masked_end_logits = exp_mask(end_logits, mask)
 
@@ -113,13 +116,14 @@ class IndependentBounds(SpanFromBoundsPredictor):
             loss = tf.add_n(losses)
         else:
             raise NotImplemented()
-        return ModelOutput(loss, BoundaryPrediction(tf.nn.softmax(masked_start_logits),
-                                                    tf.nn.softmax(masked_end_logits),
-                                                    masked_start_logits, masked_end_logits))
+        tf.add_to_collection(tf.GraphKeys.LOSSES, loss)
+        return BoundaryPrediction(tf.nn.softmax(masked_start_logits),
+                                  tf.nn.softmax(masked_end_logits),
+                                  masked_start_logits, masked_end_logits)
 
 
 class IndependentBoundsJointLoss(SpanFromBoundsPredictor):
-    def predict(self, answer, start_logits, end_logits, mask) -> ModelOutput:
+    def predict(self, answer, start_logits, end_logits, mask) -> Prediction:
         if len(answer) != 1:
             raise NotImplementedError()
         masked_start_logits = exp_mask(start_logits, mask)
@@ -130,11 +134,11 @@ class IndependentBoundsJointLoss(SpanFromBoundsPredictor):
         losses2 = tf.nn.sparse_softmax_cross_entropy_with_logits(
             logits=masked_end_logits, labels=answer_spans[:, 1])
         joint_loss = tf.reduce_logsumexp(tf.stack([losses1, losses2], axis=1), axis=1)
-        print(joint_loss.shape)
         loss = tf.reduce_mean(joint_loss)
-        return ModelOutput(loss, BoundaryPrediction(tf.nn.softmax(masked_start_logits),
-                                                    tf.nn.softmax(masked_end_logits),
-                                                    masked_start_logits, masked_end_logits))
+        tf.add_to_collection(tf.GraphKeys.LOSSES, loss)
+        return BoundaryPrediction(tf.nn.softmax(masked_start_logits),
+                                  tf.nn.softmax(masked_end_logits),
+                                  masked_start_logits, masked_end_logits)
 
 
 class BoundedSpanPredictor(SpanFromBoundsPredictor):
@@ -143,7 +147,7 @@ class BoundedSpanPredictor(SpanFromBoundsPredictor):
         self.f1_weight = f1_weight
         self.aggregate = aggregate
 
-    def predict(self, answer, start_logits, end_logits, mask) -> ModelOutput:
+    def predict(self, answer, start_logits, end_logits, mask) -> Prediction:
         bound = self.bound
         f1_weight = self.f1_weight
         aggregate = self.aggregate
@@ -190,7 +194,8 @@ class BoundedSpanPredictor(SpanFromBoundsPredictor):
         else:
             raise NotImplementedError()
 
-        return ModelOutput(loss, PackedSpanPrediction(span_logits, l, bound))
+        tf.add_to_collection(tf.GraphKeys.LOSSES, loss)
+        return PackedSpanPrediction(span_logits, l, bound)
 
 
 class SpanFromVectorBound(SequencePredictionLayer):
@@ -198,21 +203,19 @@ class SpanFromVectorBound(SequencePredictionLayer):
                  mapper: SequenceBiMapper,
                  pre_process: Optional[SequenceMapper],
                  merge: MergeLayer,
-                 post_process: Mapper,
-                 bound,
-                 linear_logits=False,
-                 imp="py_loop",
+                 post_process: Optional[Mapper],
+                 bound: int,
                  f1_weight=0,
-                 init: str="glorot_uniform"):
+                 init: str="glorot_uniform",
+                 aggregate="sum"):
         self.mapper = mapper
-        self.linear_logits = linear_logits
         self.pre_process = pre_process
         self.merge = merge
         self.post_process = post_process
-        self.imp = imp
         self.init = init
         self.f1_weight = f1_weight
         self.bound = bound
+        self.aggregate = aggregate
 
     def apply(self, is_train, context_embed, answer, context_mask=None):
         init_fn = get_keras_initialization(self.init)
@@ -227,31 +230,26 @@ class SpanFromVectorBound(SequencePredictionLayer):
             with tf.variable_scope("pre-process2"):
                 m2 = self.pre_process.apply(is_train, m2, context_mask)
 
-        if self.imp == "py_loop":
-            span_vector_lst = []
-            mask_lst = []
-            for i in range(self.bound):
-                if i == 0:
-                    with tf.variable_scope("merge"):
-                        span_vector_lst.append(self.merge.apply(is_train, m1, m2))
-                    mask_lst.append(bool_mask)
-                else:
-                    with tf.variable_scope("merge", reuse=True):
-                        span_vector_lst.append(self.merge.apply(is_train, m1[:, :-i], m2[:, i:]))
-                    mask_lst.append(bool_mask[:, i:])
+        span_vector_lst = []
+        mask_lst = []
+        with tf.variable_scope("merge"):
+            span_vector_lst.append(self.merge.apply(is_train, m1, m2))
+        mask_lst.append(bool_mask)
+        for i in range(1, self.bound):
+            with tf.variable_scope("merge", reuse=True):
+                span_vector_lst.append(self.merge.apply(is_train, m1[:, :-i], m2[:, i:]))
+            mask_lst.append(bool_mask[:, i:])
 
-            mask = tf.concat(mask_lst, axis=1)
-            span_vectors = tf.concat(span_vector_lst, axis=1)  # all logits -> flattened per-span predictions
-        elif self.imp == "transpose_map":
-            raise NotImplementedError()
-        else:
-            raise NotImplementedError(self.imp)
+        mask = tf.concat(mask_lst, axis=1)
+        span_vectors = tf.concat(span_vector_lst, axis=1)  # all logits -> flattened per-span predictions
 
-        span_vectors = self.post_process.apply(is_train, span_vectors)
-        if not self.linear_logits:
+        if self.post_process is not None:
+            with tf.variable_scope("post-process"):
+                span_vectors = self.post_process.apply(is_train, span_vectors)
+
+        with tf.variable_scope("compute_logits"):
             logits = fully_connected(span_vectors, 1, activation_fn=None, weights_initializer=init_fn)
-        else:
-            logits = span_vectors
+
         logits = tf.squeeze(logits, squeeze_dims=[2])
         logits = logits + VERY_NEGATIVE_NUMBER * (1 - tf.cast(tf.concat(mask, axis=1), tf.float32))
 
@@ -259,22 +257,36 @@ class SpanFromVectorBound(SequencePredictionLayer):
 
         if len(answer) == 1:
             answer = answer[0]
-            if self.f1_weight == 0:
-                answer_ix = to_packed_coordinates(answer, l, self.bound)
-                loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=logits, labels=answer_ix))
-            else:
-                f1_mask = packed_span_f1_mask(answer, l, self.bound)
-                if self.f1_weight < 1:
-                    f1_mask *= self.f1_weight
-                    f1_mask += (1-self.f1_weight) * tf.one_hot(to_packed_coordinates(answer, l, self.bound), l)
+            if answer.dtype == tf.int32:
+                if self.f1_weight == 0:
+                    answer_ix = to_packed_coordinates(answer, l, self.bound)
+                    loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=logits, labels=answer_ix))
+                else:
+                    f1_mask = packed_span_f1_mask(answer, l, self.bound)
+                    if self.f1_weight < 1:
+                        f1_mask *= self.f1_weight
+                        f1_mask += (1-self.f1_weight) * tf.one_hot(to_packed_coordinates(answer, l, self.bound), l)
 
-                # TODO can we stay in log space?  (actually its tricky since f1_mask can have zeros...)
-                probs = tf.nn.softmax(logits)
-                loss = -tf.reduce_mean(tf.log(tf.reduce_sum(probs * f1_mask, axis=1)))
+                    # TODO can we stay in log space?  (actually its tricky since f1_mask can have zeros...)
+                    probs = tf.nn.softmax(logits)
+                    loss = -tf.reduce_mean(tf.log(tf.reduce_sum(probs * f1_mask, axis=1)))
+            else:
+                log_norm = tf.reduce_logsumexp(logits, axis=1)
+                if self.aggregate == "sum":
+                    log_score = tf.reduce_logsumexp(
+                        logits + VERY_NEGATIVE_NUMBER * (1 - tf.cast(answer, tf.float32)),
+                        axis=1)
+                elif self.aggregate == "max":
+                    log_score = tf.reduce_max(logits + VERY_NEGATIVE_NUMBER * (1 - tf.cast(answer, tf.float32)),
+                                              axis=1)
+                else:
+                    raise NotImplementedError()
+                loss = tf.reduce_mean(-(log_score - log_norm))
         else:
             raise NotImplementedError()
 
-        return ModelOutput(loss, PackedSpanPrediction(logits, l, self.bound))
+        tf.add_to_collection(tf.GraphKeys.LOSSES, loss)
+        return PackedSpanPrediction(logits, l, self.bound)
 
 
 class BoundsPredictor(SequencePredictionLayer):
@@ -362,9 +374,11 @@ class ConfidencePredictor(SequencePredictionLayer):
                  encoder: SequenceEncoder,
                  confidence_predictor: Mapper,
                  init: str="glorot_uniform",
+                 dot_bounds: bool=False,
                  aggregate=None):
         self.predictor = predictor
         self.init = init
+        self.dot_bounds = dot_bounds
         self.aggregate = aggregate
         self.confidence_predictor = confidence_predictor
         self.encoder = encoder
@@ -396,7 +410,10 @@ class ConfidencePredictor(SequencePredictionLayer):
         with tf.variable_scope("encode_context"):
             enc = self.encoder.apply(is_train, context_embed, context_mask)
         with tf.variable_scope("confidence"):
-            none_logit = self.confidence_predictor.apply(is_train, tf.concat([start_atten, end_atten, enc],axis=1))
+            conf = [start_atten, end_atten, enc]
+            if self.dot_bounds:
+                conf.append(start_atten * end_atten)
+            none_logit = self.confidence_predictor.apply(is_train, tf.concat(conf, axis=1))
         with tf.variable_scope("confidence_logits"):
             none_logit = fully_connected(none_logit, 1, activation_fn=None,
                                    weights_initializer=init_fn)
@@ -421,7 +438,8 @@ class ConfidencePredictor(SequencePredictionLayer):
         log_correct = tf.reduce_logsumexp(all_logits + VERY_NEGATIVE_NUMBER * (1 - tf.cast(correct_mask, tf.float32)), axis=1)
         loss = tf.reduce_mean(-(log_correct - log_norms))
         probs = tf.nn.softmax(all_logits)
-        return ModelOutput(loss, ConfidencePrediction(None, None, masked_start_logits, masked_end_logits,
-                                                      probs[:, -1], none_logit))
+        tf.add_to_collection(tf.GraphKeys.LOSSES, loss)
+        return ConfidencePrediction(None, None, masked_start_logits, masked_end_logits,
+                                    probs[:, -1], none_logit)
 
 

@@ -120,7 +120,7 @@ def split(lst, n_groups):
     return groups
 
 
-def partition(lst: List, max_group_size) -> List[List]:
+def group(lst: List, max_group_size) -> List[List]:
     """ partition `lst` into that the mininal number of groups that as evenly sized
     as possible  and are at most `max_group_size` in size """
     if max_group_size is None:

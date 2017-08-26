@@ -7,7 +7,7 @@ from tensorflow.contrib.keras import activations
 from tensorflow.contrib.keras import initializers
 from tensorflow.python.layers.core import fully_connected
 
-from model import ModelOutput
+from model import Prediction
 from nn.ops import dropout, mixed_dropout, VERY_NEGATIVE_NUMBER, exp_mask
 import numpy as np
 
@@ -136,12 +136,12 @@ class SqueezeLayer(Configurable):
 
 
 class SequencePredictionLayer(Configurable):
-    def apply(self, is_train, x, answer: List, mask=None) -> ModelOutput:
+    def apply(self, is_train, x, answer: List, mask=None) -> Prediction:
         return NotImplemented()
 
 
 class AttentionPredictionLayer(Configurable):
-    def apply(self, is_train, keys, context, answer: List, mask=None, memory_mask=None) -> ModelOutput:
+    def apply(self, is_train, keys, context, answer: List, mask=None, memory_mask=None) -> Prediction:
         raise NotImplementedError()
 
 
@@ -221,8 +221,12 @@ class LeakyRelu(Activation):
 
 
 class ParametricRelu(Updater):
+    def __init__(self, init=0):
+        self.init = init
+
     def apply(self, is_train, x, mask=None):
-        w = tf.get_variable("prelu", x.shape.as_list()[-1])
+        w = tf.get_variable("prelu", x.shape.as_list()[-1],
+                            initializer=tf.constant_initializer(self.init))
         for i in range(len(x.shape)-1):
             w = tf.expand_dims(w, 0)
         return tf.where(x > 0, x, x * w)
@@ -241,6 +245,19 @@ class SumLayer(MergeLayer):
 class ConcatWithProduct(MergeLayer):
     def apply(self, is_train, tensor1, tensor2) -> tf.Tensor:
         return tf.concat([tensor1, tensor2, tensor1 * tensor2], axis=len(tensor1.shape) - 1)
+
+
+class ConcatWithProductTmp(MergeLayer):
+    def apply(self, is_train, tensor1, tensor2) -> tf.Tensor:
+        print("HERE!")
+        print(tensor1.shape)
+        print((tensor1 * tensor2).shape)
+        return tf.concat([tensor1, tensor2, tensor1 * tensor2/10.0], axis=len(tensor1.shape) - 1)
+
+
+class DotMerge(MergeLayer):
+    def apply(self, is_train, tensor1, tensor2) -> tf.Tensor:
+        return tensor1 * tensor2
 
 
 class ConcatWithProductProj(MergeLayer):

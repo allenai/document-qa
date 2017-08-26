@@ -4,12 +4,11 @@ import numpy as np
 import tensorflow as tf
 
 from configurable import Configurable
-from data_processing.paragraph_qa import ParagraphAndQuestionSpec, ParagraphAndQuestion
+from data_processing.qa_training_data import ParagraphAndQuestionSpec, ContextAndQuestion
 from data_processing.span_data import ParagraphSpans, TokenSpans
 from data_processing.text_features import QaTextFeautrizer
 from nn.embedder import WordEmbedder, CharEmbedder
 from nn.span_prediction_ops import to_packed_coordinates_np
-from trivia_qa.triviaqa_training_data import TriviaQaAnswer
 from utils import max_or_none
 
 
@@ -47,18 +46,12 @@ class SingleSpanAnswerEncoder(AnswerEncoder):
             answer = doc.answer
 
             if answer is None:
-                raise ValueError()
+                continue
 
             if isinstance(answer, ParagraphSpans):
                 answer = doc.answer[np.random.randint(0, len(doc.answer))]
                 word_start = answer.para_word_start
                 word_end = answer.para_word_end
-            elif isinstance(answer, TriviaQaAnswer):
-                candidates = np.where(answer.answer_spans[:, 1] < context_len[doc_ix])[0]
-                if len(candidates) == 0:
-                    raise ValueError()
-                ix = candidates[np.random.randint(0, len(candidates))]
-                word_start, word_end = answer.answer_spans[ix]
             elif isinstance(answer, TokenSpans):
                 candidates = np.where(answer.answer_spans[:, 1] < context_len[doc_ix])[0]
                 if len(candidates) == 0:
@@ -131,12 +124,10 @@ class DocumentAndQuestionEncoder(Configurable):
     def __init__(self,
                  answer_encoder: AnswerEncoder,
                  para_size_th: Optional[int]=None,
-                 sent_size_th: Optional[int]=None,
                  word_featurizer: Optional[QaTextFeautrizer]=None):
         # Parameters
         self.answer_encoder = answer_encoder
         self.doc_size_th = para_size_th
-        self.sent_size_th = sent_size_th
 
         self.word_featurizer = word_featurizer
 
@@ -227,7 +218,7 @@ class DocumentAndQuestionEncoder(Configurable):
                  self.context_len, self.context_words, self.context_chars, self.context_features]
                 if x is not None] + self.answer_encoder.get_placeholders()
 
-    def encode(self, batch: List[ParagraphAndQuestion], is_train: bool):
+    def encode(self, batch: List[ContextAndQuestion], is_train: bool):
         batch_size = len(batch)
         if self.batch_size is not None:
             if self.batch_size < batch_size:
@@ -242,10 +233,10 @@ class DocumentAndQuestionEncoder(Configurable):
 
         if is_train and context_word_dim is not None:
             # Context might be truncated
-            context_len = np.array([min(sum(len(s) for s in doc.context), context_word_dim)
+            context_len = np.array([min(doc.n_context_words, context_word_dim)
                                     for doc in batch], dtype='int32')
         else:
-            context_len = np.array([sum(len(s) for s in doc.context) for doc in batch], dtype='int32')
+            context_len = np.array([doc.n_context_words for doc in batch], dtype='int32')
             context_word_dim = context_len.max()
 
         question_len = np.array([len(x.question) for x in batch], dtype='int32')
@@ -277,15 +268,20 @@ class DocumentAndQuestionEncoder(Configurable):
         else:
             context_chars, question_chars = None, None
 
+        query_once = self._word_embedder.query_once()
+
         for doc_ix, doc in enumerate(batch):
             doc_mapping = {}
 
             for word_ix, word in enumerate(doc.question):
                 if self._word_embedder is not None:
-                    # ix = doc_mapping.get(word)
-                    # if ix is None:
-                    ix = self._word_embedder.context_word_to_ix(word, is_train)
-                        # doc_mapping[word] = ix
+                    if query_once:
+                        ix = doc_mapping.get(word)
+                        if ix is None:
+                            ix = self._word_embedder.context_word_to_ix(word, is_train)
+                            doc_mapping[word] = ix
+                    else:
+                        ix = self._word_embedder.context_word_to_ix(word, is_train)
                     question_words[doc_ix, word_ix] = ix
                 if self._char_emb is not None:
                     for char_ix, char in enumerate(word):
@@ -293,26 +289,24 @@ class DocumentAndQuestionEncoder(Configurable):
                             break
                         question_chars[doc_ix, word_ix, char_ix] = self._char_emb.char_to_ix(char)
 
-            word_ix = 0
-            for sent_ix, sent in enumerate(doc.context):
-                if self.sent_size_th is not None and sent_ix == self.sent_size_th:
+            for word_ix, word in enumerate(doc.get_context()):
+                if word_ix == self.max_context_word_dim:
                     break
-                for word in sent:
-                    if word_ix == self.max_context_word_dim:
-                        break
-                    if self._word_embedder is not None:
-                        # ix = doc_mapping.get(word)
-                        # if ix is None:
+                if self._word_embedder is not None:
+                    if query_once:
+                        ix = doc_mapping.get(word)
+                        if ix is None:
+                            ix = self._word_embedder.context_word_to_ix(word, is_train)
+                            doc_mapping[word] = ix
+                    else:
                         ix = self._word_embedder.context_word_to_ix(word, is_train)
-                            # doc_mapping[word] = ix
-                        context_words[doc_ix, word_ix] = ix
+                    context_words[doc_ix, word_ix] = ix
 
-                    if self._char_emb is not None:
-                        for char_ix, char in enumerate(word):
-                            if char_ix == self.max_char_dim:
-                                break
-                            context_chars[doc_ix, word_ix, char_ix] = self._char_emb.char_to_ix(char)
-                    word_ix += 1
+                if self._char_emb is not None:
+                    for char_ix, char in enumerate(word):
+                        if char_ix == self.max_char_dim:
+                            break
+                        context_chars[doc_ix, word_ix, char_ix] = self._char_emb.char_to_ix(char)
 
         feed_dict.update(self.answer_encoder.encode(batch_size, context_len, context_word_dim, batch))
 
@@ -320,12 +314,8 @@ class DocumentAndQuestionEncoder(Configurable):
             question_word_features = np.zeros((batch_size, ques_word_dim, self.word_featurizer.n_question_features()))
             context_word_features = np.zeros((batch_size, context_word_dim, self.word_featurizer.n_context_features()))
             for doc_ix, doc in enumerate(batch):
-                truncated_context = []
-                for sent_ix, sent in enumerate(doc.context):
-                    if self.sent_size_th is not None and sent_ix == self.sent_size_th:
-                        break
-                    truncated_context += sent
-                q_f, c_f = self.word_featurizer.get_features(doc.question, truncated_context[:self.max_context_word_dim])
+                q_f, c_f = self.word_featurizer.get_features(doc.question,
+                                                             doc.get_context()[:self.max_context_word_dim])
                 question_word_features[doc_ix, :q_f.shape[0]] = q_f
                 context_word_features[doc_ix, :c_f.shape[0]] = c_f
             feed_dict[self.context_features] = context_word_features
@@ -372,7 +362,7 @@ class MultiContextAndQuestionEncoder(Configurable):
                 [self.question_len, self.question_words, self.context_len, self.context_words]
                 if x is not None]
 
-    def encode(self, batch: List[ParagraphAndQuestion], is_train: bool):
+    def encode(self, batch: List[ContextAndQuestion], is_train: bool):
         batch_size = len(batch)
         contexts = [x.context for x in batch]
 
@@ -498,7 +488,7 @@ class CheatingEncoder(DocumentAndQuestionEncoder):
         super().__init__(DenseMultiSpanAnswerEncoder())
         self.bound = bound
 
-    def encode(self, batch: List[ParagraphAndQuestion], is_train: bool):
+    def encode(self, batch: List[ContextAndQuestion], is_train: bool):
         batch_size = len(batch)
         if self.batch_size is not None:
             if self.batch_size < batch_size:

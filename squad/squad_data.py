@@ -1,5 +1,4 @@
 import pickle
-from collections import Counter
 from os import makedirs, listdir
 from os.path import isfile, join, exists, isdir
 from typing import List, Tuple, Optional, Dict
@@ -8,24 +7,23 @@ import numpy as np
 
 from config import CORPUS_DIR
 from configurable import Configurable
-from data_processing.qa_data import ParagraphAndQuestionSpec, Answer, ParagraphAndQuestion, \
-    ParagraphQuestionFilter, apply_filters, ParagraphAndQuestionDataset, QaCorpusLazyStats, ParagraphQaTrainingData
+from data_processing.qa_training_data import ParagraphAndQuestionSpec, Answer, ParagraphQaTrainingData, ContextAndQuestion
+from data_processing.span_data import ParagraphSpans
 from data_processing.word_vectors import load_word_vectors
-from dataset import TrainingData, ListBatcher, Dataset
-from utils import ResourceLoader
+from utils import ResourceLoader, flatten_iterable
+
 
 """
-Classes for representing a QA dataset that has questions per a paragraph,
-and those paragraphs are organized into documents, basically for SQuAD
+Represent SQuAD data
 """
 
 
 class Question(object):
     """ Question paired with its answer """
 
-    def __init__(self, question: List[str], answer: Answer, question_id: str):
-        self.words = question
+    def __init__(self, question_id: str, words: List[str], answer: ParagraphSpans):
         self.question_id = question_id
+        self.words = words
         self.answer = answer
 
     def __repr__(self) -> str:
@@ -33,7 +31,7 @@ class Question(object):
 
 
 class Paragraph(object):
-    """ Context with multiple questions, optionally includes it's "raw" untokenzied text and the reverse
+    """ Context with multiple questions, optionally includes it's "raw" untokenzied/un-normalized text and the reverse
     mapping for the tokenized text -> raw text """
 
     def __init__(self,
@@ -65,9 +63,7 @@ class Paragraph(object):
 class Document(object):
     """ Collection of paragraphs """
 
-    def __init__(self, doc_id: str, title: str,
-                 wiki_title: Optional[str], paragraphs: List[Paragraph]):
-        self.wiki_title = wiki_title
+    def __init__(self, doc_id: str, title: str, paragraphs: List[Paragraph]):
         self.title = title
         self.doc_id = doc_id
         self.paragraphs = paragraphs
@@ -76,37 +72,22 @@ class Document(object):
         return "Document(%s)" % self.title
 
 
-# FIXME this should be in "qa_data"
-class ContextLenKey(Configurable):
-    def __call__(self, q: ParagraphAndQuestion):
-        return sum(len(s) for s in q.context)
+class DocParagraphAndQuestion(ContextAndQuestion):
 
-
-class ContextLenBucketedKey(Configurable):
-    def __init__(self, bucket_size: int):
-        self.bucket_size = bucket_size
-
-    def __call__(self, q: ParagraphAndQuestion):
-        return sum(len(s) for s in q.context)//self.bucket_size
-
-
-# FIXME should subclass ParagraphAndQuestion
-class DocParagraphAndQuestion(object):
-    """ QA pair the comes from a specific document/paragraph, and optionally mantains a
-     "reverse" mapping from its tokenized form to its original text """
-
-    def __init__(self, question: List[str], answer: Optional[Answer], question_id: str, paragraph: Paragraph):
-        self.question = question
-        self.answer = answer
-        self.question_id = question_id
+    def __init__(self, question: List[str], answer: Optional[Answer],
+                 question_id: str, paragraph: Paragraph):
+        super().__init__(question, answer, question_id)
         self.paragraph = paragraph
 
     def get_original_text(self, para_start, para_end):
         return self.paragraph.get_original_text(para_start, para_end)
 
+    def get_context(self):
+        return flatten_iterable(self.paragraph.context)
+
     @property
-    def context(self):
-        return self.paragraph.context
+    def n_context_words(self) -> int:
+        return sum(len(s) for s in self.paragraph.context)
 
     @property
     def paragraph_num(self):
@@ -115,48 +96,6 @@ class DocParagraphAndQuestion(object):
     @property
     def article_id(self):
         return self.paragraph.article_id
-
-
-class DocumentQaStats(object):
-    def __init__(self, docs: List[Document], special_tokens=None):
-        self.docs = docs
-        self._question_counts = None
-        self._context_counts = None
-        self._unique_context_counts = None
-        self.special_tokens = special_tokens
-
-    def _load(self):
-        if self._context_counts is not None:
-            return
-        self._context_counts = Counter()
-        self._unique_counts = Counter()
-        self._question_counts = Counter()
-        for doc in self.docs:
-            for para in doc.paragraphs:
-                for sent in para.context:
-                    self._unique_counts.update(sent)
-                    for word in sent:
-                        self._context_counts[word] += len(para.questions)
-                for question in para.questions:
-                    self._question_counts.update(question.words)
-                    self._question_counts.update(question.answer.get_vocab())
-
-        return self._question_counts
-
-    def get_question_counts(self):
-        self._load()
-        return self._question_counts
-
-    def get_context_counts(self):
-        self._load()
-        return self._context_counts
-
-    def get_document_counts(self):
-        self._load()
-        return self._unique_context_counts
-
-    def get_word_counts(self):
-        return self.get_context_counts() + self.get_question_counts()
 
 
 def split_docs(docs: List[Document]) -> List[DocParagraphAndQuestion]:
@@ -168,36 +107,32 @@ def split_docs(docs: List[Document]) -> List[DocParagraphAndQuestion]:
     return paras
 
 
-# TODO we should go back to making loading the reverse-mappings optional
-class DocumentCorpus(Configurable):
+class SquadCorpus(Configurable):
+    # Pickle seems faster the json for loading
     TRAIN_FILE = "train.pkl"
-    TEST_FILE = "test.pkl"
     DEV_FILE = "dev.pkl"
 
     VOCAB_FILE = "vocab.txt"
     WORD_VEC_SUFFIX = "_pruned"
 
     @staticmethod
-    def make_corpus(dir, train: List[Document],
-                    dev: List[Document],
-                    test: List[Document]):
+    def make_corpus(train: List[Document],
+                    dev: List[Document]):
+        dir = join(CORPUS_DIR, "squad")
         if isfile(dir) or (exists(dir) and len(listdir(dir))) > 0:
-            raise ValueError()
+            raise ValueError("Directory %s already exists and is non-empty" % dir)
         if not exists(dir):
             makedirs(dir)
 
-        for name, data in [(DocumentCorpus.TRAIN_FILE, train), (DocumentCorpus.DEV_FILE, dev), (DocumentCorpus.TEST_FILE, test)]:
+        for name, data in [(SquadCorpus.TRAIN_FILE, train), (SquadCorpus.DEV_FILE, dev)]:
             if data is not None:
                 with open(join(dir, name), 'wb') as f:
                     pickle.dump(data, f)
 
-    def __init__(self, source_name):
-        self.source_name = source_name
-        dir = join(CORPUS_DIR, source_name)
-        if not exists(dir):
-            raise ValueError("No directory: " + dir)
-        if not isdir(dir):
-            raise ValueError("Not a directory: " + dir)
+    def __init__(self):
+        dir = join(CORPUS_DIR, "squad")
+        if not exists(dir) or not isdir(dir):
+            raise ValueError("No directory %d, corpus not built yet?" + dir)
         self.dir = dir
 
     @property
@@ -212,7 +147,7 @@ class DocumentCorpus(Configurable):
                 return [x.rstrip() for x in f]
         else:
             voc = set()
-            for fn in [self.get_train_docs, self.get_dev_docs, self.get_test_docs]:
+            for fn in [self.get_train, self.get_dev, self.get_test]:
                 for doc in fn():
                     for para in doc.paragraphs:
                         for sent in para.context:
@@ -259,30 +194,13 @@ class DocumentCorpus(Configurable):
         return self._load(join(self.dir, self.DEV_FILE))
 
     def get_test(self) -> List[Document]:
-        return self._load(join(self.dir, self.TEST_FILE))
+        return []
 
     def _load(self, file) -> List[Document]:
         if not exists(file):
             return []
         with open(file, "rb") as f:
             return pickle.load(f)
-
-    @property
-    def name(self):
-        return self.source_name
-
-    def __setstate__(self, state):
-        if "state" not in state:
-            # handle a bug
-            self.__dict__ = state
-            return
-        self.source_name = state["state"]["source_name"]
-        dir = join(CORPUS_DIR, self.source_name)
-        if not exists(dir):
-            raise ValueError("No directory: " + dir)
-        if not isdir(dir):
-            raise ValueError("Not a directory: " + dir)
-        self.dir = dir
 
 
 class DocumentQaTrainingData(ParagraphQaTrainingData):
@@ -319,5 +237,5 @@ def get_doc_input_spec(batch_size, data: List[List[Document]]) -> ParagraphAndQu
                 for question in para.questions:
                     max_ques_size = max(max_ques_size, len(question.words))
                     max_word_size = max(max_word_size, max(len(word) for word in question.words))
-    return ParagraphAndQuestionSpec(batch_size, max_ques_size, max_para_size, max_num_sents, max_sent_size, max_word_size)
+    return ParagraphAndQuestionSpec(batch_size, max_ques_size, max_para_size, max_word_size)
 

@@ -2,7 +2,7 @@ from typing import List
 
 import numpy as np
 
-from data_processing.qa_data import Answer
+from data_processing.qa_training_data import Answer
 
 """
 Utility methods for dealing with span data, and span question answers
@@ -186,10 +186,12 @@ class ParagraphSpans(Answer):
 
     @property
     def answer_spans(self):
-        return [(x.para_word_start, x.para_word_end) for x in self.spans]
+        return np.array([(x.para_word_start, x.para_word_end) for x in self.spans])
 
 
 class TokenSpans(Answer):
+    __slots__ = ["answer_text", "answer_spans"]
+
     # TODO I think it would be preferable to just swich everything to using this class
     def __init__(self, answer_text: List[str], answer_spans: np.ndarray):
         """

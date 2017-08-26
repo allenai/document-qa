@@ -12,7 +12,7 @@ class Dataset(object):
 
     def get_epoch(self):
         """ Returns an iterator of batches/elements to train on, these elements are what will get
-        passed to model.encode. Usually (but not necessarily) a list or batch of training examples """
+        passed to model.encode. Usually (but not necessarily) a list/batch of training examples """
         raise NotImplementedError(self.__class__)
 
     def get_batches(self, n_batches):
@@ -31,7 +31,7 @@ class Dataset(object):
     def get_samples(self, n_samples: int):
         """ Sample for the data, be default we sample batches but subclasses can
         override this method to provide other kinds of sampling (like sampling individual elements).
-        Must return both an iterator and the exactly size of the iterator """
+        Must return both an iterator and the exact size of the iterator """
         return self.get_batches(n_samples), n_samples
 
     def percent_filtered(self):
@@ -41,7 +41,7 @@ class Dataset(object):
         return None
 
     def __len__(self):
-        """ Number of examples per an epoch """
+        """ Number of batches per an epoch """
         raise NotImplementedError(self.__class__)
 
 
@@ -54,8 +54,9 @@ class TrainingData(Configurable):
         raise NotImplementedError()
 
     def get_train_corpus(self) -> object:
-        """ Return a corpus or statistics that will be passed to the model's initialization phase,
-         what exactly is returned can be arbitrary, but will need to be compatible with the model's requirements """
+        """ Return a statistics that will be passed to the model's initialization phase,
+         what exactly is returned can be arbitrary, but will need to be compatible with
+         the model's requirements.  """
         raise NotImplementedError()
 
     def get_resource_loader(self) -> ResourceLoader:

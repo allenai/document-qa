@@ -14,9 +14,10 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import pairwise_distances
 from sklearn.model_selection import KFold
+from tqdm import tqdm
 
-from data_processing.paragraph_qa import Document
-from squad.squad import SquadCorpus
+from data_processing.text_utils import WordNormalizer
+from squad.squad_data import Document, SquadCorpus
 from utils import flatten_iterable, ResourceLoader
 
 """
@@ -229,7 +230,7 @@ class VectorizedDistanceFeatures(ParagraphSelectorFeaturizer):
         self.name = name
         self.distance_fn = distance_fn
         self.vectorizer = vectorizer
-        self.word_normalizer = WordNormalzier()
+        self.word_normalizer = WordNormalizer()
 
     def feature_names(self):
         return [self.name + "-" + x for x in self.distance_fn]
@@ -249,7 +250,7 @@ class SentenceVectorizedDistanceFeatures(ParagraphSelectorFeaturizer):
         self.name = name
         self.distance_fn = distance_fn
         self.vectorizer = vectorizer
-        self.word_normalizer = WordNormalzier()
+        self.word_normalizer = WordNormalizer()
         self.fit_questions = fit_questions
 
     def feature_names(self):
@@ -409,18 +410,18 @@ def build_features(docs: List[Document], resource_loader: ResourceLoader, n_samp
     stop = set(stopwords.words('english'))
     stop.update(["many", "how", "?", ",", "-", "."])
 
-    normalizer_up = WordNormalzier(False)
-    normalizer_lw = WordNormalzier(True)
+    # normalizer_up = WordNormalizer()
+    normalizer_lw = WordNormalizer()
     # vecs = resource_loader.load_word_vec("glove.6B.100d")
 
     featurizers = [
         VectorizedDistanceFeatures(TfidfVectorizer(tokenizer=lambda x: x.split(" "), stop_words=stop,
                                                    lowercase=False, preprocessor=normalizer_lw.normalize),
                                    "doc-tfidf", ["cosine"]),
-        VectorizedDistanceFeatures(TfidfVectorizer(tokenizer=lambda x: x.split(" "), stop_words=stop,
-                                                   ngram_range=(2, 2),
-                                                   lowercase=False, preprocessor=normalizer_lw.normalize),
-                                   "doc-tfidf-bigrams", ["cosine"]),
+        # VectorizedDistanceFeatures(TfidfVectorizer(tokenizer=lambda x: x.split(" "), stop_words=stop,
+        #                                            ngram_range=(2, 2),
+        #                                            lowercase=False, preprocessor=normalizer_lw.normalize),
+        #                            "doc-tfidf-bigrams", ["cosine"]),
         # SentenceVectorizedDistanceFeatures(TfidfVectorizer(tokenizer=lambda x: x.split(" "), stop_words=stop,
         #                                                    preprocessor=normalizer_lw.normalize,
         #                                                    lowercase=False), "tfidf-sentence", ["cosine"],
@@ -448,7 +449,7 @@ def build_features(docs: List[Document], resource_loader: ResourceLoader, n_samp
     other_features = []
     index = []
 
-    for i, doc in enumerate(docs):
+    for i, doc in enumerate(tqdm(docs)):
         is_train = i < n_train
         all_questions = flatten_iterable(x.questions for x in doc.paragraphs)
         if is_train and n_sample_qs is not None:
@@ -581,7 +582,7 @@ def show_errors(df, docs: List[Document], feature_name):
     for key, question_df in df.groupby(level="question_id"):
         correct = question_df.label.argmax()
         feature = question_df[feature_name]
-        ranks = feature.rank(ascending=False)
+        ranks = feature.ranked_questions(ascending=False)
         rank = ranks[correct]
         if rank > 3:
             question = id_to_question[key].words
@@ -612,7 +613,7 @@ def show_eval(df, features=None):
         features = [f for f in df.columns if f != "label" and df[f].dtype != np.object]
 
     print("Computing ranks...")
-    rank_df = df.groupby(level="question_id")[features].rank(ascending=False)
+    rank_df = df.groupby(level="question_id")[features].ranked_questions(ascending=False)
 
     print("Eval")
     for f in rank_df.columns:
@@ -637,17 +638,17 @@ def save_prediction(df, feature, output):
 if __name__ == "__main__":
     corp = SquadCorpus()
     print("Loading...")
-    docs = corp.get_train_docs()
+    docs = corp.get_train()[:5]
     print("Building features....")
-    df = build_features(docs, corp.get_resource_loader, None, None, seed=0, dev=corp.get_dev_docs())
+    df = build_features(docs, corp.get_resource_loader(), None, None, seed=0, dev=corp.get_dev()[:5])
 
     print("Classifier..,")
     get_classifier_dev_scores(df)
 
     show_eval(df[df.source == "dev"])
 
-    print("Saving...")
-    save_prediction(df[df.source == "dev"], "clf_train_predictions", "/tmp/paragraph_pred.json")
+    # print("Saving...")
+    # save_prediction(df[df.source == "dev"], "clf_train_predictions", "/tmp/paragraph_pred.json")
 
 
     # show_errors(df, docs, "clf_predictions")

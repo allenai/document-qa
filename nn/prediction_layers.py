@@ -1,6 +1,5 @@
 import tensorflow as tf
 
-from model import ModelOutput
 from nn.layers import get_keras_initialization, SequenceMapper, SequencePredictionLayer
 from nn.ops import exp_mask, VERY_NEGATIVE_NUMBER
 from tensorflow.contrib.layers import fully_connected
@@ -134,6 +133,7 @@ def predict_from_bounds(answer, start_logits, end_logits, mask, aggregate):
     else:
         raise NotImplemented()
 
-    return ModelOutput(loss, BoundaryPrediction(tf.nn.softmax(masked_start_logits),
-                                                tf.nn.softmax(masked_end_logits),
-                                                masked_start_logits, masked_end_logits))
+    tf.add_to_collection(tf.GraphKeys.LOSSES, loss)
+    return BoundaryPrediction(tf.nn.softmax(masked_start_logits),
+                              tf.nn.softmax(masked_end_logits),
+                              masked_start_logits, masked_end_logits)
