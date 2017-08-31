@@ -2,16 +2,12 @@ import argparse
 import json
 
 import numpy as np
-from os.path import join
+from data_processing.qa_data import ParagraphAndQuestionDataset
 
 import trainer
-from data_processing.paragraph_qa import split_docs
-from data_processing.qa_data import ParagraphAndQuestionDataset
 from dataset import FixedOrderBatcher
 from evaluator import RecordQuestionId, RecordSpanPrediction, LossEvaluator, SpanEvaluator, SpanProbability
-from niket_qa.build_niket_dataset import NiketCorpus
-from squad.build_squad_dataset import SquadCorpus
-from squad.squad_eval import BoundedSquadSpanEvaluator
+from experimental.niket_qa import NiketCorpus
 from trainer import ModelDir
 from utils import flatten_iterable, transpose_lists, print_table
 

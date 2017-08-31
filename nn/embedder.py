@@ -202,6 +202,7 @@ class FixedWordEmbedder(WordEmbedder):
             return ix
 
     def context_word_to_ix(self, word, is_train):
+        # print(word)
         ix = self._word_to_ix.get(word, 1)
         if ix == 1:
             return self._word_to_ix.get(word.lower(), 1)
@@ -214,6 +215,14 @@ class FixedWordEmbedder(WordEmbedder):
         return 1
 
     def init(self, loader: ResourceLoader, voc: Iterable[str]):
+        if self.cpu:
+            with tf.device("/cpu:0"):
+                self._init(loader, voc)
+        else:
+            self._init(loader, voc)
+
+    def _init(self, loader: ResourceLoader, voc: Iterable[str]):
+        # TODO we should not be building variables here
         if voc is not None:
             word_to_vec = loader.load_word_vec(self.vec_name, voc)
         else:
@@ -258,7 +267,7 @@ class FixedWordEmbedder(WordEmbedder):
                     self._word_to_ix[lower] = ix
                     ix += 1
 
-        print("Had pre-trained word embeddings for %d of %d examples" % (len(mat), len(voc)))
+        print("Had pre-trained word embeddings for %d of %d words" % (len(mat), len(voc)))
 
         matrix_list.append(tf.constant(value=np.vstack(mat)))
 
@@ -268,11 +277,6 @@ class FixedWordEmbedder(WordEmbedder):
         if any(len(x) != 2 for x in word_ix):
             raise ValueError()
         mat = self._word_emb_mat
-
-        # if self.keep_word < 1 or self.keep_probs < 1 and self.shrink_embed:
-        #     words, masks = zip(*word_ix)
-        #     mat, words = shrink_embed(mat, words)
-        #     word_ix = zip(words, masks)
 
         if self.keep_probs < 1:
             mat = tf.cond(is_train,

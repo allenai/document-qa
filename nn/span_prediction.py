@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Union
 import numpy as np
 import tensorflow as tf
 from tensorflow import Tensor
@@ -7,8 +7,8 @@ from tensorflow.contrib.layers import fully_connected
 from configurable import Configurable
 from model import Prediction
 from nn.layers import SequenceBiMapper, MergeLayer, Mapper, get_keras_initialization, SequenceMapper, SequenceEncoder, \
-    FixedMergeLayer, AttentionPredictionLayer, SequencePredictionLayer
-from nn.ops import VERY_NEGATIVE_NUMBER, exp_mask
+    FixedMergeLayer, AttentionPredictionLayer, SequencePredictionLayer, SequenceMultiEncoder
+from nn.ops import VERY_NEGATIVE_NUMBER, exp_mask, segment_logsumexp
 from nn.span_prediction_ops import best_span_from_bounds, to_unpacked_coordinates, \
     to_packed_coordinates, packed_span_f1_mask
 
@@ -30,6 +30,9 @@ class BoundaryPrediction(Prediction):
             pred = best_span_from_bounds(self.start_logits, self.end_logits, bound)
             self._bound_predictions[bound] = pred
             return pred
+
+    def get_span_scores(self):
+        return tf.exp(tf.expand_dims(self.start_logits, 2) + tf.expand_dims(self.end_logits, 1))
 
 
 class PackedSpanPrediction(Prediction):
@@ -58,22 +61,20 @@ class PackedSpanPrediction(Prediction):
 
 class ConfidencePrediction(Prediction):
     """ boundary logits with an additional confidence logit """
-    def __init__(self,
-                 start_prob, end_prob,
+    def __init__(self, span_probs,
                  start_logits, end_logits,
                  none_prob, non_op_logit):
-        self.start_probs = start_prob
-        self.end_probs = end_prob
+        self.span_probs = span_probs
         self.none_prob = none_prob
         self.start_logits = start_logits
         self.end_logits = end_logits
         self.non_op_logit = non_op_logit
 
-    def get_best_span(self, bound: int, use_prob: bool=False):
-        # if use_prob:
+    def get_best_span(self, bound: int):
         return best_span_from_bounds(self.start_logits, self.end_logits, bound)
-        # else:
-        #     return best_span_from_bounds(self.start_probs, self.end_probs, bound)
+
+    def get_span_scores(self):
+        return tf.exp(tf.expand_dims(self.start_logits, 2) + tf.expand_dims(self.end_logits, 1))
 
 
 class SpanFromBoundsPredictor(Configurable):
@@ -119,6 +120,65 @@ class IndependentBounds(SpanFromBoundsPredictor):
         tf.add_to_collection(tf.GraphKeys.LOSSES, loss)
         return BoundaryPrediction(tf.nn.softmax(masked_start_logits),
                                   tf.nn.softmax(masked_end_logits),
+                                  masked_start_logits, masked_end_logits)
+
+
+class IndependentBoundsGrouped(SpanFromBoundsPredictor):
+    def __init__(self, aggregate="sum"):
+        self.aggregate = aggregate
+
+    def predict(self, answer, start_logits, end_logits, mask) -> Prediction:
+        masked_start_logits = exp_mask(start_logits, mask)
+        masked_end_logits = exp_mask(end_logits, mask)
+
+        if len(answer) == 3:
+            group_ids = answer[2]
+            # Turn the ids into segment ids using tf.unique
+            _, group_segments = tf.unique(group_ids, out_idx=tf.int32)
+
+            losses = []
+            for answer_mask, logits in zip(answer, [masked_start_logits, masked_end_logits]):
+                group_norms = segment_logsumexp(logits, group_segments)
+                if self.aggregate == "sum":
+                    log_score = segment_logsumexp(logits + VERY_NEGATIVE_NUMBER * (1 - tf.cast(answer_mask, tf.float32)),
+                                                  group_segments)
+                else:
+                    raise ValueError()
+                losses.append(tf.reduce_mean(-(log_score - group_norms)))
+            loss = tf.add_n(losses)
+        else:
+            raise NotImplemented()
+        tf.add_to_collection(tf.GraphKeys.LOSSES, loss)
+        return BoundaryPrediction(tf.nn.softmax(masked_start_logits),
+                                  tf.nn.softmax(masked_end_logits),
+                                  masked_start_logits, masked_end_logits)
+
+
+class IndependentBoundsSigmoidLoss(SpanFromBoundsPredictor):
+    def __init__(self, aggregate="sum"):
+        self.aggregate = aggregate
+
+    def predict(self, answer, start_logits, end_logits, mask) -> Prediction:
+        masked_start_logits = exp_mask(start_logits, mask)
+        masked_end_logits = exp_mask(end_logits, mask)
+
+        if len(answer) == 1:
+            raise NotImplementedError()
+        elif len(answer) == 2 and all(x.dtype == tf.bool for x in answer):
+            # all correct start/end bounds are marked in a dense bool array
+            # In this case there might be multiple answer spans, so we need an aggregation strategy
+            losses = []
+            for answer_mask, logits in zip(answer, [masked_start_logits, masked_end_logits]):
+                losses.append(tf.nn.sigmoid_cross_entropy_with_logits(
+                    labels=tf.cast(answer_mask, tf.float32),
+                    logits=logits
+                ))
+            loss = tf.add_n(losses)
+        else:
+            raise NotImplemented()
+        tf.add_to_collection(tf.GraphKeys.LOSSES, tf.reduce_mean(loss))
+        return BoundaryPrediction(tf.nn.sigmoid(masked_start_logits),
+                                  tf.nn.sigmoid(masked_end_logits),
                                   masked_start_logits, masked_end_logits)
 
 
@@ -371,17 +431,19 @@ class ConfidencePredictor(SequencePredictionLayer):
     """
     def __init__(self,
                  predictor: SequenceBiMapper,
-                 encoder: SequenceEncoder,
+                 encoder: Union[SequenceEncoder, SequenceMultiEncoder],
                  confidence_predictor: Mapper,
                  init: str="glorot_uniform",
-                 dot_bounds: bool=False,
                  aggregate=None):
         self.predictor = predictor
         self.init = init
-        self.dot_bounds = dot_bounds
         self.aggregate = aggregate
         self.confidence_predictor = confidence_predictor
         self.encoder = encoder
+
+    @property
+    def version(self):
+        return 1  # Fix maxing
 
     def apply(self, is_train, context_embed, answer, context_mask=None):
         init_fn = get_keras_initialization(self.init)
@@ -409,10 +471,12 @@ class ConfidencePredictor(SequencePredictionLayer):
         end_atten = tf.einsum("ajk,aj->ak", m2, tf.nn.softmax(masked_end_logits))
         with tf.variable_scope("encode_context"):
             enc = self.encoder.apply(is_train, context_embed, context_mask)
+        if len(enc.shape) == 3:
+            _, encodings, fe = enc.shape.as_list()
+            enc = tf.reshape(enc, (-1, encodings*fe))
+
         with tf.variable_scope("confidence"):
             conf = [start_atten, end_atten, enc]
-            if self.dot_bounds:
-                conf.append(start_atten * end_atten)
             none_logit = self.confidence_predictor.apply(is_train, tf.concat(conf, axis=1))
         with tf.variable_scope("confidence_logits"):
             none_logit = fully_connected(none_logit, 1, activation_fn=None,
@@ -422,8 +486,9 @@ class ConfidencePredictor(SequencePredictionLayer):
         batch_dim = tf.shape(start_logits)[0]
 
         # (batch, (l * l)) logits for each (start, end) pair
-        all_logits = tf.reshape(tf.expand_dims(start_logits, 1) +
-                                tf.expand_dims(end_logits, 2),
+
+        all_logits = tf.reshape(tf.expand_dims(masked_start_logits, 1) +
+                                tf.expand_dims(masked_end_logits, 2),
                                 (batch_dim, -1))
 
         # (batch, (l * l) + 1) logits including the none option
@@ -439,7 +504,7 @@ class ConfidencePredictor(SequencePredictionLayer):
         loss = tf.reduce_mean(-(log_correct - log_norms))
         probs = tf.nn.softmax(all_logits)
         tf.add_to_collection(tf.GraphKeys.LOSSES, loss)
-        return ConfidencePrediction(None, None, masked_start_logits, masked_end_logits,
+        return ConfidencePrediction(probs[:, :-1], masked_start_logits, masked_end_logits,
                                     probs[:, -1], none_logit)
 
 

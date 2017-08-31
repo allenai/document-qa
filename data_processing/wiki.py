@@ -1,16 +1,19 @@
 import json
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 import requests
 from os.path import join, exists
 
 from os import mkdir
 
+import unicodedata
 from bs4 import BeautifulSoup
 
 from config import CORPUS_DIR
 from configurable import Configurable
-from data_processing.text_utils import get_paragraph_tokenizer
+from data_processing.text_utils import NltkAndPunctTokenizer, ParagraphWithInverse
+from utils import flatten_iterable
+import numpy as np
 
 WIKI_API = "https://en.wikipedia.org/w/api.php"
 
@@ -54,17 +57,23 @@ def get_wiki_page_ids(article_titles, per_query=25):
     return [wiki_page_ids[x] for x in article_titles]
 
 
-class WikiParagraph(object):
-    def __init__(self, paragraph_num: int, kind: str, text: List[List[str]]):
+class WikiParagraph(ParagraphWithInverse):
+    def __init__(self, paragraph_num: int, kind: str, text: List[List[str]],
+                 original_text: Optional[str]=None, span_mapping=None):
+        super().__init__(text, original_text, span_mapping)
         self.paragraph_num = paragraph_num
         self.kind = kind
-        self.text = text
 
 
 class WikiArticle(object):
-    def __init__(self, title: str, paragraphs: List[WikiParagraph]):
+    def __init__(self, title: str, page_id: int, paragraphs: List[WikiParagraph]):
         self.title = title
+        self.page_id = page_id
         self.paragraphs = paragraphs
+
+    @property
+    def url(self):
+        return "https://en.wikipedia.org/?curid=" + str(self.page_id)
 
 
 # class TimestampedWikiCorpus(Configurable):
@@ -176,16 +185,38 @@ class WikiArticle(object):
 class WikiCorpus(Configurable):
 
     def __init__(self, cache_dir=None, follow_redirects: bool=True,
-                 extract_lists: bool=False, tokenizer="NLTK_AND_CLEAN"):
+                 keep_inverse_mapping: bool=False,
+                 extract_lists: bool=False, tokenizer=NltkAndPunctTokenizer()):
         self.tokenizer = tokenizer
         self.extract_lists = extract_lists
         self.follow_redirects = follow_redirects
         self.cache_dir = cache_dir
+        self.keep_inverse_mapping = keep_inverse_mapping
+
         if cache_dir is not None and not exists(self.cache_dir):
             mkdir(self.cache_dir)
 
     def _get_tokenized_filename(self, title):
-        return join(self.cache_dir, title.replace(" ", "_") + ".json")
+        title = unicodedata.normalize('NFKC', title).lower()
+        return join(self.cache_dir, title.replace(" ", "_")
+                    .replace("/", "-") + ".json")
+
+    def _text_to_paragraph(self, ix, kind: str, text: str):
+        if not self.keep_inverse_mapping:
+            text = self.tokenizer.tokenize_paragraph(text)
+            return WikiParagraph(ix, kind, text)
+        else:
+            para = self.tokenizer.tokenize_with_inverse(text)
+            return WikiParagraph(ix, kind, para.text, para.original_text, para.spans)
+
+    def _sent_to_paragraph(self, ix, kind: str, text: List[str]):
+        if not self.keep_inverse_mapping:
+            tokenized = [self.tokenizer.tokenize_sentence(s) for s in text]
+            return WikiParagraph(ix, kind, tokenized)
+        else:
+            para = ParagraphWithInverse.concat(
+                [self.tokenizer.tokenize_with_inverse(x, True) for x in text], " ")
+            return WikiParagraph(ix, kind, para.text, para.original_text, para.spans)
 
     def get_wiki_article(self, wiki_title) -> WikiArticle:
         if self.cache_dir is not None:
@@ -193,15 +224,14 @@ class WikiCorpus(Configurable):
             if exists(tokenized_file):
                 with open(tokenized_file, "r") as f:
                     data = json.load(f)
-                    return WikiArticle(data["title"], [WikiParagraph(**x) for x in data["paragraphs"]])
+                    return WikiArticle(data["title"], data["url"], [WikiParagraph(**x) for x in data["paragraphs"]])
 
         r = requests.get(WIKI_API, dict(action="parse", page=wiki_title,
                                         redirects=self.follow_redirects, format="json"))
+
         if r.status_code != 200:
             raise ValueError()
         raw_data = r.json()["parse"]
-
-        sent_tokenize, word_tokenize = get_paragraph_tokenizer(self.tokenizer)
 
         soup = BeautifulSoup(raw_data["text"]["*"], "lxml")
         paragraphs = []
@@ -213,14 +243,18 @@ class WikiCorpus(Configurable):
                 if element.get_text() == "Contents":
                     continue
                 sect_name = element.find(attrs={"class": "mw-headline"}).get_text()
-                paragraphs.append(WikiParagraph(len(paragraphs), "section", [word_tokenize(sect_name)]))
+                para = self._sent_to_paragraph(len(paragraphs), "section", [sect_name])
+                if para.n_tokens > 0:
+                    paragraphs.append(para)
             elif element.name == "ul" or element.name == "ol":
                 if dict(element.parent.attrs).get("class") != ["mw-parser-output"]:
                     # only extract "body" lists
                     continue
-                para = WikiParagraph(len(paragraphs), "list" if element.name == "ul" else "ordered_list",
-                                     [word_tokenize(x.get_text()) for x in element.findAll("li")])
-                paragraphs.append(para)
+                para = self._sent_to_paragraph(len(paragraphs),
+                                               "list" if element.name == "ul" else "ordered_list",
+                                               [x.get_text() for x in element.findAll("li")])
+                if para.n_tokens > 0:
+                    paragraphs.append(para)
             else:
                 for citation in element.findAll("sup", {"class": "reference"}):
                     citation.extract()
@@ -231,13 +265,20 @@ class WikiCorpus(Configurable):
                         href = citation["href"]
                         if href.startswith("#cite") or href == "/wiki/Wikipedia:Citation_needed":
                             sub.extract()
-                txt = element.get_text()
-                text = [word_tokenize(sent) for sent in sent_tokenize(txt)]
-                para = WikiParagraph(len(paragraphs), "paragraph", text)
-                paragraphs.append(para)
+                text = element.get_text()
+                para = self._text_to_paragraph(len(paragraphs), "paragraph", text)
+                if para.n_tokens > 0:
+                    paragraphs.append(para)
 
-        article = WikiArticle(wiki_title, paragraphs)
+        article = WikiArticle(wiki_title, raw_data["pageid"], paragraphs)
         if self.cache_dir is not None:
             with open(tokenized_file, "w") as f:
                 json.dump(article, f, default=lambda x: x.__dict__)
         return article
+
+
+if __name__ == "__main__":
+    from data_processing.document_splitter import MergeParagraphs
+    doc = WikiCorpus(keep_inverse_mapping=True).get_wiki_article("Queen Elizabeth 2")
+    MergeParagraphs(400).split_inverse(doc.paragraphs)
+    pass

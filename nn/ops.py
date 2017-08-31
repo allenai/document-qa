@@ -10,14 +10,14 @@ def dropout(x, keep_prob, is_train, noise_shape=None, seed=None):
     return tf.cond(is_train, lambda: tf.nn.dropout(x, keep_prob, noise_shape=noise_shape, seed=seed), lambda: x)
 
 
-# def sparse_logsumexp(xs, mask, axis, keep_dims=False):
-#     my_max = tf.stop_gradient(tf.reduce_max(xs, axis=axis, keep_dims=True))
-#     result = tf.log(tf.reduce_sum(tf.exp(xs - my_max), axis, keep_dims=True)) + my_max
-#     if not keep_dims:
-#       if isinstance(axis, int):
-#         axis = [axis]
-#       result = tf.squeeze(result, axis)
-#     return repr()
+def segment_logsumexp(xs, segments):
+    """ Similar tf.segment_sum but compute logsumexp rather then sum """
+    # Stop gradients follows the implementation of tf.reduce_logsumexp
+    maxs = tf.stop_gradient(tf.reduce_max(xs, axis=1))
+    segment_maxes = tf.segment_max(maxs, segments)
+    xs -= tf.expand_dims(tf.gather(segment_maxes, segments), 1)
+    sums = tf.reduce_sum(tf.exp(xs), axis=1)
+    return tf.log(tf.segment_sum(sums, segments)) + segment_maxes
 
 
 def mixed_dropout(is_train, x, keep_probs, seed=None):

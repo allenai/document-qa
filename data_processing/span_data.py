@@ -132,6 +132,35 @@ def get_best_span_from_sent_predictions(per_sent_start_pred, per_sent_end_pred, 
     return best_word_span, max_val
 
 
+def top_disjoint_spans(span_scores, bound: int, n_spans: int):
+    """
+    Given a n_token x n_tokens matrix of spans scores, return the top-n non-overlapping spans
+    and their scores
+    """
+
+    sorted_ux = np.argsort(span_scores.ravel())[::-1]
+    sorted_ux = np.stack([sorted_ux // len(span_scores), sorted_ux % len(span_scores)], axis=1)
+
+    lens = sorted_ux[:, 1] - sorted_ux[:, 0]
+    sorted_ux = sorted_ux[np.logical_and(lens >= 0, lens < bound)]
+
+    cur_scores = np.zeros(n_spans, dtype=np.float32)
+    cur_spans = np.zeros((n_spans, 2), dtype=np.int32)
+    spans_found = 0
+
+    for s, e in sorted_ux:
+        # the span must either start after or end before each existing spans
+        if np.all(np.logical_or(cur_spans[:spans_found, 0] > e, cur_spans[:spans_found, 1] < s)):
+            cur_spans[spans_found, 0] = s
+            cur_spans[spans_found, 1] = e
+            cur_scores[spans_found] = span_scores[s, e]
+            spans_found += 1
+            if spans_found == n_spans:
+                break
+
+    return cur_spans[:spans_found], cur_scores[:spans_found]
+
+
 def compute_span_f1(true_span, pred_span):
     start = max(true_span[0], pred_span[0])
     stop = min(true_span[1], pred_span[1])

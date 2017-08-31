@@ -4,6 +4,7 @@ from typing import List, Union, Optional, Set, Tuple, Dict, Callable
 import numpy as np
 from configurable import Configurable
 from data_processing.preprocessed_corpus import DatasetBuilder, FilteredData
+from data_processing.text_utils import ParagraphWithInverse
 
 from dataset import Dataset, TrainingData, ListDataset, ListBatcher
 from utils import ResourceLoader, flatten_iterable, max_or_none
@@ -25,10 +26,12 @@ class ContextAndQuestion(object):
     The answer type is unspecified and depends on the application.
     """
 
-    def __init__(self, question: List[str], answer: Optional[Answer], question_id: object):
+    def __init__(self, question: List[str], answer: Optional[Answer],
+                 question_id: object, doc_id=None):
         self.question = question
         self.answer = answer
         self.question_id = question_id
+        self.doc_id = doc_id
 
     @property
     def n_context_words(self) -> int:
@@ -41,8 +44,8 @@ class ContextAndQuestion(object):
 class SentencesAndQuestion(ContextAndQuestion):
 
     def __init__(self, context: List[List[str]], question: List[str],
-                 answer: Optional[Answer], question_id: object):
-        super().__init__(question, answer, question_id)
+                 answer: Optional[Answer], question_id: object, doc_id=None):
+        super().__init__(question, answer, question_id, doc_id)
         self.context = context
 
     @property
@@ -56,8 +59,8 @@ class SentencesAndQuestion(ContextAndQuestion):
 class ParagraphAndQuestion(ContextAndQuestion):
 
     def __init__(self, context: List[str], question: List[str],
-                 answer: Optional[Answer], question_id: object):
-        super().__init__(question, answer, question_id)
+                 answer: Optional[Answer], question_id: object, doc_id=None):
+        super().__init__(question, answer, question_id, doc_id)
         self.context = context
 
     @property
@@ -66,6 +69,18 @@ class ParagraphAndQuestion(ContextAndQuestion):
 
     def get_context(self):
         return self.context
+
+
+def split(paras: List[ParagraphWithInverse], delim: str) -> ParagraphWithInverse:
+    original_text = delim.join([x.original_text for x in paras])
+    full_inv = []
+    all_tokens = []
+    on_char = 0
+    for para in paras:
+        all_tokens += para.context
+        full_inv.append(para.spans + on_char)
+        on_char += para.spans[-1][1] + len(delim)
+    return ParagraphWithInverse(all_tokens, original_text, np.concatenate(full_inv))
 
 
 class ContextLenKey(Configurable):

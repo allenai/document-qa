@@ -6,7 +6,7 @@ import time
 
 from os.path import exists
 
-from data_processing.text_utils import get_paragraph_tokenizer
+from data_processing.text_utils import NltkAndPunctTokenizer
 from trivia_qa.read_data import iter_trivia_question
 from trivia_qa.trivia_qa_eval import normalize_answer, f1_score
 from utils import flatten_iterable, group, split
@@ -221,14 +221,14 @@ def compute_answer_spans(questions, corpus, word_tokenize, detector):
 
 
 def _compute_answer_spans_chunk(questions, corpus, tokenizer, detector):
-    word_tokenize = get_paragraph_tokenizer(tokenizer)[1]
+    word_tokenize = tokenizer.tokenize_sentence
     compute_answer_spans(questions, corpus, word_tokenize, detector)
     return questions
 
 
 def compute_answer_spans_par(questions, corpus, tokenizer, detector, n_processes):
     if n_processes == 1:
-        word_tokenize = get_paragraph_tokenizer(tokenizer)[1]
+        word_tokenize = tokenizer.tokenize_sentence
         compute_answer_spans(questions, corpus, word_tokenize, detector)
         return questions
     from multiprocessing import Pool

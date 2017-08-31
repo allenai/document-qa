@@ -16,7 +16,7 @@ from trainer import ModelDir
 from trivia_qa.build_span_corpus import TriviaQaWebDataset
 from trivia_qa.training_data import ExtractSingleParagraph
 from trivia_qa.trivia_qa_eval import f1_score as trivia_f1_score
-from trivia_qa.triviaqa_evaluators import TfTriviaQaBoundedSpanEvaluator
+from trivia_qa.triviaqa_evaluators import BoundedSpanEvaluator, MultiParagraphSpanEvaluator
 from utils import ResourceLoader, flatten_iterable, transpose_lists, print_table
 
 """
@@ -87,10 +87,10 @@ def main():
 
     pre = preprocess_par(trivia_questions, data.evidence, prep, 4, 1000)
     pre.data.sort(key=ContextLenKey())
-    dataset = ParagraphAndQuestionDataset(pre.data, FixedOrderBatcher(args.batch_size, True),
-                                          pre.true_len)
+    dataset = ParagraphAndQuestionDataset(pre.data, FixedOrderBatcher(args.batch_size, True), pre.true_len)
 
-    evaluators = [TfTriviaQaBoundedSpanEvaluator(args.answer_bounds),
+    evaluators = [BoundedSpanEvaluator(args.answer_bounds),
+                  MultiParagraphSpanEvaluator(10),
                   TriviaQaOracle()]
     if args.official_output is not None:
         evaluators.append(RecordSpanPrediction(args.answer_bounds[0]))

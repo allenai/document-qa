@@ -2,6 +2,7 @@ import unicodedata
 
 import sys
 
+from data_processing.text_utils import NltkAndPunctTokenizer
 from utils import ResourceLoader
 
 try:
@@ -130,7 +131,7 @@ class TriviaQaSampleWebDataset(TriviaQaSpanCorpus):
 
 
 def build_wiki_corpus():
-    build_dataset("wiki", "NLTK_AND_CLEAN",
+    build_dataset("wiki", NltkAndPunctTokenizer(),
                   dict(
                       verified=join(TRIVIA_QA, "qa", "verified-wikipedia-dev.json"),
                       dev=join(TRIVIA_QA, "qa", "wikipedia-dev.json"),
@@ -140,7 +141,7 @@ def build_wiki_corpus():
 
 
 def build_web_corpus():
-    build_dataset("web", "NLTK_AND_CLEAN",
+    build_dataset("web", NltkAndPunctTokenizer(),
                   dict(
                       verified=join(TRIVIA_QA, "qa", "verified-web-dev.json"),
                       dev=join(TRIVIA_QA, "qa", "web-dev.json"),
@@ -150,7 +151,7 @@ def build_web_corpus():
 
 
 def build_sample_corpus():
-    build_dataset("web-sample", "NLTK_AND_CLEAN",
+    build_dataset("web-sample", NltkAndPunctTokenizer(),
                   dict(
                       dev=join(TRIVIA_QA, "qa", "web-dev.json"),
                       train=join(TRIVIA_QA, "qa", "web-train.json"),
@@ -159,7 +160,7 @@ def build_sample_corpus():
 
 
 def build_unfiltered_corpus():
-    build_dataset("web-open", "NLTK_AND_CLEAN",
+    build_dataset("web-open", NltkAndPunctTokenizer(),
                   dict(
                       dev=join(TRIVIA_QA_UNFILTERED, "unfiltered-web-dev.json"),
                       train=join(TRIVIA_QA_UNFILTERED, "unfiltered-web-train.json"),

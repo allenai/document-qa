@@ -243,6 +243,7 @@ def build_mc_data(source, max_to_keep=50, tokenizer: str= "NLTK_AND_CLEAN", n_th
             for r in pool.imap_unordered(_build_question_tuple, [([tokenizer, max_to_keep, cache]+list(x)) for x in points]):
                 pbar.update(1)
                 out.append(r)
+        pbar.close()
         return out
 
 

@@ -15,7 +15,7 @@ from nn.attention import BiAttention, AttentionEncoder, StaticAttentionSelf, Sta
 from nn.embedder import FixedWordEmbedder, CharWordEmbedder, LearnedCharEmbedder
 from nn.layers import NullBiMapper, NullMapper, SequenceMapperSeq, ReduceLayer, Conv1d, HighwayLayer, FullyConnected, \
     ChainBiMapper, DropoutLayer, ConcatWithProduct, ResidualLayer, WithProjectedProduct, MapperSeq, ParametricRelu, \
-    VariationalDropoutLayer, DotMerge, ConcatWithProductTmp
+    VariationalDropoutLayer, DotMerge, ConcatWithProductTmp, ConcatLayer, MergeWith
 from nn.recurrent_layers import BiRecurrentMapper, LstmCellSpec, BiDirectionalFusedLstm, EncodeOverTime, \
     FusedRecurrentEncoder, CudnnLstm, CudnnGru
 from nn.similarity_layers import TriLinear
@@ -25,7 +25,7 @@ from trainer import SerializableOptimizer, TrainParams
 from trivia_qa.build_span_corpus import TriviaQaWebDataset
 from trivia_qa.lazy_data import LazyRandomParagraphBuilder
 from trivia_qa.training_data import ExtractSingleParagraph
-from trivia_qa.triviaqa_evaluators import ConfidenceEvaluator, TfTriviaQaBoundedSpanEvaluator
+from trivia_qa.triviaqa_evaluators import ConfidenceEvaluator, BoundedSpanEvaluator
 from utils import get_output_name_from_cli
 
 
@@ -72,8 +72,8 @@ def main():
                 second_layer=recurrent_layer
             ),
             None,
-            ConcatWithProductTmp(),
-            DropoutLayer(0.8),
+            ConcatLayer(),
+            FullyConnected(dim*2, activation="relu"),
             10,
         )
     )
@@ -89,7 +89,7 @@ def main():
                             # sample=500, sample_dev=500,
                             eval_on_verified=False
                             )
-    eval = [LossEvaluator(), TfTriviaQaBoundedSpanEvaluator([4, 8])]
+    eval = [LossEvaluator(), BoundedSpanEvaluator([4, 8])]
     # data.preprocess(6, 1000)
     # data.cache_preprocess("triviaqa-web-merge400-tfidf1.pkl.gz")
     data.load_preprocess("triviaqa-web-merge400-tfidf1.pkl.gz")

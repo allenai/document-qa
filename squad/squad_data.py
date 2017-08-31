@@ -7,7 +7,8 @@ import numpy as np
 
 from config import CORPUS_DIR
 from configurable import Configurable
-from data_processing.qa_training_data import ParagraphAndQuestionSpec, Answer, ParagraphQaTrainingData, ContextAndQuestion
+from data_processing.qa_training_data import ParagraphAndQuestionSpec, Answer, ParagraphQaTrainingData, \
+    ContextAndQuestion, ParagraphWithInverse
 from data_processing.span_data import ParagraphSpans
 from data_processing.word_vectors import load_word_vectors
 from utils import ResourceLoader, flatten_iterable
@@ -30,7 +31,7 @@ class Question(object):
         return " ".join(self.words)
 
 
-class Paragraph(object):
+class Paragraph(ParagraphWithInverse):
     """ Context with multiple questions, optionally includes it's "raw" untokenzied/un-normalized text and the reverse
     mapping for the tokenized text -> raw text """
 
@@ -41,20 +42,10 @@ class Paragraph(object):
                  paragraph_num: int,
                  original_text: Optional[str] = None,
                  spans: Optional[np.ndarray] = None):
+        super().__init__(context, original_text, spans)
         self.article_id = article_id
-        self.context = context
         self.questions = questions
         self.paragraph_num = paragraph_num
-        self.original_text = original_text
-        self.spans = spans
-
-    def get_original_text(self, start, end):
-        """ Get text between the token at `start` and `end` inclusive """
-        return self.original_text[self.spans[start][0]:self.spans[end][1]]
-
-    @property
-    def n_context_words(self):
-        return sum(len(x) for x in self.context)
 
     def __repr__(self) -> str:
         return "Paragraph%d(%s...)" % (self.paragraph_num, self.context[0][:40])
@@ -111,6 +102,7 @@ class SquadCorpus(Configurable):
     # Pickle seems faster the json for loading
     TRAIN_FILE = "train.pkl"
     DEV_FILE = "dev.pkl"
+    NAME = "squad-v2"
 
     VOCAB_FILE = "vocab.txt"
     WORD_VEC_SUFFIX = "_pruned"
@@ -118,7 +110,7 @@ class SquadCorpus(Configurable):
     @staticmethod
     def make_corpus(train: List[Document],
                     dev: List[Document]):
-        dir = join(CORPUS_DIR, "squad")
+        dir = join(CORPUS_DIR, SquadCorpus.NAME)
         if isfile(dir) or (exists(dir) and len(listdir(dir))) > 0:
             raise ValueError("Directory %s already exists and is non-empty" % dir)
         if not exists(dir):
@@ -130,7 +122,7 @@ class SquadCorpus(Configurable):
                     pickle.dump(data, f)
 
     def __init__(self):
-        dir = join(CORPUS_DIR, "squad")
+        dir = join(CORPUS_DIR, self.NAME)
         if not exists(dir) or not isdir(dir):
             raise ValueError("No directory %d, corpus not built yet?" + dir)
         self.dir = dir

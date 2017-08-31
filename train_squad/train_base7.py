@@ -22,7 +22,7 @@ from squad.squad import SquadCorpus
 from squad.squad_eval import BoundedSquadSpanEvaluator
 from trivia_qa.build_span_corpus import TriviaQaWebDataset
 from trivia_qa.lazy_data import LazyRandomParagraphBuilder
-from trivia_qa.triviaqa_evaluators import TfTriviaQaBoundedSpanEvaluator
+from trivia_qa.triviaqa_evaluators import BoundedSpanEvaluator
 from utils import get_output_name_from_cli
 
 

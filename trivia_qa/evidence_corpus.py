@@ -1,8 +1,10 @@
+import argparse
 import json
 from os import walk, mkdir, makedirs, remove
 from os.path import relpath, join, exists
 import pickle
 from typing import Set
+from collections import Counter
 
 import numpy as np
 import resource
@@ -11,12 +13,12 @@ import sys
 
 import unicodedata
 
+import config
 from utils import group, split, iter_and_log, flatten_iterable
 from tqdm import tqdm
 import re
 from config import CORPUS_DIR
-from data_processing.text_utils import get_paragraph_tokenizer
-
+from data_processing.text_utils import NltkPlusStopWords, NltkAndPunctTokenizer
 
 """
 Build a cache a tokenized version of the evidence corpus
@@ -41,24 +43,25 @@ def _gather_files(input_root, output_dir, skip_dirs):
 
 
 def build_tokenized_corpus(input_root, tokenizer, output_dir, skip_dirs=False, n_processes=1):
-    # WARNING the vocab part of this is not texted
     if not exists(output_dir):
         mkdir(output_dir)
 
     all_files = _gather_files(input_root, output_dir, skip_dirs)
 
     if n_processes == 1:
-        voc = build_tokenized_files(all_files, input_root, output_dir, tokenizer, log="print")
+        voc = build_tokenized_files(all_files, input_root, output_dir, tokenizer)
     else:
+        voc = set()
         from multiprocessing import Pool
-        pool = Pool(n_processes)
-        chunks = split(all_files, n_processes)
-        vocs = pool.starmap(build_tokenized_files,
-                     [[chunk, input_root, output_dir, tokenizer, "print"] for chunk in chunks],
-                     chunksize=1)
-        voc = vocs[0]
-        for v in vocs[1:]:
-            voc.update(v)
+        with Pool(n_processes) as pool:
+            chunks = split(all_files, n_processes)
+            chunks = flatten_iterable(group(c, 500) for c in chunks)
+            pbar = tqdm(total=len(chunks), ncols=80)
+            for v in pool.imap_unordered(_build_tokenized_files_t,
+                                         [[c, input_root, output_dir, tokenizer] for c in chunks]):
+                voc.update(v)
+                pbar.update(1)
+            pbar.close()
 
     voc_file = join(output_dir, "vocab.txt", "w")
     with open(voc_file, "w") as f:
@@ -67,20 +70,17 @@ def build_tokenized_corpus(input_root, tokenizer, output_dir, skip_dirs=False, n
             f.write("\n")
 
 
-def build_tokenized_files(filenames, input_root, output_root, tokenizer, log=None) -> Set[str]:
-    sent_tokenize, word_tokenize = get_paragraph_tokenizer(tokenizer)
-    iter_filenames = iter_and_log(filenames, 500) if log == "print" else tqdm(filenames)
+def build_tokenized_files(filenames, input_root, output_root, tokenizer) -> Set[str]:
     voc = set()
-    for filename in iter_filenames:
+    for filename in filenames:
         out_file = filename[:filename.rfind(".")] + ".txt"
         with open(join(input_root, filename), "r") as in_file:
             text = in_file.read().strip()
-        paragraphs = [[word_tokenize(sent) for sent in sent_tokenize(para)] for para in text.split("\n")]
+        paras = [x for x in text.split("\n") if len(x) > 0]
+        paragraphs = [tokenizer.tokenize_paragraph(x) for x in paras]
 
         for para in paragraphs:
             for i, sent in enumerate(para):
-                if any((" " in word or "\n" in word) for word in sent):
-                    raise ValueError()
                 voc.update(sent)
 
         with open(join(output_root, out_file), "w") as in_file:
@@ -88,32 +88,47 @@ def build_tokenized_files(filenames, input_root, output_root, tokenizer, log=Non
     return voc
 
 
+def _build_tokenized_files_t(arg):
+    return build_tokenized_files(*arg)
+
+
 def extract_voc(corpus, doc_ids):
-    voc = set()
+    voc = Counter()
     for i, doc in enumerate(doc_ids):
         voc.update(corpus.get_document(doc, flat=True))
-    print("Completed %d docs" % (len(doc_ids)))
     return voc
 
 
-def build_vocab(corpus, override=False, n_processes=1):
+def _extract_voc_tuple(x):
+    return extract_voc(*x)
+
+
+def get_evidence_voc(corpus, n_processes=1):
+    doc_ids = corpus.list_documents()
+    voc = Counter()
+
+    if n_processes == 1:
+        for doc in tqdm(doc_ids):
+            voc = corpus.get_document(doc, flat=True)
+    else:
+        from multiprocessing import Pool
+        chunks = split(doc_ids, n_processes)
+        chunks = flatten_iterable(group(x, 10000) for x in chunks)
+        pbar = tqdm(total=len(chunks), ncols=80)
+        with Pool(n_processes) as pool:
+            for v in pool.imap_unordered(_extract_voc_tuple, [[corpus, c] for c in chunks]):
+                voc += v
+                pbar.update(1)
+        pbar.close()
+
+    return voc
+
+
+def build_evidence_voc(corpus, override, n_processes):
     target_file = join(corpus.directory, "vocab.txt")
     if exists(target_file) and not override:
         raise ValueError()
-    doc_ids = corpus.list_documents()
-    if n_processes == 1:
-        voc = set()
-        for doc in tqdm(doc_ids):
-            voc.update(corpus.get_document(doc, flat=True))
-    else:
-        from multiprocessing import Pool
-        pool = Pool(n_processes)
-        chunks = split(doc_ids, n_processes)
-        chunks = flatten_iterable(group(x, 10000) for x in chunks)
-        voc = set()
-        for v in pool.starmap(extract_voc, [[corpus, c] for c in chunks]):
-            voc.update(v)
-
+    voc = get_evidence_voc(TriviaQaEvidenceCorpusTxt(), n_processes=n_processes).keys()
     with open(target_file, "w") as f:
         for word in sorted(voc):
             f.write(word)
@@ -207,6 +222,13 @@ class TriviaQaEvidenceCorpusTxt(object):
                     return paragraphs
 
 
-if __name__ == "__main__":
-    build_vocab(TriviaQaEvidenceCorpusTxt(), n_processes=4, override=True)
+def main():
+    parse = argparse.ArgumentParser()
+    parse.add_argument("-o", "--output_dir", type=str, default=join(config.CORPUS_DIR, "triviaqa"))
+    parse.add_argument("-s", "--source", type=str, default=join(config.TRIVIA_QA, "evidence"))
+    parse.add_argument("-n", "--n_processes", type=int, default=1)
+    args = parse.parse_args()
+    build_tokenized_corpus(args.source, NltkAndPunctTokenizer(), args.output_dir, n_processes=args.n_processes)
 
+if __name__ == "__main__":
+    main()

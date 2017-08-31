@@ -4,7 +4,7 @@ import numpy as np
 from tqdm import tqdm
 
 from data_processing.document_splitter import MergeParagraphs, ContainsQuestionWord, DocumentSplitter, \
-    AnnotatedParagraph
+    ParagraphWithAnswers
 from data_processing.preprocessed_corpus import PreprocessedData
 from data_processing.qa_data import Batcher
 from data_processing.text_utils import NltkPlusStopWords, WordNormalizer
@@ -90,7 +90,7 @@ def paragraph_stats(corpus, splitter: DocumentSplitter, sample):
     #     print("%s: %d" % (k, v))
 
 
-def print_paragraph(question: TriviaQaQuestion, para: AnnotatedParagraph):
+def print_paragraph(question: TriviaQaQuestion, para: ParagraphWithAnswers):
     print(" ".join(question.question))
     print(question.answer.all_answers)
     context = flatten_iterable(para.text)

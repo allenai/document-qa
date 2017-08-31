@@ -11,7 +11,7 @@ from sklearn.neighbors import NearestNeighbors
 from tqdm import tqdm
 
 from configurable import Configurable
-from data_processing.document_splitter import AnnotatedParagraph
+from data_processing.document_splitter import ParagraphWithAnswers
 from data_processing.text_utils import NltkPlusStopWords, WordNormalizer
 from data_processing.word_vectors import load_word_vectors
 from trivia_qa.evidence_corpus import TriviaQaEvidenceCorpusTxt
@@ -24,7 +24,7 @@ class ParagraphSelectionFeaturizer(object):
     def get_feature_names(self) -> List[str]:
         raise NotImplementedError()
 
-    def get_features(self, question: List[str], paragraphs: List[List[AnnotatedParagraph]]) -> np.ndarray:
+    def get_features(self, question: List[str], paragraphs: List[List[ParagraphWithAnswers]]) -> np.ndarray:
         raise NotImplementedError()
 
 
@@ -36,7 +36,7 @@ class JointParagraphSelectionFeaturizer(Configurable):
     def get_word_feature_names(self) -> List[str]:
         raise NotImplementedError()
 
-    def get_joint_features(self, question: List[str], paragraphs: List[List[AnnotatedParagraph]]):
+    def get_joint_features(self, question: List[str], paragraphs: List[List[ParagraphWithAnswers]]):
         raise NotImplementedError()
 
 
@@ -44,7 +44,7 @@ class ParagraphOrderFeatures(ParagraphSelectionFeaturizer):
     def get_feature_names(self) -> List[str]:
         return ["first", "word_start", "log_word_start", "inv_word_start"]
 
-    def get_features(self, question: List[str], paragraphs: List[List[AnnotatedParagraph]]):
+    def get_features(self, question: List[str], paragraphs: List[List[ParagraphWithAnswers]]):
         paragraphs = flatten_iterable(paragraphs)
         starts = np.array([x.start for x in paragraphs], dtype=np.float32)
         starts /= 400  # Keep the scale a bit more reasonable
@@ -55,7 +55,7 @@ class ParagraphFeatures(ParagraphSelectionFeaturizer):
     def get_feature_names(self):
         return ["len", "log_len", "inv_len"]
 
-    def get_features(self, question: List[str], paragraphs: List[List[AnnotatedParagraph]]):
+    def get_features(self, question: List[str], paragraphs: List[List[ParagraphWithAnswers]]):
         paragraphs = flatten_iterable(paragraphs)
         arr = np.array([(x.end-x.start) for x in paragraphs], dtype=np.float32)
         arr /= 400
@@ -74,7 +74,7 @@ class LocalTfIdfFeatures(ParagraphSelectionFeaturizer):
     def get_feature_names(self):
         return ["local-tfidf-dist" if self.name is None else self.name]
 
-    def get_features(self, question: List[str], paragraphs: List[List[AnnotatedParagraph]]):
+    def get_features(self, question: List[str], paragraphs: List[List[ParagraphWithAnswers]]):
         if self.use_question_voc:
             target_words = set()
             for word in question:
@@ -222,7 +222,7 @@ class NGramMatchingFeaturizer(JointParagraphSelectionFeaturizer):
     def get_feature_names(self):
         return []
 
-    def get_joint_features(self, question: List[str], paragraphs: List[List[AnnotatedParagraph]]):
+    def get_joint_features(self, question: List[str], paragraphs: List[List[ParagraphWithAnswers]]):
         paragraphs = flatten_iterable(paragraphs)
         ngram_s = self.ngram_len[0]
         ngram_e = self.ngram_len[1] + 1
@@ -282,7 +282,7 @@ class WordMatchingFeaturizer(ParagraphSelectionFeaturizer):
         names = self.fe.get_word_feature_names()
         return ["sum_" + x for x in names] + ["any_" + x for x in names] + ["mean_" + x for x in names]
 
-    def get_features(self, question: List[str], paragraphs: List[List[AnnotatedParagraph]]) -> np.ndarray:
+    def get_features(self, question: List[str], paragraphs: List[List[ParagraphWithAnswers]]) -> np.ndarray:
         joint_featres = self.fe.get_joint_features(question, paragraphs)[0]
         word_sums = joint_featres[:, :, :].sum(axis=1)
         any_word = (joint_featres[:, :, :] > 0).sum(axis=1)

@@ -237,6 +237,7 @@ def _build_train_ops(train_params):
         loss_ema = tf.train.ExponentialMovingAverage(decay=train_params.loss_ema, name="LossEMA", zero_debias=True)
 
         if regularization_loss is None:
+            print(loss)
             ema_op = loss_ema.apply([loss])
             train_opt = tf.group(train_opt, ema_op)
             ema_var = loss_ema.average(loss)
@@ -299,7 +300,8 @@ def resume_training(out: ModelDir, notes: str=None, dry_run=False, start_eval=Fa
     train_data = train_params["data"]
 
     # TODO make preprocess officially in the training_data API
-    train_data.preprocess(4, 1000)
+    train_data.preprocess(6, 1000)
+    # train_data.load_preprocess("tfidf-top4-in-mem.pkl.gz")
 
     evaluators = train_params["evaluators"]
     params = train_params["train_params"]
@@ -584,8 +586,6 @@ def _train_async(model: Model,
         # summary_writer.add_graph(sess.graph, global_step=on_step)
         save_train_start(out.dir, data, sess.run(global_step), evaluators, train_params, notes)
 
-    enqueue_error = Event()
-
     def enqueue_train():
         try:
             # feed data from the dataset iterator -> encoder -> queue
@@ -597,8 +597,8 @@ def _train_async(model: Model,
             # The queue_close operator has been called, exit gracefully
             return
         except Exception as e:
-            # alert the main thread an exception occurred
-            enqueue_error.set()
+            # Crash the main thread with a queue exception
+            sess.run(train_close)
             raise e
 
     train_enqueue_thread = Thread(target=enqueue_train)
@@ -618,9 +618,6 @@ def _train_async(model: Model,
                 t0 = time.perf_counter()
                 on_step = sess.run(global_step) + 1
                 get_summary = on_step % train_params.log_period == 0
-
-                if enqueue_error.is_set():
-                    raise RuntimeError("Enqueue thread crashed!")
 
                 if get_summary:
                     summary, _ = sess.run([summary_tensor, train_opt], feed_dict=train_dict)

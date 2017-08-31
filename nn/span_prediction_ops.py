@@ -5,8 +5,8 @@ from nn.ops import exp_mask
 
 def best_span_from_bounds(start_logits, end_logits, bound=None):
     """
-    Brute force approach to finding the best span from start/end logits in tensorflow, still can
-    be faster then the python dynamic-programming version
+    Brute force approach to finding the best span from start/end logits in tensorflow, still usually
+    faster then the python dynamic-programming version
     """
     b = tf.shape(start_logits)[0]
 
@@ -18,9 +18,10 @@ def best_span_from_bounds(start_logits, end_logits, bound=None):
     # Convert to (start_position, length) format
     indices = tf.stack([indices, tf.fill((b,), 0)], axis=1)
 
+    # TODO Might be better to build the batch x n_word x n_word
+    # matrix and use tf.matrix_band to zero out the unwanted ones...
+
     if bound is None:
-        # In this case it might best faster to just compute
-        # the entire (batch x n_word x n_word) matrix
         n_lengths = tf.shape(start_logits)[1]
     else:
         # take the min in case the bound > the context

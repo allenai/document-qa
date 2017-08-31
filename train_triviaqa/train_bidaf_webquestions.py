@@ -18,7 +18,7 @@ from nn.span_prediction import ConfidencePredictor, BoundsPredictor
 from trainer import SerializableOptimizer, TrainParams
 from trivia_qa.build_span_corpus import TriviaQaWebDataset
 from trivia_qa.lazy_data import LazyRandomParagraphBuilder
-from trivia_qa.triviaqa_evaluators import ConfidenceEvaluator, TfTriviaQaBoundedSpanEvaluator
+from trivia_qa.triviaqa_evaluators import ConfidenceEvaluator, BoundedSpanEvaluator
 from trivia_qa.triviaqa_training_data import InMemoryWebQuestionBuilder, ExtractPrecomputedParagraph, \
     ExtractSingleParagraph
 from utils import get_output_name_from_cli
@@ -72,7 +72,7 @@ def main():
                             # sample_dev=100, sample=100, eval_on_verified=False
                             )
 
-    eval = [LossEvaluator(), TfTriviaQaBoundedSpanEvaluator([4, 8])]
+    eval = [LossEvaluator(), BoundedSpanEvaluator([4, 8])]
     data.preprocess(4, 1000)
     trainer.start_training(data, model, train_params, eval, trainer.ModelDir(out), notes, False)
 

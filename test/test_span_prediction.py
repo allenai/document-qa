@@ -3,12 +3,51 @@ import unittest
 import numpy as np
 import tensorflow as tf
 
-from data_processing.span_data import get_best_span_bounded, span_f1
-from nn.prediction_layers import best_span_from_bounds
-from nn.span_prediction import packed_span_f1_mask, to_unpacked_coordinates
+from data_processing.span_data import get_best_span_bounded, span_f1, top_disjoint_spans
+from nn.ops import segment_logsumexp
+from nn.span_prediction import packed_span_f1_mask, to_unpacked_coordinates, IndependentBoundsGrouped
+from nn.span_prediction_ops import best_span_from_bounds
+from utils import flatten_iterable
 
 
 class TestBestSpan(unittest.TestCase):
+
+    def test_segment_log_sum_exp(self):
+        sess = tf.Session()
+        with sess.as_default():
+            for i in range(10):
+                groups = []
+                for group_id in range(10):
+                    group = []
+                    for _ in range(np.random.randint(1, 5)):
+                        group.append(np.random.normal(0, 2, 10))
+                    groups.append(group)
+
+                flat_groups = np.stack(flatten_iterable(groups), axis=0)
+                semgents = np.array(flatten_iterable([ix]*len(g) for ix, g in enumerate(groups)))
+                actual = sess.run(segment_logsumexp(flat_groups, semgents))
+                expected = [np.log(np.sum(np.exp(np.concatenate(g, axis=0)))) for g in groups]
+                self.assertTrue(np.allclose(actual, expected))
+
+    def test_top_n_simple(self):
+        spans, scores = top_disjoint_spans(np.array([
+            1, 0, 0, 10,
+            2, 2, 0, 0,
+            0, 0, 3, 0,
+            1, 0, 5, 4,
+        ]).reshape((4, 4)), 3, 2)
+        self.assertEqual(list(scores), [4, 3])
+        self.assertEqual(spans.tolist(), [[3, 3], [2, 2]])
+
+    def test_top_n_overlap(self):
+        spans, scores = top_disjoint_spans(np.array([
+            4, 4, 5, 4,
+            0, 4, 4, 4,
+            0, 0, 0, 4,
+            0, 0, 0, 2,
+        ]).reshape((4, 4)), 10, 5)
+        self.assertEqual(list(scores), [5, 2])
+        self.assertEqual(spans.tolist(), [[0, 2], [3, 3]])
 
     def test_best_span(self):
         bound = 5

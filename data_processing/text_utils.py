@@ -4,10 +4,15 @@ from typing import List, Tuple
 from collections import Counter
 
 import unicodedata
+
+import nltk
 from nltk import PorterStemmer, WordNetLemmatizer
 from nltk.corpus import stopwords
 
 from configurable import Configurable
+from utils import flatten_iterable
+import numpy as np
+
 
 extra_split_chars = ("-", "£", "€", "¥", "¢", "₹", "\u2212", "\u2014", "\u2013", "/", "~",
                      '"', "'", "\ud01C", "\u2019", "\u201D", "\u2018", "\u00B0")
@@ -22,16 +27,8 @@ space_re = re.compile("[ \u202f]")
 def post_split_tokens(tokens: List[str]) -> List[str]:
     """ Apply a small amount of extra splitting to the given tokens, this is in particular to avoid UNK tokens
      due to contraction, quotation, or other forms of puncutation. """
-    resplit_sent = []
-    for token in tokens:
-        resplit_sent += [x for x in extra_split_chars_re.split(token) if x != ""]
-    return resplit_sent
-
-
-def clean_text(text):
-    # be consistent with quotes, and replace \u2014 and \u2212 which I have seen being mapped to UNK
-    # by glove word vecs with different characters
-    return text.replace("''", "\"").replace("``", "\"").replace("\u2212", "-").replace("\u2014", "\u2013")
+    return flatten_iterable([x for x in extra_split_chars_re.split(token) if x != ""]
+                            for token in tokens)
 
 
 def convert_to_spans(raw_text: str, sentences: List[List[str]]) -> List[List[Tuple[int, int]]]:
@@ -71,23 +68,93 @@ def get_word_span(spanss: List[List[Tuple[int, int]]], start: int, stop: int) ->
     return idxs
 
 
-def get_paragraph_tokenizer(tokenizer_name):
-    if tokenizer_name == "NLTK_AND_CLEAN":
-        import nltk
-        sent_tokenize = nltk.sent_tokenize
-        def word_tokenize(tokens: str) -> List[str]:
-            tokens = nltk.word_tokenize(tokens)
-            return [clean_text(token) for token in post_split_tokens(tokens)]
-        return sent_tokenize, word_tokenize
-    elif tokenizer_name == "NLTK":
-        import nltk
-        sent_tokenize = nltk.sent_tokenize
-        def word_tokenize(tokens: str) -> List[str]:
-            tokens = nltk.word_tokenize(tokens)
-            return [token for token in post_split_tokens(tokens)]
-        return sent_tokenize, word_tokenize
-    else:
-        raise ValueError()
+class ParagraphWithInverse(object):
+    """
+    Paragraph that retains the inverse mapping of tokens -> span in the original text,
+    Used if we want get the untokenized, uncleaned text for a particular span
+    """
+
+    @staticmethod
+    def empty():
+        return ParagraphWithInverse([], "", np.zeros((0, 2), dtype=np.int32))
+
+    @staticmethod
+    def concat(paras: List, delim: str):
+        original_text = delim.join([x.original_text for x in paras])
+        full_inv = []
+        all_tokens = []
+        on_char = 0
+        for para in paras:
+            if para.n_tokens == 0:
+                continue
+            all_tokens += para.text
+            full_inv.append(para.spans + on_char)
+            on_char += para.spans[-1][1] + len(delim)
+        if len(all_tokens) == 0:
+            return ParagraphWithInverse.empty()
+        return ParagraphWithInverse(all_tokens, original_text, np.concatenate(full_inv))
+
+    def __init__(self, text: List[List[str]], original_text: str, spans: np.ndarray):
+        if spans.shape != (sum(len(s) for s in text), 2):
+            raise ValueError("Spans should be shape %s but got %s" % ((sum(len(s) for s in text), 2), spans.shape))
+        self.text = text
+        self.original_text = original_text
+        self.spans = spans
+
+    def get_original_text(self, start, end):
+        """ Get text between the token at `start` and `end` inclusive """
+        return self.original_text[self.spans[start][0]:self.spans[end][1]]
+
+    @property
+    def n_tokens(self):
+        return sum(len(s) for s in self.text)
+
+
+class NltkAndPunctTokenizer(Configurable):
+
+    def __init__(self):
+        self.sent_tokenzier = nltk.load('tokenizers/punkt/english.pickle')
+        self.word_tokenizer = nltk.TreebankWordTokenizer()
+
+    def clean_text(self, word):
+        # be consistent with quotes, and replace \u2014 and \u2212 which I have seen being mapped to UNK
+        # by glove word vecs with different characters
+        return word.replace("''", "\"").replace("``", "\"").replace("\u2212", "-").replace("\u2014", "\u2013")
+
+    def tokenize_sentence(self, sent) -> List[str]:
+        tokens = self.word_tokenizer.tokenize(sent)
+        return [self.clean_text(token) for token in post_split_tokens(tokens)]
+
+    def tokenize_paragraph(self, paragraph: str) -> List[List[str]]:
+        return [self.tokenize_sentence(s) for s in self.sent_tokenzier.tokenize(paragraph)]
+
+    def tokenize_with_inverse(self, paragraph: str, is_sentence: bool=False) -> ParagraphWithInverse:
+        if is_sentence:
+            para = [paragraph]
+        else:
+            para = self.sent_tokenzier.tokenize(paragraph)
+
+        text = [self.word_tokenizer.tokenize(s) for s in para]
+        for i, sent in enumerate(text):
+            text[i] = post_split_tokens(sent)
+
+        # recover (start, end) for each token relative to the raw `context`
+        text_spans = convert_to_spans(paragraph, text)
+
+        # Clean text, we do this at the end so `convert_to_spans` works as expected
+        for i, sent in enumerate(text):
+            text[i] = [self.clean_text(x) for x in sent]
+
+        if is_sentence:
+            if len(text) != 1:
+                raise RuntimeError()
+
+        text_spans = flatten_iterable(text_spans)
+        if len(text_spans) == 0:
+            text_spans = np.zeros((0, 2), dtype=np.int32)
+        else:
+            text_spans = np.array(text_spans, dtype=np.int32)
+        return ParagraphWithInverse(text, paragraph, text_spans)
 
 
 class WordNormalizer(Configurable):

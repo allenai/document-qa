@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 import trainer
 from data_processing.document_splitter import DocumentSplitter, MergeParagraphs, ParagraphFilter, ContainsQuestionWord, \
-    TopTfIdf
+    TopTfIdf, ShallowOpenWebRanker
 from data_processing.preprocessed_corpus import preprocess_par
 from data_processing.qa_training_data import ParagraphAndQuestionDataset
 from data_processing.span_data import TokenSpans
@@ -20,7 +20,7 @@ from trainer import ModelDir
 from trivia_qa.build_span_corpus import TriviaQaWebDataset, TriviaQaOpenDataset
 from trivia_qa.evidence_corpus import TriviaQaEvidenceCorpusTxt
 from trivia_qa.read_data import TriviaQaQuestion
-from trivia_qa.training_data import DocumentParagraphQuestion, ExtractMultiParagraphs
+from trivia_qa.training_data import DocumentParagraphQuestion, ExtractMultiParagraphs, ExtractMultiParagraphsPerQuestion
 from trivia_qa.trivia_qa_eval import f1_score as trivia_f1_score
 from trivia_qa.trivia_qa_eval import exact_match_score as trivia_em_score
 from utils import ResourceLoader, flatten_iterable
@@ -29,12 +29,18 @@ from utils import ResourceLoader, flatten_iterable
 class RecordParagraphSpanPrediction(Evaluator):
     """ Computes the best span in tensorflow, meaning which we expect to be faster and
     does not require us having to keep the entire set of output logits in RAM """
-    def __init__(self, bound: int, record_text_ans: bool):
+    def __init__(self, bound: int, record_text_ans: bool,
+                 use_prob: bool):
         self.bound = bound
+        self.use_prob = use_prob
         self.record_text_ans = record_text_ans
 
     def tensors_needed(self, prediction):
-        span, score = prediction.get_best_span(self.bound)
+        if self.use_prob:
+            span, score = prediction.get_best_span_prob(self.bound)
+        else:
+            span, score = prediction.get_best_span(self.bound)
+        print(span, score)
         return dict(spans=span, model_scores=score)
 
     def evaluate(self, data: List[DocumentParagraphQuestion], true_len, **kargs):
@@ -53,6 +59,7 @@ class RecordParagraphSpanPrediction(Evaluator):
                 continue
             text = point.get_context()
             pred_span = spans[i]
+            # print(pred_span)
             pred_text = " ".join(text[pred_span[0]:pred_span[1] + 1])
             if self.record_text_ans:
                 text_answers.append(pred_text)
@@ -100,12 +107,12 @@ def main():
     parser.add_argument('-q', '--question_predictions', type=str, help="Save predictions for each question")
     parser.add_argument('-d', '--question_doc_predictions', type=str, help="Save predictions for each question-doc pair")
     parser.add_argument('-e', '--ema', action="store_true")
+    parser.add_argument('-r', '--prob', action="store_true")
     parser.add_argument('-n', '--n_sample', type=int, default=None)
     parser.add_argument('-a', '--async', type=int, default=10)
     parser.add_argument('-s', '--splitter', type=str, default="merge-400",
                         choices=["merge-400", "merge-800"])
-    parser.add_argument('-f', '--filter', type=str, default="tfidf-6",
-                        choices=["contains-question-word", "tfidf-6", "tfidf-10", "none"])
+    parser.add_argument('-f', '--filter', type=str, default="tfidf-6")
     parser.add_argument('-b', '--batch_size', type=int, default=200)
     parser.add_argument('-c', '--corpus',
                         choices=["web-dev", "web-verified-dev", "web-train",
@@ -141,12 +148,18 @@ def main():
     else:
         splitter = MergeParagraphs(800)
 
+    per_document = True
     if args.filter == "contains-question-word":
         para_filter = ContainsQuestionWord(NltkPlusStopWords(punctuation=True))
     elif args.filter.startswith("tfidf-"):
         para_filter = TopTfIdf(NltkPlusStopWords(punctuation=True), int(args.filter[6:]))
-    else:
+    elif args.filter.startswith("q-rank-"):
+        para_filter = ShallowOpenWebRanker(int(args.filter[7:]))
+        per_document = False
+    elif args.filter == "none":
         para_filter = None
+    else:
+        raise ValueError()
 
     n_questions = args.n_sample
     if n_questions is not None:
@@ -155,8 +168,14 @@ def main():
         test_questions = test_questions[:n_questions]
 
     print("Building question/paragraph pairs...")
-    prep = ExtractMultiParagraphs(splitter, para_filter, require_an_answer=False)
-    prepped_data = preprocess_par(test_questions, corpus, prep, 6, 1000)
+    if per_document:
+        prep = ExtractMultiParagraphs(splitter, para_filter, require_an_answer=False)
+    else:
+        prep = ExtractMultiParagraphsPerQuestion(splitter, para_filter, require_an_answer=False)
+
+        print(len(test_questions))
+
+    prepped_data = preprocess_par(test_questions, corpus, prep, 1, 1000)
 
     data = []
     for q in prepped_data.data:
@@ -180,7 +199,7 @@ def main():
 
     model = model_dir.get_model()
     evaluation = trainer.test(model,
-                             [RecordParagraphSpanPrediction(8, True)],
+                             [RecordParagraphSpanPrediction(8, True, args.prob)],
                               {args.corpus:test_questions}, ResourceLoader(), checkpoint, args.ema, args.async)[args.corpus]
 
     import pandas as pd

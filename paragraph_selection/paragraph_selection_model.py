@@ -209,21 +209,6 @@ class ParagraphSelectionPredictor(Configurable):
         raise NotImplementedError()
 
 
-class SigmoidPredictions(ParagraphSelectionPredictor):
-    def __init__(self, init="glorot_uniform"):
-        self.init = init
-
-    def apply(self, paragraph_features, answer, mask):
-        logits = fully_connected(paragraph_features, 1, activation_fn=None,
-                                  weights_initializer=get_keras_initialization(self.init))
-        logits = tf.squeeze(logits, axis=2)
-        answer_mask = tf.cast(tf.sequence_mask(mask, tf.shape(paragraph_features)[1]), tf.float32)
-        logits = VERY_NEGATIVE_NUMBER * (1 - answer_mask) + answer_mask * logits
-        loss = tf.nn.sigmoid_cross_entropy_with_logits(
-            labels=tf.cast(answer, tf.float32), logits=logits)
-        return ModelOutput(tf.reduce_mean(loss), ParagraphPrediction(logits))
-
-
 class SoftmaxPrediction(ParagraphSelectionPredictor):
     def __init__(self, init="glorot_uniform", aggregate="sum"):
         self.init = init

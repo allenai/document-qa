@@ -1,7 +1,7 @@
 import sys
 from typing import List, Set, Optional, Tuple, Dict
 
-from data_processing.document_splitter import DocumentSplitter, AnnotatedParagraph, ParagraphFilter
+from data_processing.document_splitter import DocumentSplitter, ParagraphWithAnswers, ParagraphFilter
 from data_processing.multi_paragraph_qa import DocumentParagraph, MultiParagraphQuestion
 from data_processing.preprocessed_corpus import Preprocessor, DatasetBuilder, FilteredData
 from data_processing.qa_training_data import ParagraphAndQuestion, Answer
@@ -76,12 +76,11 @@ def intern_mutli_question(questions):
 
 class ExtractMultiParagraphs(Preprocessor):
     def __init__(self, splitter: DocumentSplitter, ranker: ParagraphFilter,
-                 intern: bool=False, require_an_answer=True, per_document=True):
+                 intern: bool=False, require_an_answer=True):
         self.intern = intern
         self.splitter = splitter
         self.ranker = ranker
         self.require_an_answer = require_an_answer
-        self.per_document = per_document
 
     def preprocess(self, questions: List[TriviaQaQuestion], evidence) -> object:
         true_len = 0

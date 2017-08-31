@@ -2,9 +2,9 @@ import unittest
 
 import numpy as np
 
-from data_processing.document_splitter import AnnotatedParagraph
+from data_processing.document_splitter import ParagraphWithAnswers
 from data_processing.text_utils import WordNormalizer
-from paragraph_selection.paragraph_selection_featurizer import AnnotatedParagraph, NGramMatchingFeaturizer
+from paragraph_selection.paragraph_selection_featurizer import ParagraphWithAnswers, NGramMatchingFeaturizer
 
 
 class MockNormalizer(object):
@@ -24,7 +24,7 @@ class TestSelectionFeatures(unittest.TestCase):
         fe = NGramMatchingFeaturizer(MockStopwords(), WordNormalizer(), (1, 2))
         features = fe.get_joint_features(
             ["Where", "cat", "Bill", "dog", "Pen", "dog"],
-            [[AnnotatedParagraph(x, 0, 0, None) for x in [
+            [[ParagraphWithAnswers(x, 0, 0, None) for x in [
                 [["the", "fox"]],
                 [["the", "fox"], ["the", "dog"]],
                 [["Where", "cat"], ["bill", "dogs"]],

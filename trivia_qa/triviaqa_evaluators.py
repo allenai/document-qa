@@ -1,11 +1,11 @@
 from typing import List
 
 import numpy as np
-from scipy.stats import spearmanr
+from scipy.stats import spearmanr, kendalltau
 
 from data_processing.qa_training_data import ContextAndQuestion
 from data_processing.span_data import compute_span_f1, get_best_span_bounded
-from evaluator import Evaluation, Evaluator, record_span_predictions
+from evaluator import Evaluation, Evaluator
 from trivia_qa.trivia_qa_eval import f1_score as trivia_f1_score, exact_match_score as trivia_em_score
 
 
@@ -81,7 +81,7 @@ class TriviaQaBoundedSpanEvaluator(Evaluator):
         return ev
 
 
-class TfTriviaQaBoundedSpanEvaluator(Evaluator):
+class BoundedSpanEvaluator(Evaluator):
     """ Computes the best span in tensorflow, meaning which we expect to be faster and
     does not require us having to keep the entire set of output logits in RAM """
     def __init__(self, bound: List[int]):
@@ -104,32 +104,128 @@ class TfTriviaQaBoundedSpanEvaluator(Evaluator):
         return ev
 
 
-class ConfidenceEvaluator(Evaluator):
-    def __init__(self, bound: int):
+class TfTriviaQaBoundedSpanEvaluator(Evaluator):
+    """ Computes the best span in tensorflow, meaning which we expect to be faster and
+    does not require us having to keep the entire set of output logits in RAM """
+    def __init__(self, bound: List[int]):
+        raise ValueError("Deprecated!")
+
+    def tensors_needed(self, prediction):
+        needed = {}
+        for b in self.bound:
+            span, _ = prediction.get_best_span(b)
+            needed.update({("span_%d" % b): span})
+        return needed
+
+    def evaluate(self, data: List[ContextAndQuestion], true_len, **kargs):
+        ev = Evaluation({})
+        for b in self.bound:
+            spans = kargs[("span_%d" % b)]
+            with_answer = [i for i,x in enumerate(data) if len(x.answer.answer_spans) > 0]
+            ev.add(trivia_span_evaluation([data[i] for i in with_answer], true_len,
+                                          [spans[i] for i in with_answer], "b%d/" % b))
+        return ev
+
+
+class MultiParagraphSpanEvaluator(Evaluator):
+    def __init__(self, bound: int, paragraph_eval=True, per_doc=True):
         self.bound = bound
+        self.per_paragraph = paragraph_eval
+        self.per_doc = per_doc
+
+    def tensors_needed(self, prediction):
+        span, span_score = prediction.get_best_span(self.bound)
+        needed = dict(span=span, span_score=span_score)
+        if self.per_paragraph and hasattr(prediction, "none_prob"):
+            needed["none_prob"] = prediction.none_prob
+        return needed
+
+    def evaluate(self, data: List[ContextAndQuestion], true_len, **kargs):
+        spans = kargs["span"]
+        span_score = kargs["span_score"]
+        scores = trivia_span_scores(data, spans)
+        scalars = {}
+        if self.per_paragraph:
+            denom = sum(len(x.answer.answer_spans) > 0 for x in data)
+            means = scores.sum(axis=0) / denom
+            prefix = "para%d/" % self.bound
+            scalars = {
+                prefix + "accuracy": means[0],
+                prefix + "f1": means[1],
+                prefix + "text-accuracy": means[2],
+                prefix + "text-f1": means[3]
+            }
+            if "none_prob" in kargs:
+                none_prob = kargs["none_prob"]
+                mean_ans_p = np.mean([none_prob[i] for i, p in enumerate(data) if
+                                    len(p.answer.answer_spans) > 0])
+                mean_none_p = np.mean([none_prob[i] for i, p in enumerate(data) if
+                                    len(p.answer.answer_spans) == 0])
+                scalars[prefix + "none_prob_diff"] = mean_none_p - mean_ans_p
+
+        quid_to_scores = {}
+        quid_to_span_score = {}
+        for ix, p in enumerate(data):
+            point_id = (p.question_id, p.doc_id) if self.per_doc else p.question_id
+            if point_id not in quid_to_scores or (
+                        quid_to_span_score[point_id] < span_score[ix]):
+                quid_to_scores[point_id] = scores[ix]
+                quid_to_span_score[point_id] = span_score[ix]
+        scores = np.stack(list(quid_to_scores.values()), axis=0)
+
+        scores = scores.mean(axis=0)
+        prefix = "question%d/"% self.bound
+        scalars.update({
+            prefix + "accuracy": scores[0],
+            prefix + "f1": scores[1],
+            prefix + "text-accuracy": scores[2],
+            prefix + "text-f1": scores[3]
+        })
+        return Evaluation(scalars)
+
+
+class ConfidenceEvaluator(Evaluator):
+    def __init__(self, bound: int, rank_metric="k-tau"):
+        self.bound = bound
+        self.rank_metric = rank_metric
 
     def tensors_needed(self, prediction):
         spans, conf = prediction.get_best_span(self.bound)
-        return dict(none_conf=prediction.none_prob,
-                    spans=spans,
-                    conf=conf)
+        needed = dict(spans=spans, conf=conf)
+        if hasattr(prediction, "none_prob"):
+            needed["none_prob"] = prediction.none_prob
+        return needed
 
     def evaluate(self, data: List[ContextAndQuestion], true_len, **kargs):
         scores = trivia_span_scores(data, kargs["spans"])
-        none_conf = kargs["none_conf"]
-        aggregated_scores = scores.sum(axis=0) / true_len
+        has_answer_per = sum(len(x.answer.answer_spans) > 0 for x in data) / len(data)
+        aggregated_scores = scores.sum(axis=0) / (true_len * has_answer_per)
         prefix ="b%d/" % self.bound
-        ev = Evaluation({
+        scalars = {
             prefix + "accuracy": aggregated_scores[0],
             prefix + "f1": aggregated_scores[1],
             prefix + "text-accuracy": aggregated_scores[2],
-            prefix + "text-f1": aggregated_scores[3],
-            prefix + "text-f1-spearman-r": spearmanr(none_conf, scores[:, 3])[0],
-            prefix + "span-accuracy-spearman-r": spearmanr(none_conf, scores[:, 0])[0]
-        })
-        return ev
+            prefix + "text-f1": aggregated_scores[3]
+        }
 
-#
+        if self.rank_metric == "spr":
+            metric = spearmanr
+        elif self.rank_metric == "k-tau":
+            metric = kendalltau
+        else:
+            raise ValueError()
+
+        if "none_prob" in kargs:
+            none_conf = kargs["none_prob"]
+            scalars[prefix + "none-text-f1-" + self.rank_metric] = metric(none_conf, scores[:, 3])[0]
+            scalars[prefix + "none-span-accuracy-" + self.rank_metric] = metric(none_conf, scores[:, 0])[0]
+
+        conf = kargs["conf"]
+        scalars[prefix + "score-text-f1-" + self.rank_metric] = metric(conf, scores[:, 3])[0]
+        scalars[prefix + "score-span-accuracy-" + self.rank_metric] = metric(conf, scores[:, 0])[0]
+        return Evaluation(scalars)
+
+
 # def get_best_text(word_start_probs, word_end_probs, bound, text):
 #     skip = {"a", "an", "the", ""}
 #     strip = string.punctuation + "".join([u"‘", u"’", u"´", u"`", "_"])

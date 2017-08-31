@@ -18,7 +18,7 @@ from paragraph_selection.paragraph_selection_model import NParagraphsSortKey, Se
 from trainer import ModelDir
 from trivia_qa.build_span_corpus import TriviaQaWebDataset
 from trivia_qa.trivia_qa_eval import f1_score as trivia_f1_score
-from trivia_qa.triviaqa_evaluators import TfTriviaQaBoundedSpanEvaluator
+from trivia_qa.triviaqa_evaluators import BoundedSpanEvaluator
 from trivia_qa.triviaqa_training_data import TriviaQaAnswer
 from utils import ResourceLoader, flatten_iterable, transpose_lists, print_table, NumpyEncoder
 

@@ -9,7 +9,7 @@ from typing import List, Generator
 import numpy as np
 import unicodedata
 from tqdm import tqdm
-from data_processing.text_utils import get_paragraph_tokenizer
+
 from trivia_qa.trivia_qa_eval import normalize_answer as triviaqa_normalize_answer
 
 """

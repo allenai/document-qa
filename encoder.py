@@ -4,6 +4,7 @@ import numpy as np
 import tensorflow as tf
 
 from configurable import Configurable
+from data_processing.multi_paragraph_qa import QuestionAndContexts
 from data_processing.qa_training_data import ParagraphAndQuestionSpec, ContextAndQuestion
 from data_processing.span_data import ParagraphSpans, TokenSpans
 from data_processing.text_features import QaTextFeautrizer
@@ -80,8 +81,8 @@ class DenseMultiSpanAnswerEncoder(AnswerEncoder):
         return [self.answer_starts, self.answer_ends]
 
     def init(self, batch_size, context_word_dim):
-        self.answer_starts = tf.placeholder('bool', [batch_size, context_word_dim], name='answer_spans')
-        self.answer_ends = tf.placeholder('bool', [batch_size, context_word_dim], name='answer_spans')
+        self.answer_starts = tf.placeholder('bool', [batch_size, context_word_dim], name='answer_starts')
+        self.answer_ends = tf.placeholder('bool', [batch_size, context_word_dim], name='answer_ends')
 
     def encode(self, batch_size, context_len, context_word_dim, batch) -> Dict:
         answer_starts = np.zeros((batch_size, context_word_dim), dtype=np.bool)
@@ -94,6 +95,37 @@ class DenseMultiSpanAnswerEncoder(AnswerEncoder):
             answer_starts[doc_ix, answer_spans[:, 0]] = True
             answer_ends[doc_ix, answer_spans[:, 1]] = True
         return {self.answer_starts: answer_starts, self.answer_ends: answer_ends}
+
+
+class GroupedSpanAnswerEncoder(AnswerEncoder):
+    def __init__(self):
+        self.answer_starts = None
+        self.answer_ends = None
+        self.group_ids = None
+
+    def get_placeholders(self) -> List:
+        return [self.answer_starts, self.answer_ends, self.group_ids]
+        # return [self.answer_starts, self.answer_ends]
+
+    def init(self, batch_size, context_word_dim):
+        self.answer_starts = tf.placeholder('bool', [batch_size, context_word_dim], name='answer_starts')
+        self.answer_ends = tf.placeholder('bool', [batch_size, context_word_dim], name='answer_ends')
+        self.group_ids = tf.placeholder('int32', [batch_size], name='group_ids')
+
+    def encode(self, batch_size, context_len, context_word_dim, batch) -> Dict:
+        answer_starts = np.zeros((batch_size, context_word_dim), dtype=np.bool)
+        answer_ends = np.zeros((batch_size, context_word_dim), dtype=np.bool)
+        group_id = np.zeros(batch_size, dtype=np.int32)
+        for doc_ix, doc in enumerate(batch):
+            if doc.answer is None:
+                continue
+            answer_spans = doc.answer.answer_spans
+            answer_spans = answer_spans[answer_spans[:, 1] < context_word_dim]
+            answer_starts[doc_ix, answer_spans[:, 0]] = True
+            answer_ends[doc_ix, answer_spans[:, 1]] = True
+            group_id[doc_ix] = doc.answer.group_id
+        return {self.answer_starts: answer_starts, self.answer_ends: answer_ends,
+                self.group_ids:group_id}
 
 
 class PackedMultiSpanAnswerEncoder(AnswerEncoder):
@@ -336,8 +368,9 @@ class DocumentAndQuestionEncoder(Configurable):
 
 
 class MultiContextAndQuestionEncoder(Configurable):
+    """ Encoder for questions with multiple paragraph """
 
-    def __init__(self):
+    def __init__(self, ):
         self._word_embedder = None
 
         # Internal stuff we need to set on `init`
@@ -362,7 +395,7 @@ class MultiContextAndQuestionEncoder(Configurable):
                 [self.question_len, self.question_words, self.context_len, self.context_words]
                 if x is not None]
 
-    def encode(self, batch: List[ContextAndQuestion], is_train: bool):
+    def encode(self, batch: List[QuestionAndContexts], is_train: bool):
         batch_size = len(batch)
         contexts = [x.context for x in batch]
 
@@ -484,9 +517,8 @@ class QuestionEncoder(Configurable):
 
 
 class CheatingEncoder(DocumentAndQuestionEncoder):
-    def __init__(self, bound=None):
-        super().__init__(DenseMultiSpanAnswerEncoder())
-        self.bound = bound
+    def __init__(self, answer_encoder: AnswerEncoder):
+        super().__init__(answer_encoder)
 
     def encode(self, batch: List[ContextAndQuestion], is_train: bool):
         batch_size = len(batch)
@@ -546,10 +578,11 @@ class CheatingEncoder(DocumentAndQuestionEncoder):
                 continue
 
             for s,e in doc.answer.answer_spans:
-                context_words[doc_ix, s] = self._word_embedder.question_word_to_ix("what")
-                context_words[doc_ix, e] = self._word_embedder.question_word_to_ix("the")
+                context_words[doc_ix, s] = self._word_embedder.question_word_to_ix("what", False)
+                context_words[doc_ix, e] = self._word_embedder.question_word_to_ix("the", False)
                 for i in range(s+1, e):
-                    context_words[doc_ix, i] = self._word_embedder.question_word_to_ix("a")
+                    context_words[doc_ix, i] = self._word_embedder.question_word_to_ix("a", False)
+                break
 
         feed_dict.update(self.answer_encoder.encode(batch_size, context_len, context_word_dim, batch))
 

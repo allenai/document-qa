@@ -244,6 +244,11 @@ class StaticAttentionSelf(SequenceMapper):
         super().__setstate__(state)
 
 
+class NullAttention(AttentionMapper):
+    def apply(self, is_train, x, keys, memories, mask=None, memory_mask=None):
+        return x
+
+
 class BiAttention(AttentionMapper):
     """ Bi-attention from https://arxiv.org/abs/1611.01603 """
 
