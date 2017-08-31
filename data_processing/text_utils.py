@@ -9,28 +9,14 @@ from nltk.corpus import stopwords
 
 from configurable import Configurable
 
-extra_split_chars = ("-", "£", "€", "¥", "¢", "₹", "\u2212", "\u2014", "\u2013", "/", "~", '"', "'", "\ud01C", "\u2019", "\u201D", "\u2018", "\u00B0")
-extra_split_tokens = ("``", "(?<=[^_])_(?=[^_])",  # words with prefix/sufix dashses, like __wow___
+extra_split_chars = ("-", "£", "€", "¥", "¢", "₹", "\u2212", "\u2014", "\u2013", "/", "~",
+                     '"', "'", "\ud01C", "\u2019", "\u201D", "\u2018", "\u00B0")
+extra_split_tokens = ("``",
+                      "(?<=[^_])_(?=[^_])",  # dashes w/o a preceeding or following dash, so __wow___ -> ___ wow ___
                       "''", "[" + "".join(extra_split_chars) + "]")
 extra_split_chars_re = re.compile("(" + "|".join(extra_split_tokens) + ")")
 double_quote_re = re.compile("\"|``|''")
 space_re = re.compile("[ \u202f]")
-
-WEEK_DAYS = {"Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"}
-MONTHS = {"January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
-          "November", "December",
-          "Jan.", "Feb.", "Mar.", "Jul.", "Jun.", "Apr.", "Aug.", "Sept.", "Sep.", "Oct.", "Nov.", "Dec.",
-          "Jan",  "Feb",  "Mar",  "Jul",  "Jun",  "Apr",  "Aug",  "Sept",  "Sep",  "Oct",  "Nov",  "Dec"}
-HONORIFIC = {"Ltd", "Lt", "Sgt", "Sr", "Jr", "Mr", "Mrs", "Ms", "Dr",
-             "Ltd.", "Lt.", "Sgt.", "Sr.", "Jr.", "Mr.", "Mrs.", "Ms.", "Dr.",
-             "Miss", "Madam", "Sir", "Majesty", "Saint", "Prof", "Private"}
-TITLE = {"Princess", "King", "Queen", "Prince", "Duke", "Lord", "Lady",
-         "Archduke", "Archduchess", "Earl", "Baron", "Baroness", "Marquis",  "Marquess",
-         "Senator", "Representative", "Count", "Countess", "Viscount", "Viscountess",
-         "Emperor", "Empress", "Viceroy", "Pope", "Pastor", "Cardinal", "Priest",
-         "President", "Mayor", "Governor", "Admiral", "Captain", "Colonel", "Major",
-         "Sergeant", "Judge", "Mama", "Papa"}
-PLANETS = {"Mercury", "Venus", "Earth", "Mars", "Jupiter", "Saturn", "Uranus", "Neptune", "Pluto"}
 
 
 def post_split_tokens(tokens: List[str]) -> List[str]:
@@ -160,7 +146,8 @@ class NltkPlusStopWords(Configurable):
             self._words.update(["many", "how", "de"])
             if self.punctuation:
                 self._words.update(string.punctuation)
-                self._words.update(["£", "€", "¥", "¢", "₹", "\u2212", "\u2014", "\u2013", "\ud01C", "\u2019", "\u201D", "\u2018", "\u00B0"])
+                self._words.update(["£", "€", "¥", "¢", "₹", "\u2212",
+                                    "\u2014", "\u2013", "\ud01C", "\u2019", "\u201D", "\u2018", "\u00B0"])
         return self._words
 
     def __getstate__(self):
@@ -168,6 +155,23 @@ class NltkPlusStopWords(Configurable):
 
     def __setstate__(self, state):
         self.__init__(**state)
+
+
+WEEK_DAYS = {"Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"}
+MONTHS = {"January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
+          "November", "December",
+          "Jan.", "Feb.", "Mar.", "Jul.", "Jun.", "Apr.", "Aug.", "Sept.", "Sep.", "Oct.", "Nov.", "Dec.",
+          "Jan",  "Feb",  "Mar",  "Jul",  "Jun",  "Apr",  "Aug",  "Sept",  "Sep",  "Oct",  "Nov",  "Dec"}
+HONORIFIC = {"Ltd", "Lt", "Sgt", "Sr", "Jr", "Mr", "Mrs", "Ms", "Dr",
+             "Ltd.", "Lt.", "Sgt.", "Sr.", "Jr.", "Mr.", "Mrs.", "Ms.", "Dr.",
+             "Miss", "Madam", "Sir", "Majesty", "Saint", "Prof", "Private"}
+TITLE = {"Princess", "King", "Queen", "Prince", "Duke", "Lord", "Lady",
+         "Archduke", "Archduchess", "Earl", "Baron", "Baroness", "Marquis",  "Marquess",
+         "Senator", "Representative", "Count", "Countess", "Viscount", "Viscountess",
+         "Emperor", "Empress", "Viceroy", "Pope", "Pastor", "Cardinal", "Priest",
+         "President", "Mayor", "Governor", "Admiral", "Captain", "Colonel", "Major",
+         "Sergeant", "Judge", "Mama", "Papa"}
+PLANETS = {"Mercury", "Venus", "Earth", "Mars", "Jupiter", "Saturn", "Uranus", "Neptune", "Pluto"}
 
 
 class NameDetector(Configurable):

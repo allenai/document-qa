@@ -41,7 +41,7 @@ class Configurable(object):
     Configurable classes are defined mainly to give us a human-readable way of reading of the `parameters`
     set for different objects and to attach version numbers to them.
 
-    By default we follow the format sklearn uses for its `BaseEstimator` classes, where parameters are automaticaly
+    By default we follow the format sklearn uses for its `BaseEstimator` class, where parameters are automaticaly
     derived based on the constuctor parameters.
     """
 
@@ -75,7 +75,7 @@ class Configurable(object):
             if isinstance(v, Configurable):
                 out[key] = v.get_config()
             elif hasattr(v, "get_config"):  # for keras objects
-                out[key] = {"name": v.__class__.__name__, "params": v.get_config()}
+                out[key] = {"name": v.__class__.__name__, "config": v.get_config()}
             else:
                 out[key] = v
         return out

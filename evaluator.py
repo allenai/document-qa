@@ -43,41 +43,23 @@ class Evaluation(object):
         return [tf.Summary(value=[tf.Summary.Value(tag=prefix + k, simple_value=v)]) for k,v in self.scalars.items()]
 
 
-def log_evaluation(eval: Evaluation, data_used, output_file=None):
-    for k,v in eval.scalars.items():
-        print("%s: %.4f" % (k, v))
-
-    if output_file is not None:
-        if eval.per_sample is None:
-            print("Output given, but no evalutor recorded per-samplee statistics")
-        else:
-            keys = list(eval.per_sample.keys())
-            print("Saving %s for each question" % str(keys))
-            values = np.array([eval.per_sample[k] for k in keys]).T
-            with open(output_file, "w") as f:
-                for i in range(len(data_used)):
-                    point = data_used[i]
-                    out = dict(question_id=point.question_id)
-                    out.update((keys[j], values[i, j]) for j in range(len(keys)))
-                    f.write(json.dumps(out, cls=NumpyEncoder))
-                    f.write("\n")
-
-
 class Evaluator(Configurable):
     """ Class to generate statistics on a model's output for some data"""
 
     def tensors_needed(self, prediction: Prediction):
         """ Return all tensor variables needed by this evaluator in a dict, the results will
-        be passed into `build_summary` """
-        pass
+        be passed into `build_summary` as numpy arrays """
+        raise NotImplementedError()
 
     def evaluate(self, input: List, true_len,  **kwargs) -> Evaluation:
-        """ Build a summary given the input data `input` and the result of the variables requested
+        """
+        Build a summary given the input data `input` and the result of the variables requested
         from `tensors_needed`. `true_len` is the total number of examples seen (or an approximation)
-        excludign any pre-filtering that was done, its used for the case where some examples could not be
+        excluding any pre-filtering that was done, its used for the case where some examples could not be
         processed by the model (i.e. too large) and were removed, but we still want to report
-        accurate percentages on the entire dataset. """
-        pass
+        accurate percentages on the entire dataset.
+        """
+        raise NotImplementedError()
 
 
 class LossEvaluator(Evaluator):
@@ -102,13 +84,6 @@ class RegularizerLossEvaluator(Evaluator):
         if reg is None:
             return Evaluation({})
         return Evaluation({"regularization-loss": np.mean(reg)})
-
-
-def record_span_predictions(predictions, name):
-    answers = []
-    for i, ((start, end), val) in enumerate(predictions):
-        answers.append(dict(start=int(start), end=int(end), val=float(val)))
-    return Evaluation({}, {name: answers})
 
 
 class RecordQuestionId(Evaluator):
@@ -158,8 +133,6 @@ class SpanProbability(Evaluator):
 def span_scores(data: List[ContextAndQuestion], prediction):
     scores = np.zeros((len(data), 2))
     for i in range(len(data)):
-        para = data[i]
-
         pred_span = tuple(prediction[i])
 
         span_correct = False

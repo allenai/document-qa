@@ -248,11 +248,6 @@ def get_sample():
 
     file_map = {}
     questions = list(iter_trivia_question("/Users/chrisc/Programming/data/trivia-qa/qa/web-train.json", file_map, True))
-    for q in questions:
-        for doc in q.web_docs:
-            doc.trivia_qa_selected = True
-        for doc in q.entity_docs:
-            doc.trivia_qa_selected = True
 
     np.random.shuffle(questions)
     questions = questions[:6000]

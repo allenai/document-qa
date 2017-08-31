@@ -57,8 +57,7 @@ def trivia_span_evaluation(data: List[ContextAndQuestion],
 
 
 class TriviaQaBoundedSpanEvaluator(Evaluator):
-    def __init__(self, bound: List[int], record_samples=False, tf_best_span=True):
-        self.record_samples = record_samples
+    def __init__(self, bound: List[int], tf_best_span=True):
         self.bound = bound
         self.tf_best_span = tf_best_span
 
@@ -74,8 +73,6 @@ class TriviaQaBoundedSpanEvaluator(Evaluator):
                 with_answers = [i for i in range(len(data)) if data[i].answer is not None]
                 ev.add(trivia_span_evaluation([data[i] for i in with_answers],
                                               true_len, [best_spans[i][0] for i in with_answers], "b%d/" % b))
-                if self.record_samples:
-                    ev.add(record_span_predictions(best_spans, "bound-%d-span-predictions" % b))
             else:
                 scores, spans = kargs["score"], kargs["span"]
                 with_answers = [i for i in range(len(data)) if data[i].answer is not None]

@@ -4,15 +4,11 @@ import tensorflow as tf
 from tensorflow import Tensor
 
 from configurable import Configurable
-from data_processing.paragraph_qa import DocumentQaStats
-from data_processing.qa_data import ParagraphAndQuestionDataset
-from encoder import DocumentAndQuestionEncoder
-from mc_encoder import McQuestionEncoder
+from experimental.mc_encoder import McQuestionEncoder
 from model import ModelOutput, Model, Prediction
 from nn.embedder import WordEmbedder, CharWordEmbedder
 from nn.layers import SequenceMapper, SequenceBiMapper, AttentionMapper, SequenceEncoder, \
-    SequenceMapperWithContext, MapMulti, SequencePredictionLayer, AttentionPredictionLayer, Encoder, SqueezeLayer
-from nn.ops import VERY_NEGATIVE_NUMBER
+    SequencePredictionLayer, AttentionPredictionLayer
 from nn.similarity_layers import SimilarityFunction
 from utils import ResourceLoader, max_or_none
 

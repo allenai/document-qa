@@ -1,12 +1,8 @@
 import json
 from os import listdir
-import numpy as np
 from os.path import join
 
-import requests
-
-from science_qa.build_dataset import AristoMcCorpus
-from utils import flatten_iterable
+from experimental.science_qa import AristoMcCorpus
 
 
 def main():

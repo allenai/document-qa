@@ -2,5 +2,5 @@
 __pycache__
 data
 out
-sync.py
+scripts/sync.py
 service

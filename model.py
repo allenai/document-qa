@@ -31,8 +31,7 @@ class Model(Configurable):
     Afterwards use `set_inputs` to specify the input format
 
     After initialiation, `encode` will produce map of placeholder -> numpy array
-    which can be used directly as a feed dict for the output of
-    `get_predictions`
+    which can be used directly as a feed dict for the output of `get_predictions`
 
     For more advanced usage, `get_predictions_for` can be used with any tensors of the
     same shape/dtype as the input place holders. Clients should pass in a dict mapping
@@ -46,7 +45,7 @@ class Model(Configurable):
         tf.GraphKeys.SUMMARIES
         tf.GraphKeys.SAVEABLE_OBJECTS
         tf.GraphKeys.TRAINABLE_VARIABLES
-        "monitor/*" collections, which will be summed, and the EMA result used as another summary tensor
+        "monitor/*" collections, which will be summed, and the EMA result logged to tensorboard
     """
 
     @property

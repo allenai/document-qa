@@ -350,8 +350,8 @@ def _train(model: Model,
     loader = data.get_resource_loader()
     evaluator_runner = EvaluatorRunner(evaluators, model)
 
-    print("Training on %d samples (%d) batches" % (train.get_n_examples(), len(train)))
-    print("Evaluation datasets: " + " ".join("%s (%d)" % (name, data.get_n_examples()) for name, data in eval_datasets.items()))
+    print("Training on %d batches" % len(train))
+    print("Evaluation datasets: " + " ".join("%s (%d)" % (name, len(data)) for name, data in eval_datasets.items()))
 
     print("Init model...")
     model.set_inputs([train] + list(eval_datasets.values()), loader)
@@ -518,8 +518,8 @@ def _train_async(model: Model,
     eval_datasets = data.get_eval()
     loader = data.get_resource_loader()
 
-    print("Training on %d samples (%d) batches" % (train.get_n_examples(), len(train)))
-    print("Evaluation datasets: " + " ".join("%s (%d)" % (name, data.get_n_examples()) for name, data in eval_datasets.items()))
+    print("Training on %d batches" % len(train))
+    print("Evaluation datasets: " + " ".join("%s (%d)" % (name, len(data)) for name, data in eval_datasets.items()))
 
     # spec the model for the given datasets
     model.set_inputs([train] + list(eval_datasets.values()), loader)

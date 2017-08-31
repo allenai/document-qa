@@ -1,25 +1,18 @@
-from threading import Lock
+import json
+from os import mkdir
+from os.path import join, exists
 from typing import List, Dict
-from urllib import request
-from urllib.parse import quote
 
 import pandas as pd
 import requests
-import json
-
-from os.path import join, exists
-
-from os import mkdir
-
-import time
+from data_processing.qa_data import WordCounts
 from tqdm import tqdm
 
-from config import NDMC_DEV, CORPUS_DIR, NDMC_TRAIN1, NDDA_DEV, NDMC_TRAIN2, NDMC_TRAIN3
+from config import CORPUS_DIR, NDMC_TRAIN3
 from data_processing.preprocessed_corpus import Preprocessor, DatasetBuilder
-from data_processing.qa_data import WordCounts
 from data_processing.text_utils import get_paragraph_tokenizer
 from dataset import Dataset
-from mc_encoder import McQuestion, McDataset
+from experimental.mc_encoder import McQuestion, McDataset
 from utils import flatten_iterable
 
 
