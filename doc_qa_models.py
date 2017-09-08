@@ -9,6 +9,7 @@ from model import Model, Prediction
 from nn.embedder import WordEmbedder, CharWordEmbedder
 from nn.layers import SequenceMapper, SequenceBiMapper, AttentionMapper, SequenceEncoder, \
     SequenceMapperWithContext, MapMulti, SequencePredictionLayer, AttentionPredictionLayer
+from text_preprocessor import TextPreprocessor
 from utils import ResourceLoader
 
 
@@ -22,10 +23,11 @@ class DocumentQuestionModel(Model):
                  encoder: DocumentAndQuestionEncoder,
                  word_embed: Optional[WordEmbedder],
                  char_embed: Optional[CharWordEmbedder] = None,
-                 word_embed_layer: Optional[MapMulti] = None):
-
+                 word_embed_layer: Optional[MapMulti] = None,
+                 preprocessor: Optional[TextPreprocessor] = None):
         if word_embed is None and char_embed is None:
             raise ValueError()
+        self.preprocessor = preprocessor
         self.word_embed = word_embed
         self.char_embed = char_embed
         self.word_embed_layer = word_embed_layer
@@ -34,7 +36,8 @@ class DocumentQuestionModel(Model):
 
     def init(self, corpus, loader: ResourceLoader):
         if self.word_embed is not None:
-            self.word_embed.set_vocab(corpus, loader, corpus.special_tokens)
+            self.word_embed.set_vocab(corpus, loader,
+                                      None if self.preprocessor is None else self.preprocessor.special_tokens())
         if self.char_embed is not None:
             self.char_embed.embeder.set_vocab(corpus)
 
@@ -74,8 +77,8 @@ class DocumentQuestionModel(Model):
         if enc.question_chars in input_tensors:
             with tf.variable_scope("char-embed"):
                 q, c = self.char_embed.embed(is_train,
-                                             (input_tensors[enc.question_chars], q_mask),
-                                             (input_tensors[enc.context_chars], c_mask))
+                                             (input_tensors[enc.question_chars], input_tensors[enc.question_word_len]),
+                                             (input_tensors[enc.context_chars], input_tensors[enc.context_word_len]))
                 q_embed.append(q)
             c_embed.append(c)
 
@@ -114,6 +117,11 @@ class DocumentQuestionModel(Model):
         data[self._is_train_placeholder] = is_train
         return data
 
+    def __setstate__(self, state):
+        if "preprocessor" not in state["state"]:
+            state["state"]["preprocessor"] = None
+        super().__setstate__(state)
+
 
 class ContextOnly(DocumentQuestionModel):
 
@@ -141,6 +149,7 @@ class Attention(DocumentQuestionModel):
     """ Model that encodes the question and context, then applies an attention mechanism
     between the two to produce a query-aware context representation, which is used to make a prediction. """
     def __init__(self, encoder: DocumentAndQuestionEncoder,
+                 preprocess: Optional[TextPreprocessor],
                  word_embed: Optional[WordEmbedder],
                  word_embed_layer: Optional[MapMulti],
                  char_embed: Optional[CharWordEmbedder],
@@ -151,7 +160,7 @@ class Attention(DocumentQuestionModel):
                  attention: AttentionMapper,
                  match_encoder: SequenceMapper,
                  predictor: Union[SequencePredictionLayer, AttentionPredictionLayer]):
-        super().__init__(encoder, word_embed, char_embed, word_embed_layer)
+        super().__init__(encoder, word_embed, char_embed, word_embed_layer, preprocess)
         self.embed_mapper = embed_mapper
         self.question_mapper = question_mapper
         self.context_mapper = context_mapper

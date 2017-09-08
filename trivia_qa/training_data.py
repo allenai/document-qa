@@ -1,11 +1,13 @@
 import sys
 from typing import List, Set, Optional, Tuple, Dict
 
-from data_processing.document_splitter import DocumentSplitter, ParagraphWithAnswers, ParagraphFilter
+from data_processing.document_splitter import DocumentSplitter, ExtractedParagraphWithAnswers, ParagraphFilter, \
+    DocParagraphWithAnswers
 from data_processing.multi_paragraph_qa import DocumentParagraph, MultiParagraphQuestion
 from data_processing.preprocessed_corpus import Preprocessor, DatasetBuilder, FilteredData
 from data_processing.qa_training_data import ParagraphAndQuestion, Answer
 from data_processing.span_data import TokenSpans
+from text_preprocessor import TextPreprocessor
 from trivia_qa.read_data import TriviaQaQuestion
 from utils import flatten_iterable, ResourceLoader, split, group
 
@@ -17,17 +19,29 @@ Tools to convert the span corpus into training data we can feed into our model
 
 class DocumentParagraphQuestion(ParagraphAndQuestion):
     def __init__(self, q_id: str, doc_id: str, para_range, question: List[str],
-                 context: List[str], answer: Answer):
+                 context: List[str], answer: Answer, rank=None):
         super().__init__(context, question, answer, q_id)
         self.doc_id = doc_id
         self.para_range = para_range
+        self.rank = rank
 
 
 class ExtractSingleParagraph(Preprocessor):
-    def __init__(self, splitter: DocumentSplitter, para_filter: ParagraphFilter, intern):
+    def __init__(self, splitter: DocumentSplitter,
+                 para_filter: Optional[ParagraphFilter],
+                 text_preprocess: Optional[TextPreprocessor],
+                 intern,
+                 require_answer=True):
         self.splitter = splitter
         self.para_filter = para_filter
+        self.text_preprocess = text_preprocess
         self.intern = intern
+        self.require_answer = require_answer
+        if para_filter is not None and para_filter.n_features() is not None and text_preprocess is not None:
+            raise NotImplementedError()
+
+    def n_features(self):
+        return self.para_filter.n_features()
 
     def preprocess(self, questions: List[TriviaQaQuestion], evidence) -> FilteredData:
         splitter = self.splitter
@@ -38,18 +52,26 @@ class ExtractSingleParagraph(Preprocessor):
             for doc in q.all_docs:
                 text = evidence.get_document(doc.doc_id, n_tokens=read_only)
                 if text is None:
-                    raise ValueError(doc.doc_id, evidence.get(doc.doc_id))
+                    raise ValueError(doc.doc_id, doc.doc_id)
 
                 paragraphs = splitter.split_annotated(text, doc.answer_spans)
                 if paragraph_filter is not None:
                     paragraphs = paragraph_filter.prune(q.question, paragraphs)
-                paragraphs = [x for x in paragraphs if len(x.answer_spans) > 0]
+                if self.require_answer:
+                    paragraphs = [x for x in paragraphs if len(x.answer_spans) > 0]
                 if len(paragraphs) == 0:
                     continue
                 paragraph = paragraphs[0]
-                output.append(DocumentParagraphQuestion(q.question_id, doc.doc_id, (paragraph.start, paragraph.end),
-                                                        q.question, flatten_iterable(paragraph.text),
-                                                        TokenSpans(q.answer.all_answers, paragraph.answer_spans)))
+                if self.text_preprocess is not None:
+                    ex = self.text_preprocess.encode_paragraphs(q.question, [paragraph])
+                    if not self.require_answer or len(ex.answer_spans) > 0:
+                        output.append(DocumentParagraphQuestion(q.question_id, doc.doc_id, (paragraph.start, paragraph.end),
+                                                                q.question, ex.text,
+                                                                TokenSpans(q.answer.all_answers, ex.answer_spans), 1))
+                else:
+                    output.append(DocumentParagraphQuestion(q.question_id, doc.doc_id, (paragraph.start, paragraph.end),
+                                                            q.question, flatten_iterable(paragraph.text),
+                                                            TokenSpans(q.answer.all_answers, paragraph.answer_spans), 1))
         return FilteredData(output, sum(len(x.all_docs) for x in questions))
 
     def finalize(self, x: FilteredData):
@@ -65,6 +87,11 @@ class ExtractSingleParagraph(Preprocessor):
                 q.doc_id = sys.intern(q.doc_id)
                 q.context = [sys.intern(w) for w in q.context]
 
+    def __setstate__(self, state):
+        if "require_answer" not in state["state"]:
+            state["state"]["require_answer"] = True
+        super().__setstate__(state)
+
 
 def intern_mutli_question(questions):
     for q in questions:
@@ -75,11 +102,12 @@ def intern_mutli_question(questions):
 
 
 class ExtractMultiParagraphs(Preprocessor):
-    def __init__(self, splitter: DocumentSplitter, ranker: ParagraphFilter,
-                 intern: bool=False, require_an_answer=True):
+    def __init__(self, splitter: DocumentSplitter, ranker: Optional[ParagraphFilter],
+                 text_process: Optional[TextPreprocessor], intern: bool=False, require_an_answer=True):
         self.intern = intern
         self.splitter = splitter
         self.ranker = ranker
+        self.text_process = text_process
         self.require_an_answer = require_an_answer
 
     def preprocess(self, questions: List[TriviaQaQuestion], evidence) -> object:
@@ -103,9 +131,20 @@ class ExtractMultiParagraphs(Preprocessor):
                 if self.require_an_answer:
                     if all(len(x.answer_spans) == 0 for x in paras):
                         continue
-                doc_paras = [DocumentParagraph(doc.doc_id, x.start, x.end,
-                                               i, x.answer_spans, flatten_iterable(x.text))
-                             for i, x in enumerate(paras)]
+                if self.text_process is not None:
+                    prepped = [self.text_process.encode_paragraphs(q.question, [p]) for p in paras]
+                    if self.require_an_answer:
+                        if all(len(x.answer_spans) == 0 for x in prepped):
+                            continue
+                    doc_paras = []
+                    for i, (preprocessed, para) in enumerate(zip(prepped, paras)):
+                        doc_paras.append(DocumentParagraph(doc.doc_id, para.start, para.end,
+                                                           i, preprocessed.answer_spans, preprocessed.text))
+
+                else:
+                    doc_paras = [DocumentParagraph(doc.doc_id, x.start, x.end,
+                                                   i, x.answer_spans, flatten_iterable(x.text))
+                                 for i, x in enumerate(paras)]
                 with_paragraphs.append(MultiParagraphQuestion(q.question_id, q.question, q.answer.all_answers, doc_paras))
 
         return FilteredData(with_paragraphs, true_len)
@@ -117,8 +156,10 @@ class ExtractMultiParagraphs(Preprocessor):
 
 class ExtractMultiParagraphsPerQuestion(Preprocessor):
     def __init__(self, splitter: DocumentSplitter, ranker: ParagraphFilter,
+                 text_preprocess: Optional[TextPreprocessor],
                  intern: bool=False, require_an_answer=True):
         self.intern = intern
+        self.text_preprocess = text_preprocess
         self.splitter = splitter
         self.ranker = ranker
         self.require_an_answer = require_an_answer
@@ -134,7 +175,8 @@ class ExtractMultiParagraphsPerQuestion(Preprocessor):
                 if self.require_an_answer and len(doc.answer_spans) == 0:
                     continue
                 text = evidence.get_document(doc.doc_id, splitter.reads_first_n)
-                paras.extend(splitter.split_annotated(text, doc.answer_spans))
+                split = splitter.split_annotated(text, doc.answer_spans)
+                paras.extend([DocParagraphWithAnswers(x.text, x.start, x.end, x.answer_spans, doc.doc_id) for x in split])
 
             if para_filter is not None:
                 paras = para_filter.prune(q.question, paras)
@@ -144,10 +186,23 @@ class ExtractMultiParagraphsPerQuestion(Preprocessor):
             if self.require_an_answer:
                 if all(len(x.answer_spans) == 0 for x in paras):
                     continue
-            doc_paras = [DocumentParagraph("", x.start, x.end,
-                                           i, x.answer_spans, flatten_iterable(x.text))
-                         for i, x in enumerate(paras)]
-            with_paragraphs.append(MultiParagraphQuestion(q.question_id, q.question, q.answer.all_answers, doc_paras))
+
+            if self.text_preprocess is not None:
+                prepped = [self.text_preprocess.encode_paragraphs(q.question, [p]) for p in paras]
+                if self.require_an_answer:
+                    if all(len(x.answer_spans) == 0 for x in prepped):
+                        continue
+                doc_paras = []
+                for i, (preprocessed, para) in enumerate(zip(prepped, paras)):
+                    doc_paras.append(DocumentParagraph(para.doc_id, para.start, para.end,
+                                                       i, preprocessed.answer_spans, preprocessed.text))
+                with_paragraphs.append(
+                    MultiParagraphQuestion(q.question_id, q.question, q.answer.all_answers, doc_paras))
+            else:
+                doc_paras = [DocumentParagraph(x.doc_id, x.start, x.end,
+                                               i, x.answer_spans, flatten_iterable(x.text))
+                             for i, x in enumerate(paras)]
+                with_paragraphs.append(MultiParagraphQuestion(q.question_id, q.question, q.answer.all_answers, doc_paras))
 
         return FilteredData(with_paragraphs, len(questions))
 

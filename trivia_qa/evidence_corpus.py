@@ -14,7 +14,7 @@ import sys
 import unicodedata
 
 import config
-from utils import group, split, iter_and_log, flatten_iterable
+from utils import group, split, flatten_iterable
 from tqdm import tqdm
 import re
 from config import CORPUS_DIR

@@ -15,6 +15,10 @@ from utils import split, flatten_iterable, group, ResourceLoader
 
 
 class Preprocessor(Configurable):
+
+    def n_features(self):
+        return None
+
     def preprocess(self, question: Iterable, evidence) -> object:
         """ Map elements to an unspecified intermediate format """
         raise NotImplementedError()
@@ -25,7 +29,7 @@ class Preprocessor(Configurable):
 
 class DatasetBuilder(Configurable):
 
-    def build_dataset(self, data, evidence, is_train: bool) -> Dataset:
+    def build_dataset(self, data, evidence, is_train: bool, n_feature=None) -> Dataset:
         """ Map the intermeidate format to a Dataset object """
         raise NotImplementedError()
 
@@ -66,6 +70,7 @@ def preprocess_par(questions: List[TriviaQaQuestion], evidence, preprocessor,
     if n_processes is None or chunk_size is None or\
                     n_processes <= 0 or chunk_size <= 0:
         raise ValueError()
+    n_processes = min(len(questions), n_processes)
 
     if n_processes == 1:
         out = preprocessor.preprocess(tqdm(questions, desc=name, ncols=80), evidence)
@@ -102,6 +107,7 @@ class PreprocessedData(TrainingData):
                  corpus,
                  preprocesser: Optional[Preprocessor],
                  builder: DatasetBuilder,
+                 eval_builder: DatasetBuilder=None,
                  eval_on_verified: bool=True,
                  eval_on_train: bool = True,
                  hold_out_train: Optional[Tuple[int, int]]= None,
@@ -114,6 +120,7 @@ class PreprocessedData(TrainingData):
         self.corpus = corpus
         self.preprocesser = preprocesser
         self.builder = builder
+        self.eval_builder = eval_builder
 
         self._train = None
         self._dev = None
@@ -144,7 +151,10 @@ class PreprocessedData(TrainingData):
             stored_preprocesser, self._train, self._dev, self._verified_dev = stored
         if stored_preprocesser.get_config() != self.preprocesser.get_config():
             # print("WARNING")
+            import code
+            code.interact(local=locals())
             raise ValueError()
+
         print("done")
 
     def preprocess(self, n_processes=1, chunk_size=500):
@@ -195,13 +205,6 @@ class PreprocessedData(TrainingData):
 
         print("Done")
 
-    def _convert_questions(self, questions, n_processes, chunk_size):
-        size = sum(len(q.all_docs) for q in questions)
-        if size == 0:
-            return []
-        data = preprocess_par(questions, self.corpus.evidence, self.preprocesser, n_processes, chunk_size)
-        return self.builder.build_dataset(data, self.corpus)
-
     def get_train(self) -> Dataset:
         return self.builder.build_dataset(self._train, self.corpus, True)
 
@@ -209,12 +212,13 @@ class PreprocessedData(TrainingData):
         return self.builder.build_stats(self._train)
 
     def get_eval(self) -> Dict[str, Dataset]:
+        builder = self.builder if self.eval_builder is None else self.eval_builder
         corpus = self.corpus
-        eval_set = dict(dev=self.builder.build_dataset(self._dev, corpus, False))
+        eval_set = dict(dev=builder.build_dataset(self._dev, corpus, False))
         if self.eval_on_train:
-            eval_set["train"] = self.builder.build_dataset(self._train, corpus, False)
+            eval_set["train"] = builder.build_dataset(self._train, corpus, False)
         if self.eval_on_verified:
-            eval_set["verified-dev"] = self.builder.build_dataset(self._verified_dev, corpus, False)
+            eval_set["verified-dev"] = builder.build_dataset(self._verified_dev, corpus, False)
         return eval_set
 
     def get_resource_loader(self) -> ResourceLoader:

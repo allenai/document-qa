@@ -1,20 +1,19 @@
-import trainer
-from data_processing.document_splitter import MergeParagraphs
-from data_processing.preprocessed_corpus import PreprocessedData
 from data_processing.qa_data import Batcher
-from data_processing.text_utils import WordNormalizer, NltkPlusStopWords
-from evaluator import LossEvaluator
-from nn.embedder import FixedWordEmbedder, CharWordEmbedder, LearnedCharEmbedder
-from nn.layers import SequenceMapperSeq, FullyConnected, DropoutLayer, MultiAggregateLayer, MergeWith, SelfProduct, \
-    NullMapper, ConcatLayer, FullyConnectedMerge, ConcatWithProductProj, ConcatOneSidedProduct
-from nn.recurrent_layers import BiRecurrentMapper, GruCellSpec, RecurrentEncoder, EncodeOverTime
 from paragraph_selection.paragraph_selection_evaluators import AnyTopNEvaluator, TotalAnswersEvaluator, \
     PercentAnswerEvaluator
 from paragraph_selection.paragraph_selection_featurizer import NGramMatchingFeaturizer, \
-    ParagraphOrderFeatures, ParagraphFeatures, NGramFineGrained, LocalTfIdfFeatures
-from paragraph_selection.paragraph_selection_model import NParagraphsSortKey, \
-    ParagraphSelectionFeaturizer, WeightedFeatures, SoftmaxPrediction, FeaturersOnly, SigmoidPredictions, \
-    EncodedFeatures, SelectionDatasetBuilder
+    ParagraphOrderFeatures, ParagraphFeatures
+
+import trainer
+from data_processing.document_splitter import MergeParagraphs
+from data_processing.preprocessed_corpus import PreprocessedData
+from data_processing.text_utils import WordNormalizer, NltkPlusStopWords
+from evaluator import LossEvaluator
+from experimental.paragraph_selection.paragraph_selection_model import NParagraphsSortKey, \
+    ParagraphSelectionFeaturizer, SoftmaxPrediction, EncodedFeatures, SelectionDatasetBuilder
+from nn.embedder import FixedWordEmbedder
+from nn.layers import SequenceMapperSeq, FullyConnected, DropoutLayer, NullMapper, ConcatLayer
+from nn.recurrent_layers import BiRecurrentMapper, GruCellSpec, RecurrentEncoder
 from trainer import TrainParams, SerializableOptimizer
 from trivia_qa.build_span_corpus import TriviaQaWebDataset
 from utils import get_output_name_from_cli

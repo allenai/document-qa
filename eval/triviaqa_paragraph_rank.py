@@ -13,7 +13,7 @@ from data_processing.text_utils import NltkPlusStopWords
 from dataset import ListBatcher, ClusteredBatcher
 from evaluator import Evaluator, Evaluation, RecordSpanPrediction, RecordQuestionId, LossEvaluator
 from paragraph_selection.paragraph_selection_evaluators import AnyTopNEvaluator
-from paragraph_selection.paragraph_selection_model import NParagraphsSortKey, SelectionDatasetBuilder, \
+from experimental.paragraph_selection.paragraph_selection_model import NParagraphsSortKey, SelectionDatasetBuilder, \
     FeaturizeredParagraph
 from trainer import ModelDir
 from trivia_qa.build_span_corpus import TriviaQaWebDataset

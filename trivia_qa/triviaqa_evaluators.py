@@ -98,9 +98,7 @@ class BoundedSpanEvaluator(Evaluator):
         ev = Evaluation({})
         for b in self.bound:
             spans = kargs[("span_%d" % b)]
-            with_answer = [i for i,x in enumerate(data) if len(x.answer.answer_spans) > 0]
-            ev.add(trivia_span_evaluation([data[i] for i in with_answer], true_len,
-                                          [spans[i] for i in with_answer], "b%d/" % b))
+            ev.add(trivia_span_evaluation(data, true_len, spans, "b%d/" % b))
         return ev
 
 
@@ -108,7 +106,7 @@ class TfTriviaQaBoundedSpanEvaluator(Evaluator):
     """ Computes the best span in tensorflow, meaning which we expect to be faster and
     does not require us having to keep the entire set of output logits in RAM """
     def __init__(self, bound: List[int]):
-        raise ValueError("Deprecated!")
+        raise ValueError("Deprecated")
 
     def tensors_needed(self, prediction):
         needed = {}

@@ -58,7 +58,8 @@ class ModelDir(object):
         return tf.train.latest_checkpoint(self.save_dir)
 
     def get_checkpoint(self, step):
-        return tf.train.checkpoint_exists(self.save_dir)
+        # I cant find much formal documentation on how to do this, but this seems to work
+        return join(self.save_dir, "checkpoint-%d-%d" % (step, step))
 
     @property
     def eval_dir(self):
@@ -119,9 +120,9 @@ def init(out: ModelDir, model: Model, override=False):
                 host=hostname)
 
     with open(join(out.dir, "init.json"), "w") as f:
-        f.write(configurable.description_to_json(init, indent=2))
+        f.write(configurable.config_to_json(init, indent=2))
     with open(join(out.dir, "model.json"), "w") as f:
-        f.write(configurable.description_to_json(model, indent=2))
+        f.write(configurable.config_to_json(model, indent=2))
     with open(join(out.dir, "model.npy"), "wb") as f:
         pickle.dump(model, f)
 
@@ -129,20 +130,21 @@ def init(out: ModelDir, model: Model, override=False):
 # TODO might be nicer to just have a "Trainer" object
 class TrainParams(Configurable):
     """ Parameters related to training """
+
     def __init__(self,
                  opt: SerializableOptimizer,
                  num_epochs: int,
                  eval_period: int,
                  log_period: int,
                  save_period: int,
-                 eval_samples: Dict[str, Optional[int]]=None,
-                 regularization_weight: Optional[float]=None,
-                 async_encoding: Optional[int]=None,
+                 eval_samples: Dict[str, Optional[int]],
+                 regularization_weight: Optional[float] = None,
+                 async_encoding: Optional[int] = None,
                  max_checkpoints_to_keep: int = 5,
                  loss_ema: Optional[float] = .999,
-                 eval_at_zero: bool=False,
+                 eval_at_zero: bool = False,
                  monitor_ema: float = .999,
-                 ema: Optional[float]=None):
+                 ema: Optional[float] = None):
         self.async_encoding = async_encoding
         self.regularization_weight = regularization_weight
         self.max_checkpoints_to_keep = max_checkpoints_to_keep
@@ -177,7 +179,7 @@ def save_train_start(out,
                  date=datetime.now().strftime("%m%d-%H%M%S"),
                  host=hostname)
     with open(join(out, "train_from_%d.json" % global_step), "w") as f:
-        f.write(configurable.description_to_json(train, indent=2))
+        f.write(configurable.config_to_json(train, indent=2))
     with open(join(out, "train_from_%d.npy" % global_step), "wb") as f:
         pickle.dump(train, f)
 
@@ -259,13 +261,13 @@ def _build_train_ops(train_params):
 
 
 def continue_training(
-          data: TrainingData,
-          model: Model,
-          train_params: TrainParams,
-          evaluators: List[Evaluator],
-          out: ModelDir,
-          notes: str=None,
-          dry_run=False):
+        data: TrainingData,
+        model: Model,
+        train_params: TrainParams,
+        evaluators: List[Evaluator],
+        out: ModelDir,
+        notes: str = None,
+        dry_run=False):
     if not exists(out.dir) or os.listdir(out.dir) == 0:
         start_training(data, model, train_params, evaluators, out, notes, dry_run)
     else:
@@ -274,16 +276,17 @@ def continue_training(
 
 
 def start_training(
-          data: TrainingData,
-          model: Model,
-          train_params: TrainParams,
-          evaluators: List[Evaluator],
-          out: ModelDir,
-          notes: str=None,
-          initialize_from=None,
-          dry_run=False):
+        data: TrainingData,
+        model: Model,
+        train_params: TrainParams,
+        evaluators: List[Evaluator],
+        out: ModelDir,
+        notes: str = None,
+        initialize_from=None,
+        dry_run=False):
     if initialize_from is None:
         print("Initializing model at: " + out.dir)
+        # print("ASDFASDF")
         model.init(data.get_train_corpus(), data.get_resource_loader())
 
     if not dry_run:
@@ -293,7 +296,7 @@ def start_training(
            True, train_params, evaluators, out, notes, dry_run)
 
 
-def resume_training(out: ModelDir, notes: str=None, dry_run=False, start_eval=False):
+def resume_training(out: ModelDir, notes: str = None, dry_run=False, start_eval=False):
     train_params = out.get_last_train_params()
     model = out.get_model()
 
@@ -318,9 +321,8 @@ def resume_training_with(
         out: ModelDir,
         train_params: TrainParams,
         evaluators: List[Evaluator],
-        notes: str=None,
-        dry_run: bool=False):
-
+        notes: str = None,
+        dry_run: bool = False):
     with open(join(out.dir, "model.npy"), "rb") as f:
         model = pickle.load(f)
     latest = out.get_latest_checkpoint()
@@ -340,7 +342,6 @@ def _train(model: Model,
            notes=None,
            dry_run=False,
            start_eval=False):
-
     if train_params.async_encoding:
         _train_async(model, data, checkpoint, parameter_checkpoint, save_start, train_params,
                      evaluators, out, notes, dry_run, start_eval)
@@ -368,7 +369,7 @@ def _train(model: Model,
 
     if parameter_checkpoint is not None:
         print("Restoring parameters from %s" % parameter_checkpoint)
-        saver = tf.train.Saver()
+        saver = tf.train.Saver([x for x in tf.trainable_variables() if "predict/none-logit" not in x.name])
         saver.restore(sess, parameter_checkpoint)
         saver = None
 
@@ -434,8 +435,9 @@ def _train(model: Model,
             batch_time += time.perf_counter() - t0
             if get_summary:
                 print("on epoch=%d batch=%d step=%d time=%.3f" %
-                      (epoch, batch_ix+1, on_step, batch_time))
-                summary_writer.add_summary(tf.Summary(value=[tf.Summary.Value(tag="time", simple_value=batch_time)]), on_step)
+                      (epoch, batch_ix + 1, on_step, batch_time))
+                summary_writer.add_summary(tf.Summary(value=[tf.Summary.Value(tag="time", simple_value=batch_time)]),
+                                           on_step)
                 summary_writer.add_summary(summary, on_step)
                 batch_time = 0
 
@@ -455,7 +457,7 @@ def _train(model: Model,
                     for s in evaluation.to_summaries(name + "-"):
                         summary_writer.add_summary(s, on_step)
 
-                print("Evaluation took: %.3f seconds" % (time.perf_counter()-t0))
+                print("Evaluation took: %.3f seconds" % (time.perf_counter() - t0))
 
     saver.save(sess, relpath(join(out.save_dir, "checkpoint-" + str(on_step))), global_step=global_step)
     sess.close()
@@ -502,16 +504,16 @@ def test(model: Model, evaluators, datasets: Dict[str, Dataset], loader, checkpo
 
 
 def _train_async(model: Model,
-           data: TrainingData,
-           checkpoint: Union[str, None],
-           parameter_checkpoint: Union[str, None],
-           save_start: bool,
-           train_params: TrainParams,
-           evaluators: List[Evaluator],
-           out: ModelDir,
-           notes=None,
-           dry_run=False,
-           start_eval=False):
+                 data: TrainingData,
+                 checkpoint: Union[str, None],
+                 parameter_checkpoint: Union[str, None],
+                 save_start: bool,
+                 train_params: TrainParams,
+                 evaluators: List[Evaluator],
+                 out: ModelDir,
+                 notes=None,
+                 dry_run=False,
+                 start_eval=False):
     """ Train while encoding batches on a seperate thread and storing them in a tensorflow Queue, can
     be much faster then using the feed_dict approach """
 
@@ -629,7 +631,8 @@ def _train_async(model: Model,
                 if summary is not None:
                     print("on epoch=%d batch=%d step=%d, time=%.3f" %
                           (epoch, batch_ix + 1, on_step, batch_time))
-                    summary_writer.add_summary(tf.Summary(value=[tf.Summary.Value(tag="time", simple_value=batch_time)]), on_step)
+                    summary_writer.add_summary(
+                        tf.Summary(value=[tf.Summary.Value(tag="time", simple_value=batch_time)]), on_step)
                     summary_writer.add_summary(summary, on_step)
                     batch_time = 0
 
@@ -657,5 +660,3 @@ def _train_async(model: Model,
 
     saver.save(sess, relpath(join(out.save_dir, "checkpoint-" + str(on_step))), global_step=global_step)
     sess.close()
-
-

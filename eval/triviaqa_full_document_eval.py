@@ -40,8 +40,11 @@ class RecordParagraphSpanPrediction(Evaluator):
             span, score = prediction.get_best_span_prob(self.bound)
         else:
             span, score = prediction.get_best_span(self.bound)
-        print(span, score)
-        return dict(spans=span, model_scores=score)
+        needed = dict(spans=span, model_scores=score)
+        if hasattr(prediction, "none_logit"):
+            needed["none_logit"] = prediction.none_logit
+            needed["none_prob"] = prediction.none_prob
+        return needed
 
     def evaluate(self, data: List[DocumentParagraphQuestion], true_len, **kargs):
         print("Begining evaluation")
@@ -91,12 +94,16 @@ class RecordParagraphSpanPrediction(Evaluator):
         results["predicted_start"] = spans[:, 0]
         results["predicted_end"] = spans[:, 1]
         results["text_f1"] = pred_f1s
+        results["rank"] = [x.rank for x in data]
         results["text_em"] = pred_em
         results["oracle_f1"] = oracle_f1s
         results["para_start"] = [x.para_range[0] for x in data]
         results["para_end"] = [x.para_range[1] for x in data]
         results["question_id"] = [x.question_id for x in data]
         results["doc_id"] = [x.doc_id for x in data]
+        if "none_logit" in kargs:
+            results["none_logit"] = kargs["none_logit"]
+            results["none_prob"] = kargs["none_prob"]
         return Evaluation({}, results)
 
 
@@ -108,6 +115,7 @@ def main():
     parser.add_argument('-d', '--question_doc_predictions', type=str, help="Save predictions for each question-doc pair")
     parser.add_argument('-e', '--ema', action="store_true")
     parser.add_argument('-r', '--prob', action="store_true")
+    parser.add_argument('-i', '--step', type=int, default=None)
     parser.add_argument('-n', '--n_sample', type=int, default=None)
     parser.add_argument('-a', '--async', type=int, default=10)
     parser.add_argument('-s', '--splitter', type=str, default="merge-400",
@@ -121,6 +129,7 @@ def main():
     args = parser.parse_args()
 
     model_dir = ModelDir(args.model)
+    model = model_dir.get_model()
 
     if args.corpus.startswith('web'):
         dataset = TriviaQaWebDataset()
@@ -153,6 +162,8 @@ def main():
         para_filter = ContainsQuestionWord(NltkPlusStopWords(punctuation=True))
     elif args.filter.startswith("tfidf-"):
         para_filter = TopTfIdf(NltkPlusStopWords(punctuation=True), int(args.filter[6:]))
+    elif args.filter.startswith("truncate-"):
+        para_filter = None
     elif args.filter.startswith("q-rank-"):
         para_filter = ShallowOpenWebRanker(int(args.filter[7:]))
         per_document = False
@@ -169,20 +180,19 @@ def main():
 
     print("Building question/paragraph pairs...")
     if per_document:
-        prep = ExtractMultiParagraphs(splitter, para_filter, require_an_answer=False)
+        prep = ExtractMultiParagraphs(splitter, para_filter, model.preprocessor, require_an_answer=False)
     else:
-        prep = ExtractMultiParagraphsPerQuestion(splitter, para_filter, require_an_answer=False)
+        prep = ExtractMultiParagraphsPerQuestion(splitter, para_filter, model.preprocessor, require_an_answer=False)
 
-        print(len(test_questions))
-
-    prepped_data = preprocess_par(test_questions, corpus, prep, 1, 1000)
+    prepped_data = preprocess_par(test_questions, corpus, prep, 6, 1000)
 
     data = []
     for q in prepped_data.data:
-        for p in q.paragraphs:
+        for i, p in enumerate(q.paragraphs):
             data.append(DocumentParagraphQuestion(q.question_id, p.doc_id,
-                                                 (p.start, p.end), q.question,
-                                                 p.text, TokenSpans(q.answer_text, p.answer_spans)))
+                                                 (p.start, p.end), q.question, p.text,
+                                                  TokenSpans(q.answer_text, p.answer_spans),
+                                                  i))
 
     n_filtered = len(test_questions) - prepped_data.true_len
 
@@ -194,13 +204,19 @@ def main():
 
     print("Done, starting eval")
 
-    checkpoint = model_dir.get_latest_checkpoint()
+    if args.step is None:
+        checkpoint = model_dir.get_latest_checkpoint()
+    else:
+        checkpoint = model_dir.get_checkpoint(args.step)
+
     test_questions = ParagraphAndQuestionDataset(questions, FixedOrderBatcher(args.batch_size, True))
 
-    model = model_dir.get_model()
     evaluation = trainer.test(model,
                              [RecordParagraphSpanPrediction(8, True, args.prob)],
                               {args.corpus:test_questions}, ResourceLoader(), checkpoint, args.ema, args.async)[args.corpus]
+
+    if not all(len(x) == len(data) for x in evaluation.per_sample.values()):
+        raise RuntimeError()
 
     import pandas as pd
     df = pd.DataFrame(evaluation.per_sample)

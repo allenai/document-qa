@@ -12,7 +12,7 @@ from paragraph_selection.paragraph_selection_evaluators import AnyTopNEvaluator,
     TotalAnswersEvaluator
 from paragraph_selection.paragraph_selection_featurizer import NGramMatchingFeaturizer, \
     ParagraphOrderFeatures, ParagraphFeatures, NGramFineGrained, LocalTfIdfFeatures, WordMatchingNeighborFeaturizer
-from paragraph_selection.paragraph_selection_model import NParagraphsSortKey, \
+from experimental.paragraph_selection.paragraph_selection_model import NParagraphsSortKey, \
     ParagraphSelectionFeaturizer, WeightedFeatures, SoftmaxPrediction, FeaturersOnly, SigmoidPredictions, \
     EncodedFeatures, SelectionDatasetBuilder
 from trainer import TrainParams, SerializableOptimizer

@@ -3,6 +3,11 @@ import pandas as pd
 import numpy as np
 from tqdm import tqdm
 
+from data_processing.document_splitter import TopTfIdf, MergeParagraphs, ShallowOpenWebRanker
+from data_processing.preprocessed_corpus import preprocess_par
+from data_processing.text_utils import NltkPlusStopWords
+from trivia_qa.build_span_corpus import TriviaQaWebDataset, TriviaQaOpenDataset
+from trivia_qa.training_data import ExtractMultiParagraphs, ExtractMultiParagraphsPerQuestion
 from utils import flatten_iterable, print_table
 
 
@@ -23,8 +28,7 @@ def compute_model_scores(df, max_over, target_score, group_cols):
     return summed_scores/len(scores)
 
 
-def show_scores_table(df, n_to_show=10):
-    cols = ['model']
+def show_scores_table(df, n_to_show, cols):
     rows = [["Rank"] + cols]
     n_to_show = min(n_to_show, len(df))
     for i in range(n_to_show):
@@ -34,18 +38,56 @@ def show_scores_table(df, n_to_show=10):
 
 def main():
     parser = argparse.ArgumentParser(description='')
-    parser.add_argument('answers', help='answer file')
-    parser.add_argument('--ema', action="store_true")
+    parser.add_argument('answers', help='answer file', nargs="+")
+    parser.add_argument('--open', action="store_true")
     args = parser.parse_args()
 
     print("Loading answers..")
-    answer_df = pd.read_csv(args.answers)
+    answer_dfs = []
+    for filename in args.answers:
+        answer_dfs.append(pd.read_csv(filename))
 
-    print("Scoring...")
-    answer_df.sort_values("predicted_score", inplace=True, ascending=False)
-    model_scores = compute_model_scores(answer_df, "predicted_score", "text_f1", ["question_id", "doc_id"])
-    # print(answer_df["text_f1"].mean())
-    show_scores_table(pd.DataFrame(dict(model=model_scores)), 10)
+    print("Loading questions..")
+    if args.open:
+        corpus = TriviaQaOpenDataset()
+    else:
+        corpus = TriviaQaWebDataset()
+
+    questions = corpus.get_dev()
+    quids = set()
+    for df in answer_dfs:
+        quids.update(df.question_id)
+    questions = [q for q in questions if q.question_id in quids]
+
+    print("Computing ranks..")
+    # if args.open:
+    #     pre = ExtractMultiParagraphsPerQuestion(MergeParagraphs(400), ShallowOpenWebRanker(50), None, require_an_answer=False)
+    # else:
+    #     pre = ExtractMultiParagraphs(MergeParagraphs(400), TopTfIdf(NltkPlusStopWords(), 1000), None, require_an_answer=False)
+    #
+    # mcs = preprocess_par(questions, corpus.evidence, pre, 6, 10000).data
+    #
+    # ranks = {}
+    # for mc in mcs:
+    #     for i, para in enumerate(mc.paragraphs):
+    #         ranks[(mc.question_id, para.doc_id, para.start, para.end)] = i
+
+    data = {}
+    for i, answer_df in enumerate(answer_dfs):
+        # ranks_col = []
+        # for t in answer_df[["question_id", "doc_id", "para_start", "para_end"]].itertuples(index=False):
+        #     ranks_col.append(ranks[t])
+        # answer_df["rank"] = answer_dfs["rank"]
+        #
+        # print("Scoring...")
+        # answer_df.sort_values(["ranks"], inplace=True)
+        answer_df.sort_values(["rank"], inplace=True)
+        # answer_df["none_prob"] = -answer_df["none_prob"]
+        model_scores = compute_model_scores(answer_df, "predicted_score", "text_f1",
+                                            ["question_id"] if args.open else ["question_id", "doc_id"])
+        data["answers_%d" % i] = model_scores
+
+    show_scores_table(pd.DataFrame(data), 30 if args.open else 12, list(data.keys()))
 
 
 if __name__ == "__main__":

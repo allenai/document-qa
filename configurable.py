@@ -21,7 +21,7 @@ class Configuration(object):
     def __str__(self):
         if len(self.params) == 0:
             return "%s-v%s" % (self.name, self.version)
-        json_params = description_to_json(self.params)
+        json_params = config_to_json(self.params)
         if len(json_params) < 200:
             return "%s-v%s: %s" % (self.name, self.version, json_params)
         else:
@@ -37,12 +37,12 @@ class Configuration(object):
 class Configurable(object):
     """
     Configurable classes have names, versions, and a set of parameters that are either "simple" aka JSON serializable
-    types or other Configurable obejcts. Configurable objects should also be serializable via pickle.
+    types or other Configurable objects. Configurable objects should also be serializable via pickle.
     Configurable classes are defined mainly to give us a human-readable way of reading of the `parameters`
     set for different objects and to attach version numbers to them.
 
-    By default we follow the format sklearn uses for its `BaseEstimator` class, where parameters are automaticaly
-    derived based on the constuctor parameters.
+    By default we follow the format sklearn uses for its `BaseEstimator` class, where parameters are automatically
+    derived based on the constructor parameters.
     """
 
     @classmethod
@@ -85,7 +85,13 @@ class Configurable(object):
         return Configuration(self.name, self.version, params)
 
     def __getstate__(self):
-        return dict(version=self.version, state=self.__dict__)
+        state = dict(self.__dict__)
+        if "version" in state:
+            if state["version"] != self.version:
+                raise RuntimeError()
+        else:
+            state["version"] = self.version
+        return state
 
     def __setstate__(self, state):
         if "version" not in state:
@@ -121,9 +127,9 @@ def describe(obj):
 
 
 class EncodeDescription(json.JSONEncoder):
-    """ Json encoder that encodes 'Description' objects as dictionaries and handles
+    """ Json encoder that encodes 'Configurable' objects as dictionaries and handles
     some numpy types. Note decoding this output will not reproduce the original input,
-    for these tupes, this is only intended to be used to produce human readable output.
+    for these types, this is only intended to be used to produce human readable output.
     '"""
     def default(self, obj):
         if isinstance(obj, np.integer):
@@ -158,5 +164,5 @@ class EncodeDescription(json.JSONEncoder):
                 return str(obj)
 
 
-def description_to_json(data, indent=None):
+def config_to_json(data, indent=None):
     return json.dumps(data, sort_keys=False, cls=EncodeDescription, indent=indent)

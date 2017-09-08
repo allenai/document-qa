@@ -18,7 +18,7 @@ from nn.layers import SequenceEncoder, SequenceMapper, get_keras_initialization,
 from nn.ops import VERY_NEGATIVE_NUMBER
 from paragraph_selection.paragraph_selection_featurizer import JointParagraphSelectionFeaturizer, \
     ParagraphSelectionFeaturizer
-from paragraph_selection.paragraph_selection_model import FeaturizeredParagraph, FilteredData, \
+from experimental.paragraph_selection.paragraph_selection_model import FeaturizeredParagraph, FilteredData, \
     ParagraphSelectionPredictor
 from trivia_qa.evidence_corpus import TriviaQaEvidenceCorpusTxt
 from trivia_qa.read_data import TriviaQaQuestion

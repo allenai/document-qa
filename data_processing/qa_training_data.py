@@ -109,7 +109,8 @@ class ParagraphAndQuestionSpec(object):
             max_or_none(self.batch_size, o.batch_size),
             max_or_none(self.max_num_quesiton_words, o.max_num_quesiton_words),
             max_or_none(self.max_num_context_words, o.max_num_context_words),
-            max_or_none(self.max_word_size, o.max_word_size))
+            max_or_none(self.max_word_size, o.max_word_size)
+        )
 
 
 def get_input_spec(batch_size, data: List[ContextAndQuestion]) -> ParagraphAndQuestionSpec:
@@ -132,9 +133,8 @@ class QaCorpusLazyStats(object):
     computing which words vectors to use/train
     """
 
-    def __init__(self, data: List[ContextAndQuestion], special_tokens=None):
+    def __init__(self, data: List[ContextAndQuestion]):
         self.data = data
-        self.special_tokens = special_tokens
         self._question_counts = None
         self._context_counts = None
 
@@ -159,8 +159,7 @@ class QaCorpusLazyStats(object):
 
 
 class QaCorpusStats(object):
-    def __init__(self, question_counts, context_counts, special_tokens=None):
-        self.special_tokens = special_tokens
+    def __init__(self, question_counts, context_counts):
         self.question_counts = question_counts
         self.context_counts = context_counts
 
@@ -175,9 +174,8 @@ class QaCorpusStats(object):
 
 
 class WordCounts(object):
-    def __init__(self, word_counts, special_tokens=None):
+    def __init__(self, word_counts):
         self.word_counts = word_counts
-        self.special_tokens = special_tokens
 
     def get_word_counts(self):
         return self.word_counts

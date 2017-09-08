@@ -4,18 +4,13 @@ from data_processing.preprocessed_corpus import PreprocessedData
 from data_processing.qa_data import Batcher
 from data_processing.text_utils import WordNormalizer, NltkPlusStopWords
 from evaluator import LossEvaluator
-from nn.attention import AttentionEncoder
-from nn.embedder import FixedWordEmbedder, CharWordEmbedder, LearnedCharEmbedder
-from nn.layers import SequenceMapperSeq, FullyConnected, DropoutLayer, MultiAggregateLayer, MergeWith, SelfProduct, \
-    NullMapper, ConcatLayer, FullyConnectedMerge, ConcatWithProductProj, ConcatOneSidedProduct
-from nn.recurrent_layers import BiRecurrentMapper, GruCellSpec, RecurrentEncoder, EncodeOverTime, RecurrentMapper
+from nn.embedder import FixedWordEmbedder
+from nn.layers import SequenceMapperSeq, FullyConnected, MultiAggregateLayer, SelfProduct
+from nn.recurrent_layers import BiRecurrentMapper, GruCellSpec, RecurrentEncoder
 from paragraph_selection.paragraph_selection_evaluators import AnyTopNEvaluator
-from paragraph_selection.paragraph_selection_featurizer import NGramMatchingFeaturizer, \
-    ParagraphOrderFeatures, ParagraphFeatures, NGramFineGrained
-from paragraph_selection.paragraph_selection_model import NParagraphsSortKey, \
-    ParagraphSelectionFeaturizer, WeightedFeatures, SoftmaxPrediction, FeaturersOnly, SigmoidPredictions, \
-    EncodedFeatures, SelectionDatasetBuilder
-from paragraph_selection.paragraph_selection_with_context import SelectionWithContextDatasetBuilder, ContextTriAttention
+from paragraph_selection.paragraph_selection_featurizer import ParagraphOrderFeatures, ParagraphFeatures
+from experimental.paragraph_selection.paragraph_selection_model import NParagraphsSortKey, \
+    WeightedFeatures, SoftmaxPrediction, SelectionDatasetBuilder
 from paragraph_selection.word_occurance_model import OccuranceFeaturizer, EncodedOccurancePredictor, \
     OccuranceDatasetBuilder
 from trainer import TrainParams, SerializableOptimizer

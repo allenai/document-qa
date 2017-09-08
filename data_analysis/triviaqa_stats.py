@@ -4,13 +4,13 @@ import numpy as np
 from tqdm import tqdm
 
 from data_processing.document_splitter import MergeParagraphs, ContainsQuestionWord, DocumentSplitter, \
-    ParagraphWithAnswers
+    ExtractedParagraphWithAnswers
 from data_processing.preprocessed_corpus import PreprocessedData
 from data_processing.qa_data import Batcher
 from data_processing.text_utils import NltkPlusStopWords, WordNormalizer
 from paragraph_selection.paragraph_selection_featurizer import NGramMatchingFeaturizer, ParagraphOrderFeatures, \
     ParagraphFeatures
-from paragraph_selection.paragraph_selection_model import SelectionDatasetBuilder, ParagraphSelectionFeaturizer
+from experimental.paragraph_selection.paragraph_selection_model import SelectionDatasetBuilder, ParagraphSelectionFeaturizer
 from trivia_qa.build_span_corpus import TriviaQaOpenDataset, TriviaQaWebDataset, TriviaQaSampleWebDataset
 from trivia_qa.read_data import SearchDoc, TriviaQaQuestion
 from utils import flatten_iterable
@@ -90,7 +90,7 @@ def paragraph_stats(corpus, splitter: DocumentSplitter, sample):
     #     print("%s: %d" % (k, v))
 
 
-def print_paragraph(question: TriviaQaQuestion, para: ParagraphWithAnswers):
+def print_paragraph(question: TriviaQaQuestion, para: ExtractedParagraphWithAnswers):
     print(" ".join(question.question))
     print(question.answer.all_answers)
     context = flatten_iterable(para.text)

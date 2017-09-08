@@ -1,7 +1,7 @@
 """
 Script to split a document into paragraphs
 """
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics import pairwise_distances
@@ -14,27 +14,41 @@ from utils import flatten_iterable
 
 
 class ExtractedParagraph(object):
-    __slots__ = ["text", "start", "end"]
+    __slots__ = ["text", "start", "end", "features"]
 
-    def __init__(self, text: List[List[str]], start: int, end: int):
+    def __init__(self, text: List[List[str]], start: int, end: int, features=None):
         self.text = text
         self.start = start
         self.end = end
+        self.features = features
 
     @property
     def n_context_words(self):
         return sum(len(s) for s in self.text)
 
 
-class ParagraphWithAnswers(ExtractedParagraph):
+class ExtractedParagraphWithAnswers(ExtractedParagraph):
     __slots__ = ["answer_spans"]
 
-    def __init__(self, text: List[List[str]], start: int, end: int, answer_spans: np.ndarray):
-        super().__init__(text, start, end)
+    def __init__(self, text: List[List[str]], start: int, end: int, answer_spans: np.ndarray, features=None):
+        super().__init__(text, start, end, features)
         self.answer_spans = answer_spans
 
 
+class DocParagraphWithAnswers(ExtractedParagraphWithAnswers):
+    __slots__ = ["doc_id"]
+
+    def __init__(self, text: List[List[str]], start: int, end: int, answer_spans: np.ndarray,
+                 doc_id, features=None):
+        super().__init__(text, start, end, answer_spans, features)
+        self.doc_id = doc_id
+
+
 class ParagraphFilter(Configurable):
+
+    def n_features(self) -> Optional[int]:
+        return None
+
     def prune(self, question, paragraphs: List[ExtractedParagraph]) -> List[ExtractedParagraph]:
         raise NotImplementedError()
 
@@ -44,7 +58,7 @@ class ContainsQuestionWord(ParagraphFilter):
         self.stop = stop
         self.allow_first = allow_first
 
-    def prune(self, question, paragraphs: List[ParagraphWithAnswers]):
+    def prune(self, question, paragraphs: List[ExtractedParagraphWithAnswers]):
         q_words = {x.lower() for x in question}
         q_words -= self.stop.words
         output = []
@@ -64,12 +78,17 @@ class ContainsQuestionWord(ParagraphFilter):
 
 
 class TopTfIdf(ParagraphFilter):
-    def __init__(self, stop, n_to_select: int):
+    def __init__(self, stop, n_to_select: int, filter_dist_one: bool=False, rank=True):
         self.stop = stop
+        self.rank = rank
         self.n_to_select = n_to_select
+        self.filter_dist_one = filter_dist_one
         self._tfidf = TfidfVectorizer(strip_accents="unicode", stop_words=self.stop.words)
 
     def prune(self, question, paragraphs: List[ExtractedParagraph]):
+        if not self.filter_dist_one and len(paragraphs) == 1:
+            return paragraphs
+
         tfidf = self._tfidf
         text = []
         for para in paragraphs:
@@ -81,8 +100,12 @@ class TopTfIdf(ParagraphFilter):
             return []
 
         dists = pairwise_distances(q_features, para_features, "cosine").ravel()
-        sorted_ix = np.argsort(dists)
-        return [paragraphs[i] for i in sorted_ix[:self.n_to_select] if dists[i] > 0]
+        sorted_ix = np.lexsort(([x.start for x in paragraphs], dists))  # in case of ties, use the earlier paragraph
+
+        if self.filter_dist_one:
+            return [paragraphs[i] for i in sorted_ix[:self.n_to_select] if dists[i] < 1.0]
+        else:
+            return [paragraphs[i] for i in sorted_ix[:self.n_to_select]]
 
 
 class ShallowOpenWebRanker(ParagraphFilter):
@@ -97,7 +120,7 @@ class ShallowOpenWebRanker(ParagraphFilter):
         self._stop = NltkPlusStopWords(True).words
         self._tfidf = TfidfVectorizer(strip_accents="unicode", stop_words=self._stop)
 
-    def get_features(self, question: List[str], paragraphs: List[List[ParagraphWithAnswers]]):
+    def get_features(self, question: List[str], paragraphs: List[List[ExtractedParagraphWithAnswers]]):
         scores = self.score_paragraphs(question, flatten_iterable(paragraphs))
         # return scores
         return np.expand_dims(scores, 1)
@@ -105,7 +128,7 @@ class ShallowOpenWebRanker(ParagraphFilter):
     def get_feature_names(self):
         return ["Score"]
 
-    def score_paragraphs(self, question, paragraphs: List[ParagraphWithAnswers]):
+    def score_paragraphs(self, question, paragraphs: List[ExtractedParagraphWithAnswers]):
         # return np.zeros(len(paragraphs))
         tfidf = self._tfidf
         text = []
@@ -142,9 +165,10 @@ class ShallowOpenWebRanker(ParagraphFilter):
         #                  word_matches_features[:, 1], scores], axis=1)
         return scores
 
-    def prune(self, question, paragraphs: List[ParagraphWithAnswers]):
+    def prune(self, question, paragraphs: List[ExtractedParagraphWithAnswers]):
         scores = self.score_paragraphs(question, paragraphs)
         sorted_ix = np.argsort(scores)
+
         return [paragraphs[i] for i in sorted_ix[:self.n_to_select]]
 
     def __getstate__(self):
@@ -164,7 +188,7 @@ class First(ParagraphFilter):
     def __init__(self, n_to_select: int):
         self.n_to_select = n_to_select
 
-    def prune(self, question, paragraphs: List[ParagraphWithAnswers]):
+    def prune(self, question, paragraphs: List[ExtractedParagraphWithAnswers]):
         return paragraphs[:self.n_to_select]
 
 
@@ -184,11 +208,11 @@ class DocumentSplitter(Configurable):
     def split(self, doc: List[List[List[str]]]) -> List[ExtractedParagraph]:
         raise NotImplementedError()
 
-    def split_annotated(self, doc: List[List[List[str]]], spans: np.ndarray) -> List[ParagraphWithAnswers]:
+    def split_annotated(self, doc: List[List[List[str]]], spans: np.ndarray) -> List[ExtractedParagraphWithAnswers]:
         out = []
         for para in self.split(doc):
             para_spans = spans[np.logical_and(spans[:, 0] >= para.start, spans[:, 1] < para.end)] - para.start
-            out.append(ParagraphWithAnswers(para.text, para.start, para.end, para_spans))
+            out.append(ExtractedParagraphWithAnswers(para.text, para.start, para.end, para_spans))
         return out
 
     def split_inverse(self, paras: List[ParagraphWithInverse]) -> List[ParagraphWithInverse]:
@@ -237,7 +261,7 @@ class Truncate(DocumentSplitter):
         return [ExtractedParagraph(output, 0, cur_tokens)]
 
 
-class MergeParagraphs(DocumentSplitter):
+class MergeParagraphsOld(DocumentSplitter):
     """
     Build paragraphs that always start with document-paragraph, but might
     include other paragraphs. Paragraphs are always smaller then `max_tokens`
@@ -248,9 +272,6 @@ class MergeParagraphs(DocumentSplitter):
         self.max_tokens = max_tokens
         self.top_n = top_n
         self.pad = pad
-
-    def special_tokens(self):
-        return []
 
     @property
     def reads_first_n(self):
@@ -309,6 +330,65 @@ class MergeParagraphs(DocumentSplitter):
         return all_paragraphs
 
 
+class MergeParagraphs(DocumentSplitter):
+
+    def __init__(self, max_tokens: int, top_n: int=None):
+        self.max_tokens = max_tokens
+        self.top_n = top_n
+
+    @property
+    def reads_first_n(self):
+        return self.top_n
+
+    def max_tokens(self):
+        return self.max_tokens
+
+    def split(self, doc: List[List[List[str]]]):
+        all_paragraphs = []
+
+        on_doc_token = 0  # the word in the document the current paragraph starts at
+        on_paragraph = []  # text we have collect for the current paragraph
+        cur_tokens = 0   # number of tokens in the current paragraph
+
+        word_ix = 0
+        for para in doc:
+            para = flatten_iterable(para)
+            n_words = len(para)
+            if self.top_n is not None and (word_ix+self.top_n)>self.top_n:
+                if word_ix == self.top_n:
+                    break
+                para = para[:self.top_n - word_ix]
+                n_words = self.top_n - word_ix
+
+            start_token = word_ix
+            end_token = start_token + n_words
+            word_ix = end_token
+
+            if cur_tokens + n_words > self.max_tokens:
+                if cur_tokens != 0:  # end the current paragraph
+                    all_paragraphs.append(ExtractedParagraph(on_paragraph, on_doc_token, start_token))
+                    on_paragraph = []
+                    cur_tokens = 0
+
+                if n_words >= self.max_tokens:  # either truncate the given paragraph, or begin a new paragraph
+                    text = para[:self.max_tokens]
+                    all_paragraphs.append(ExtractedParagraph([text], start_token,
+                                                             start_token + self.max_tokens))
+                    on_doc_token = end_token
+                else:
+                    on_doc_token = start_token
+                    on_paragraph.append(para)
+                    cur_tokens = n_words
+            else:
+                on_paragraph.append(para)
+                cur_tokens += n_words
+
+        if len(on_paragraph) > 0:
+            all_paragraphs.append(ExtractedParagraph(on_paragraph, on_doc_token, word_ix))
+
+        return all_paragraphs
+
+
 def extract_tokens(paragraph: List[List[str]], n_tokens) -> List[List[str]]:
     output = []
     cur_tokens = 0
@@ -353,9 +433,8 @@ def test_splitter(splitter: DocumentSplitter, n_sample, n_answer_spans, seed=Non
             text = flatten_iterable(para.text)
             if max_tokens is not None and len(text) > max_tokens:
                 raise ValueError("Paragraph len len %d, but max tokens was %d" % (len(text), max_tokens))
-            plain = [x for x in text if x not in splitter.special_tokens()]
             start, end = para.start, para.end
-            if plain != flattened[start:end]:
+            if text != flattened[start:end]:
                 raise ValueError("Paragraph is missing text, given bounds were %d-%d" % (start, end))
             for s, e in para.answer_spans:
                 if tuple(text[s:e+1]) not in answer_strs:
@@ -380,7 +459,7 @@ def show_paragraph_lengths():
 
 
 if __name__ == "__main__":
-    test_splitter(MergeParagraphs(200, pad=True), 1000, 20, seed=0)
+    test_splitter(MergeParagraphsGroupSentences(200), 1000, 20, seed=0)
     # show_paragraph_lengths()
 
 

@@ -80,9 +80,13 @@ class ListBatcher(Configurable):
         raise NotImplementedError()
 
     def get_fixed_batch_size(self):
+        """ Return the batch size if it is constant, else None """
         raise NotImplementedError()
 
     def epoch_size(self, n_elements):
+        raise NotImplementedError()
+
+    def get_samples(self, data, n_elements):
         raise NotImplementedError()
 
 

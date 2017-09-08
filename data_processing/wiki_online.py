@@ -14,8 +14,6 @@ from sklearn.metrics import pairwise_distances
 
 from config import CORPUS_DIR
 from configurable import Configurable
-from data_processing.text_utils import get_paragraph_tokenizer
-from squad.squad import SquadCorpus
 from utils import flatten_iterable
 
 RAW_CACHE = "/tmp/cache.json"  # TODO remove?

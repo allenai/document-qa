@@ -98,8 +98,8 @@ class SquadConfidenceEvaluator(Evaluator):
                     conf=conf)
 
     def evaluate(self, data: List[ContextAndQuestion], true_len, **kargs):
-        from scipy.stats import spearmanr
-
+        from scipy.stats import kendalltau
+        conf = kargs["conf"]
         scores = squad_span_scores(data, kargs["spans"])
         has_answer_per = sum(len(x.answer.answer_spans) > 0 for x in data) / len(data)
         none_conf = kargs["none_conf"]
@@ -111,7 +111,9 @@ class SquadConfidenceEvaluator(Evaluator):
             prefix + "f1": aggregated_scores[1],
             prefix + "text-accuracy": aggregated_scores[2],
             prefix + "text-f1": aggregated_scores[3],
-            prefix + "text-f1-spearman-r": spearmanr(none_conf, scores[:, 3])[0],
-            prefix + "span-accuracy-spearman-r": spearmanr(none_conf, scores[:, 0])[0]
+            prefix + "text-f1-ktau-none": kendalltau(none_conf, scores[:, 3])[0],
+            prefix + "span-accuracy-ktau-none": kendalltau(none_conf, scores[:, 0])[0],
+            prefix + "text-f1-ktau-conf": kendalltau(conf, scores[:, 3])[0],
+            prefix + "span-accuracy-ktau-conf": kendalltau(conf, scores[:, 0])[0],
         })
         return ev

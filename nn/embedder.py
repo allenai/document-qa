@@ -242,7 +242,7 @@ class FixedWordEmbedder(WordEmbedder):
         matrix_list = [null_embed, unk_embed]
 
         if self._special_tokens is not None and len(self._special_tokens) > 0:
-            print("Building embedings for %d special_tokens" % (len(self._special_tokens)))
+            print("Building embeddings for %d special_tokens" % (len(self._special_tokens)))
             tok_embed = tf.get_variable(shape=(len(self._special_tokens), dim), name="token_embed",
                                         dtype=np.float32, trainable=True,
                                         initializer=tf.random_uniform_initializer(-self.word_vec_init_scale,

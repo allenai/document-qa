@@ -119,24 +119,24 @@ class SquadTfIdfRanker(Preprocessor):
     def preprocess(self, question: List[Document], evidence):
         return self.ranked_questions(question)
 
-    def rank(self, doc):
+    def rank(self, questions: List[List[str]], paragraphs: List[List[List[str]]]):
         tfidf = self._tfidf
-        para_features = tfidf.fit_transform([" ".join(" ".join(s) for s in x.context) for x in doc.paragraphs])
-        questions = flatten_iterable([" ".join(q.words) for q in x.questions] for x in doc.paragraphs)
-        q_features = tfidf.transform(questions)
+        para_features = tfidf.fit_transform([" ".join(" ".join(s) for s in x) for x in paragraphs])
+        q_features = tfidf.transform([" ".join(q) for q in questions])
         scores = pairwise_distances(q_features, para_features, "cosine")
         return scores
 
     def ranked_questions(self, docs: List[Document]) -> List[MultiParagraphSquadQuestion]:
         out = []
         for doc in docs:
-            scores = self.rank(doc)
+            scores = self.rank(flatten_iterable([q.words for q in x.questions] for x in doc.paragraphs),
+                               [x.context for x in doc.paragraphs])
             q_ix = 0
             for para_ix, para in enumerate(doc.paragraphs):
                 for q in para.questions:
                     para_scores = scores[q_ix]
                     para_ranks = np.argsort(para_scores)
-                    selection = [i for i in para_ranks[:self.n_to_select] if para_scores[i] > 0]
+                    selection = [i for i in para_ranks[:self.n_to_select]]
                     answer_spans = [np.zeros((0, 2), np.int32) for _ in selection]
 
                     if self.force_answer and para_ix not in selection:

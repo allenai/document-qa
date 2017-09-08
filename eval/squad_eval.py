@@ -1,19 +1,38 @@
 import argparse
 import json
+from typing import List
 
 import numpy as np
 
 import trainer
-from data_processing.qa_training_data import ParagraphAndQuestionDataset
+from data_processing.qa_training_data import ParagraphAndQuestionDataset, ContextAndQuestion
 from dataset import FixedOrderBatcher
-from evaluator import RecordQuestionId, RecordSpanPrediction
+from evaluator import RecordQuestionId, Evaluator, Evaluation
 from squad.squad_data import SquadCorpus, split_docs
-from squad.squad_eval import BoundedSquadSpanEvaluator
+from squad.squad_evaluators import BoundedSquadSpanEvaluator
 from trainer import ModelDir
-from utils import flatten_iterable, transpose_lists, print_table
+from utils import transpose_lists, print_table
+
 
 """
+Run an evalution on squad and record the offical output
 """
+
+
+class RecordSpanPrediction(Evaluator):
+    def __init__(self, bound: int):
+        self.bound = bound
+
+    def tensors_needed(self, prediction):
+        span, score = prediction.get_best_span(self.bound)
+        return dict(spans=span, model_scores=score)
+
+    def evaluate(self, data: List[ContextAndQuestion], true_len, **kargs):
+        spans, model_scores = kargs["spans"], kargs["model_scores"]
+        results = {"model_conf": model_scores,
+                   "predicted_span": spans,
+                   "question_id": [x.question_id for x in data]}
+        return Evaluation({}, results)
 
 
 def main():
@@ -45,7 +64,6 @@ def main():
     evaluators = [BoundedSquadSpanEvaluator(args.answer_bounds)]
     if args.official_output is not None:
         evaluators.append(RecordSpanPrediction(args.answer_bounds[0]))
-        evaluators.append(RecordQuestionId())
 
     checkpoint = model_dir.get_latest_checkpoint()
     evaluation = trainer.test(model_dir.get_model(), evaluators, {args.corpus: dataset},

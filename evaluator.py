@@ -4,10 +4,10 @@ from typing import List, Dict, Union
 
 import numpy as np
 import tensorflow as tf
+from scipy.stats import kendalltau
 from tqdm import tqdm
 
 from configurable import Configurable
-from data_processing.multi_paragraph_qa import DocumentParagraph
 from data_processing.qa_training_data import ContextAndQuestion
 from data_processing.span_data import compute_span_f1
 from dataset import Dataset
@@ -86,19 +86,6 @@ class RegularizerLossEvaluator(Evaluator):
         return Evaluation({"regularization-loss": np.mean(reg)})
 
 
-class RecordQuestionId(Evaluator):
-    def tensors_needed(self, _):
-        return dict()
-
-    def evaluate(self, data, true_len, **kwargs):
-        out = dict(question_id=[x.question_id for x in data])
-        if isinstance(data[0], DocumentParagraph):
-            out.update(dict(doc_id=[x.doc_id for x in data],
-                       start=np.array([x.start for x in data]),
-                       end=np.array([x.end for x in data])))
-        return Evaluation({}, out)
-
-
 class SpanProbability(Evaluator):
     def __init__(self, sum=True):
         self.sum = sum
@@ -170,26 +157,46 @@ class SpanEvaluator(Evaluator):
         return ev
 
 
-class RecordSpanPrediction(Evaluator):
-    def __init__(self, bound: int, prefix=None):
+class ConfidenceSpanEvaluator(Evaluator):
+    def __init__(self, bound: List[int]):
         self.bound = bound
-        self.prefix = prefix
 
     def tensors_needed(self, prediction):
-        span, score = prediction.get_best_span(self.bound)
-        return dict(spans=span, model_scores=score)
+        out = {}
+        for b in self.bound:
+            span, score = prediction.get_best_span(b)
+            prefix = "%d-" % b
+            out[prefix + "span"] = span
+            out[prefix + "span_logit"] = score
+        out["non_logit"] = prediction.none_prob
+        out["non_prob"] = prediction.none_logit
+        return out
 
-    def evaluate(self, data: List[ContextAndQuestion], true_len, **kargs):
-        spans, model_scores = kargs["spans"], kargs["model_scores"]
-        if self.prefix is None:
-            prefix = "bound-%d-" % self.bound
-        elif self.prefix == "":
-            prefix = ""
-        else:
-            prefix = self.prefix + "-"
-        span_key, score_key = ("%sspan-predictions" % prefix), ("%smodel-score" % prefix)
-        results = {score_key: model_scores, span_key: spans}
-        return Evaluation({}, results)
+    def evaluate(self, data: List[ContextAndQuestion], true_len, **kwargs):
+        ev = Evaluation({})
+        non_logit = kwargs["non_logit"]
+        non_prob = kwargs["non_prob"]
+
+        for b in self.bound:
+            prefix = "%d-" % b
+            best_spans = kwargs[prefix + "span"]
+            span_logits = kwargs[prefix + "span_logit"]
+            scores = span_scores(data, best_spans)
+            has_answer = np.array([len(x.answer.answer_spans) > 0 for x in data])
+
+            em = scores[:, 0]
+            f1 = scores[:, 1]
+
+            prefix = "b%d/" % b
+            bound_eval = Evaluation({
+                prefix + "accuracy": em[has_answer].mean(),
+                prefix + "f1": f1[has_answer].mean(),
+                prefix + "conf-tau": kendalltau(span_logits, has_answer)[0],
+                prefix + "non-tau": kendalltau(non_logit, has_answer)[0],
+                prefix + "non-prob-tau": kendalltau(non_prob, has_answer)[0],
+            })
+            ev.add(bound_eval)
+        return ev
 
 
 class EvaluatorRunner(object):
@@ -262,6 +269,7 @@ class AysncEvaluatorRunner(object):
                                   name="eval_queue")
         self.enqueue_op = self.eval_queue.enqueue(placeholders)
         self.dequeue_op = self.eval_queue.dequeue()
+        self.close_queue = self.eval_queue.close(True)
         for x,p in zip(placeholders, self.dequeue_op):
             p.set_shape(x.shape)
         self.evaluators = evaluators
@@ -286,8 +294,6 @@ class AysncEvaluatorRunner(object):
         else:
             batches, n_batches = dataset.get_samples(n_sample)
 
-        enqueue_error = Event()
-
         def enqueue_eval():
             try:
                 for data in batches:
@@ -295,7 +301,7 @@ class AysncEvaluatorRunner(object):
                     data_used.append(data)
                     sess.run(self.enqueue_op, encoded)
             except Exception as e:
-                enqueue_error.set()
+                sess.run(self.close_queue)  # Crash the main thread
                 raise e
 
         th = Thread(target=enqueue_eval)
@@ -303,8 +309,6 @@ class AysncEvaluatorRunner(object):
         th.daemon = True
         th.start()
         for _ in tqdm(range(n_batches), total=n_batches, desc=name, ncols=80):
-            if enqueue_error.is_set():
-                raise ValueError("Enqueue thread crashed")
             output = sess.run(all_tensors_needed, feed_dict=feed_dict)
             for i in range(len(all_tensors_needed)):
                 tensors[all_tensors_needed[i]].append(output[i])

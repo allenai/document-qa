@@ -109,6 +109,7 @@ class Encoder(Configurable):
     """
     reduce the second to last dimension
      (dim1, dim2, ..., dimN, in_dim) -> (dim1, dim2, ..., dim(N-1), out_dim)
+     mask should be an sequence length mask of dim one less then `x`
      """
     def apply(self, is_train, x, mask=None):
         raise NotImplementedError()
@@ -1005,6 +1006,24 @@ class MultiAggregateLayer(SequenceEncoder):
         return tf.concat(out, axis=1)
 
 
+class MaxPool(Encoder):
+    def __init__(self, map_layer: Optional[Mapper]=None):
+        self.map_layer = map_layer
+
+    def apply(self, is_train, x, mask=None):
+        if self.map_layer is not None:
+            x = self.map_layer.apply(is_train, x, mask)
+
+        rank = len(x.shape) - 2
+        if mask is not None:
+            shape = tf.shape(x)
+            mask = tf.sequence_mask(tf.reshape(mask, (-1,)), shape[-2])
+            mask = tf.cast(tf.reshape(mask, (shape[0], shape[1], shape[2], 1)), tf.float32)
+            return tf.maximum(tf.reduce_max(x*mask, axis=rank), tf.zeros([1] * (len(x.shape)-1)))
+        else:
+            return tf.reduce_max(x, axis=rank)
+
+
 class ReduceLayer(Encoder):
     def __init__(self, reduce: str, map_layer: Optional[Mapper]=None, mask=True):
         self.map_layer = map_layer
@@ -1017,7 +1036,9 @@ class ReduceLayer(Encoder):
             mask = None
 
         if mask is not None:
-            valid_mask = tf.expand_dims(tf.cast(tf.sequence_mask(mask, tf.shape(x)[1]), tf.float32), 2)
+            valid_mask = tf.cast(tf.sequence_mask(mask, tf.shape(x)[1]), tf.float32)
+            for i in range(len(x.shape) - 2):
+                tf.expand_dims(valid_mask, len(valid_mask.shape))
         else:
             valid_mask = None
 
@@ -1027,7 +1048,7 @@ class ReduceLayer(Encoder):
 
         if self.reduce == "max":
             if mask is not None:
-                return tf.reduce_max(x * valid_mask + ((tf.reduce_min(x) - 1) * (1 - valid_mask)), axis=rank)
+                return tf.maximum(tf.reduce_max(x * valid_mask, axis=rank), tf.zeros([1]*len(x.shape)))
             else:
                 return tf.reduce_max(x, axis=rank)
         elif self.reduce == "mean":

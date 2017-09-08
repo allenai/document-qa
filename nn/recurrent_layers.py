@@ -409,7 +409,7 @@ class BiRecurrentEncoder(SequenceEncoder):
 
 
 class EncodeOverTime(Encoder):
-    def __init__(self, enc: SequenceEncoder, mask: bool=True):
+    def __init__(self, enc: SequenceEncoder, mask=True):
         self.enc = enc
         self.mask = mask
 
@@ -418,15 +418,12 @@ class EncodeOverTime(Encoder):
         batch = tf.shape(x)[0]
         flattened = tf.reshape(x, [-1, lst[-2], lst[-1]])  # (batch*words, char, dim)
 
-        if self.mask:
-            # we assume that characters w/all exactly zero embeds should be masked
-            # this risks making a mistake and masking real values if a char-embed just happends to be zero
-            # but that should be extremely unlikely
-            char_mask = tf.reduce_sum(tf.cast(tf.reduce_all(tf.not_equal(flattened, 0), axis=2), tf.int32), axis=1)
-        else:
-            char_mask = None
+        if not self.mask:
+            mask = None
+        if mask is not None:
+            mask = tf.reshape(mask, (-1,))
 
-        encoding = self.enc.apply(is_train, flattened, char_mask)
+        encoding = self.enc.apply(is_train, flattened, mask)
 
         # reshape to the original size
         enc = tf.reshape(encoding, [batch, -1, encoding.shape.as_list()[-1]])
@@ -647,6 +644,8 @@ class CudnnLstm(CudnnRnnMapper, SequenceMapper):
     def __setstate__(self, state):
         if "recurrent_init" not in state["state"]:
             state["state"]["recurrent_init"] = None
+        if "keep_recurrent" not in state["state"]:
+            state["state"]["keep_recurrent"] = 1
         super().__setstate__(state)
 
 

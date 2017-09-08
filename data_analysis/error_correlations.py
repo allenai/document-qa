@@ -6,8 +6,6 @@ import json
 import re
 from collections import Counter
 
-from squad.squad import SquadCorpus
-
 from data_processing.span_data import compute_span_f1
 from data_processing.text_features import is_number
 from squad.squad_official_evaluation import f1_score as text_f1_score

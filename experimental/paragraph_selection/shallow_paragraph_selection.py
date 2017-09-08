@@ -10,7 +10,7 @@ from sklearn.model_selection import KFold
 from tqdm import tqdm
 
 from data_analysis.analyze_full_document_eval import compute_model_scores, compute_cumsum
-from data_processing.document_splitter import Truncate, MergeParagraphs, TopTfIdf, ParagraphWithAnswers, DocumentSplitter, \
+from data_processing.document_splitter import Truncate, MergeParagraphs, TopTfIdf, ExtractedParagraphWithAnswers, DocumentSplitter, \
     ShallowOpenWebRanker
 from data_processing.text_utils import NltkPlusStopWords, WordNormalizer
 from paragraph_selection.paragraph_selection_featurizer import LocalTfIdfFeatures, ParagraphOrderFeatures, \
@@ -140,7 +140,7 @@ class SplitterStats(object):
         self.n_tokens = 0
         self.max_tokens = 0
 
-    def update(self, paragraph: List[ParagraphWithAnswers]):
+    def update(self, paragraph: List[ExtractedParagraphWithAnswers]):
         total = sum(len(x.answer_spans) for x in paragraph)
         n_tokens = sum(sum(len(s) for s in x.text) for x in paragraph)
         self.n_answers += total
@@ -171,8 +171,8 @@ def check_upper_bounds():
             total += 1
             text = dataset.evidence.get_document(doc.doc_id)
             flattened = flatten_iterable(text)
-            stats["all"].update([ParagraphWithAnswers(flattened, 0, sum(len(x) for x in flattened),
-                                                      doc.answer_spans)])
+            stats["all"].update([ExtractedParagraphWithAnswers(flattened, 0, sum(len(x) for x in flattened),
+                                                               doc.answer_spans)])
             for name, (splitter, para_filter) in splitters.items():
                 para = splitter.split_annotated(text, doc.answer_spans)
                 if para_filter is not None:

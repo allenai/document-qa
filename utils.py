@@ -24,18 +24,6 @@ class ResourceLoader(object):
         return self.load_vec_fn(vec_name, voc)
 
 
-class NumpyEncoder(JSONEncoder):
-    def default(self, o):
-        if isinstance(o, np.floating):
-            return float(o)
-        elif isinstance(o, np.integer):
-            return int(o)
-        elif isinstance(o, np.ndarray):
-            return list(o)
-        else:
-            return super().default(o)
-
-
 class DummyResourceLoader(ResourceLoader):
     def load_word_vec(self, vec_name):
         return {"the": np.zeros(100, dtype=np.float32)}
@@ -59,18 +47,10 @@ def print_table(table: List[List[str]]):
         for i,cell in enumerate(row):
             col_lens[i] = max(len(cell), col_lens[i])
 
-    # Format the pads or truncates string to the requested length
+    # pads string to the requested length
     formats = ["{0:<%d}" % x for x in col_lens]
     for row in table:
         print(" ".join(formats[i].format(row[i]) for i in range(len(row))))
-
-
-def iter_and_log(lst, log_every):
-    total = len(lst)
-    for i, e in enumerate(lst):
-        if i % log_every == 0:
-            print("On %d of %d (%.4f)" % (i, total, i/total))
-        yield e
 
 
 def transpose_lists(lsts):

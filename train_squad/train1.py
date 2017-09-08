@@ -1,7 +1,7 @@
 from tensorflow.contrib.keras.python.keras.initializers import TruncatedNormal
 
 import trainer
-from data_processing.paragraph_qa import DocumentQaTrainingData, ContextLenBucketedKey, ContextLenKey
+from data_processing.qa_training_data import ContextLenBucketedKey, ContextLenKey
 from data_processing.text_utils import NameDetector
 from dataset import ClusteredBatcher
 from doc_qa_models import Attention
@@ -16,7 +16,9 @@ from nn.recurrent_layers import BiRecurrentMapper, RecurrentEncoder, EncodeOverT
 from nn.similarity_layers import TriLinear
 from nn.span_prediction import BoundsPredictor, WithFixedContextPredictionLayer, IndependentBoundsJointLoss
 from squad.build_squad_dataset import SquadCorpus
-from squad.squad_eval import BoundedSquadSpanEvaluator
+
+from squad.squad_data import DocumentQaTrainingData
+from squad.squad_evaluators import BoundedSquadSpanEvaluator
 from trainer import SerializableOptimizer, TrainParams
 from utils import get_output_name_from_cli
 
@@ -28,22 +30,20 @@ def main():
                                ema=0.999, max_checkpoints_to_keep=3, async_encoding=10,
                                num_epochs=50, log_period=30, eval_period=1200, save_period=1200,
                                eval_samples=dict(dev=None, train=8000))
-    dim = 80
-    recurrent_layer = CudnnGru(dim)
+
+    dim = 100
+    recurrent_layer = CudnnGru(dim, w_init=TruncatedNormal())
 
     model = Attention(
         encoder=DocumentAndQuestionEncoder(SingleSpanAnswerEncoder()),
-        word_embed_layer=None,
-        # word_embed=DropNames(vec_name="glove.840B.300d", word_vec_init_scale=0, learn_unk=False,
-        #                      keep_probs=0.7, kind="shuffle"),
-        word_embed=DropNamesV2(selector=NameDetector(), vec_name="glove.840B.300d", word_vec_init_scale=0,
-                               swap_unk=True, learn_unk=False, keep_probs=0.6, kind="shuffle",
-                               swapped_flag=True),
+        word_embed=FixedWordEmbedder(vec_name="glove.840B.300d", word_vec_init_scale=0,
+                                     learn_unk=False, cpu=True),
         char_embed=CharWordEmbedder(
-            LearnedCharEmbedder(word_size_th=14, char_th=50, char_dim=20, init_scale=0.1, force_cpu=True),
-            EncodeOverTime(FusedRecurrentEncoder(60), mask=True),
+            LearnedCharEmbedder(word_size_th=14, char_th=40, char_dim=20, init_scale=0.05, force_cpu=True),
+            EncodeOverTime(FusedRecurrentEncoder(60), mask=False),
             shared_parameters=True
         ),
+        word_embed_layer=None,
         embed_mapper=SequenceMapperSeq(
             VariationalDropoutLayer(0.8),
             recurrent_layer,
@@ -52,23 +52,17 @@ def main():
         question_mapper=None,
         context_mapper=None,
         memory_builder=NullBiMapper(),
-        attention=StaticAttention(TriLinear(bias=True), ConcatWithProduct()),
-        # attention=BiAttention(TriLinear(bias=True), True),
-        match_encoder=SequenceMapperSeq(
-            FullyConnected(dim * 2, activation="relu"),
-            ResidualLayer(SequenceMapperSeq(
-                VariationalDropoutLayer(0.8),
-                recurrent_layer,
-                VariationalDropoutLayer(0.8),
-                StaticAttentionSelf(TriLinear(bias=True), ConcatWithProduct()),
-                FullyConnected(dim * 2, activation="relu"),
-            )),
-            VariationalDropoutLayer(0.8),
-        ),
-        predictor=WithFixedContextPredictionLayer(
-            ResidualLayer(recurrent_layer),
-            AttentionEncoder(post_process=MapperSeq(FullyConnected(25, activation="tanh"), DropoutLayer(0.8))),
-            WithProjectedProduct(include_tiled=True),
+        attention=BiAttention(TriLinear(bias=True), True),
+        match_encoder=SequenceMapperSeq(FullyConnected(dim*2, activation="relu"),
+                                        ResidualLayer(SequenceMapperSeq(
+                                            VariationalDropoutLayer(0.8),
+                                            recurrent_layer,
+                                            VariationalDropoutLayer(0.8),
+                                            StaticAttentionSelf(TriLinear(bias=True), ConcatWithProduct()),
+                                            FullyConnected(dim * 2, activation="relu")
+                                        )),
+                                        VariationalDropoutLayer(0.8)),
+        predictor=BoundsPredictor(
             ChainBiMapper(
                 first_layer=recurrent_layer,
                 second_layer=recurrent_layer
