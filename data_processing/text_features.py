@@ -1,13 +1,15 @@
 import re
 
-import math
 import numpy as np
-from nltk import PorterStemmer, Counter, WordNetLemmatizer
-import locale
-
-from nltk.corpus import stopwords
+from nltk import Counter, WordNetLemmatizer
 
 from configurable import Configurable
+
+
+"""
+Adding classic/shallow text features, I have only done shallow experiments with these 
+and not found them to be of much use 
+"""
 
 
 any_num_regex = re.compile("^.*[\d].*$")
@@ -35,16 +37,16 @@ def is_number(token):
 class QaTextFeautrizer(Configurable):
 
     def n_context_features(self):
-        raise NotImplemented()
+        raise NotImplementedError()
 
     def n_question_features(self):
-        raise NotImplemented()
+        raise NotImplementedError()
 
     def get_features(self, question, context):
         """
         return arrays of shape (n_question_words, feature_dim) (n_context_words, feature_dim)
         """
-        raise NotImplemented()
+        raise NotImplementedError()
 
 
 class BasicWordFeatures(QaTextFeautrizer):
@@ -118,12 +120,12 @@ def extract_year(token):
 
 
 class MatchWordFeatures(QaTextFeautrizer):
-    def __init__(self, require_unique_match, lemmatizer="WordNetLemmatizer",
+    def __init__(self, require_unique_match, lemmatizer="word_net",
                  empty_question_features=False, stop_words=None):
         self.lemmatizer = lemmatizer
         self.stop_words = stop_words
         self.empty_question_features = empty_question_features
-        if lemmatizer == "WordNetLemmatizer":
+        if lemmatizer == "word_net":
             self._lemmatizer = WordNetLemmatizer()
         else:
             raise ValueError()

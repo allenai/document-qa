@@ -56,15 +56,14 @@ def convert_to_spans(raw_text: str, sentences: List[List[str]]) -> List[List[Tup
     return all_spans
 
 
-def get_word_span(spanss: List[List[Tuple[int, int]]], start: int, stop: int) -> List[Tuple[int, int]]:
+def get_word_span(spans: np.ndarray, start: int, stop: int):
     idxs = []
-    for sent_idx, spans in enumerate(spanss):
-        for word_idx, span in enumerate(spans):
-            if span[1] > start:
-                if span[0] < stop:
-                    idxs.append((sent_idx, word_idx))
-                else:
-                    break
+    for word_ix, (s, e) in enumerate(spans):
+        if e > start:
+            if s < stop:
+                idxs.append(word_ix)
+            else:
+                break
     return idxs
 
 
@@ -100,6 +99,9 @@ class ParagraphWithInverse(object):
         self.text = text
         self.original_text = original_text
         self.spans = spans
+
+    def get_context(self):
+        return flatten_iterable(self.text)
 
     def get_original_text(self, start, end):
         """ Get text between the token at `start` and `end` inclusive """

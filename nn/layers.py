@@ -1048,7 +1048,7 @@ class ReduceLayer(Encoder):
 
         if self.reduce == "max":
             if mask is not None:
-                return tf.maximum(tf.reduce_max(x * valid_mask, axis=rank), tf.zeros([1]*len(x.shape)))
+                raise NotImplementedError()
             else:
                 return tf.reduce_max(x, axis=rank)
         elif self.reduce == "mean":
@@ -1065,10 +1065,9 @@ class ReduceLayer(Encoder):
             raise ValueError()
 
     def __setstate__(self, state):
-        if "axis" not in state["state"]:
-            state["state"]["axis"] = 2
-        if "mask" not in state["state"]:
-            state["state"]["mask"] = False
+        if "state" in state:
+            if "mask" not in state["state"]:
+                state["state"]["mask"] = False
         return super().__setstate__(state)
 
 

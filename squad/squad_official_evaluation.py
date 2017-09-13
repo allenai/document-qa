@@ -1,3 +1,4 @@
+""" Official evaluation script for v1.1 of the SQuAD dataset. """
 from __future__ import print_function
 from collections import Counter
 import string
@@ -7,21 +8,15 @@ import json
 import sys
 
 
-"""
-Lifted from the squad website so we can use in our evluators
-"""
-
-
 def normalize_answer(s):
     """Lower text and remove punctuation, articles and extra whitespace."""
     def remove_articles(text):
-        return re.sub(r'\b(|an|the)\b', ' ', text)
+        return re.sub(r'\b(a|an|the)\b', ' ', text)
 
     def white_space_fix(text):
         return ' '.join(text.split())
 
     def remove_punc(text):
-        #$return re.sub(r"\s*[\u2212°%£€¥\u2000-\u206F\u2E00-\u2E7F\\'!\"#$%&()*+,\u2013\-.\/:;<=>?@\[\]^_`{|}~]\s*", '', text)
         exclude = set(string.punctuation)
         return ''.join(ch for ch in text if ch not in exclude)
 

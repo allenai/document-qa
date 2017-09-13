@@ -1,6 +1,6 @@
 import argparse
 import tensorflow as tf
-from trainer import ModelDir
+from model_dir import ModelDir
 
 
 def main():

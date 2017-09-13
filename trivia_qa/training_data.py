@@ -63,7 +63,7 @@ class ExtractSingleParagraph(Preprocessor):
                     continue
                 paragraph = paragraphs[0]
                 if self.text_preprocess is not None:
-                    ex = self.text_preprocess.encode_paragraphs(q.question, [paragraph])
+                    ex = self.text_preprocess.encode_extracted_paragraph(q.question, paragraph)
                     if not self.require_answer or len(ex.answer_spans) > 0:
                         output.append(DocumentParagraphQuestion(q.question_id, doc.doc_id, (paragraph.start, paragraph.end),
                                                                 q.question, ex.text,
@@ -88,8 +88,9 @@ class ExtractSingleParagraph(Preprocessor):
                 q.context = [sys.intern(w) for w in q.context]
 
     def __setstate__(self, state):
-        if "require_answer" not in state["state"]:
-            state["state"]["require_answer"] = True
+        if "state" in state:
+            if "require_answer" not in state["state"]:
+                state["state"]["require_answer"] = True
         super().__setstate__(state)
 
 
@@ -132,7 +133,7 @@ class ExtractMultiParagraphs(Preprocessor):
                     if all(len(x.answer_spans) == 0 for x in paras):
                         continue
                 if self.text_process is not None:
-                    prepped = [self.text_process.encode_paragraphs(q.question, [p]) for p in paras]
+                    prepped = [self.text_process.encode_extracted_paragraph(q.question, p) for p in paras]
                     if self.require_an_answer:
                         if all(len(x.answer_spans) == 0 for x in prepped):
                             continue
@@ -188,7 +189,7 @@ class ExtractMultiParagraphsPerQuestion(Preprocessor):
                     continue
 
             if self.text_preprocess is not None:
-                prepped = [self.text_preprocess.encode_paragraphs(q.question, [p]) for p in paras]
+                prepped = [self.text_preprocess.encode_extracted_paragraph(q.question, p) for p in paras]
                 if self.require_an_answer:
                     if all(len(x.answer_spans) == 0 for x in prepped):
                         continue

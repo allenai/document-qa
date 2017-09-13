@@ -1,8 +1,6 @@
 from typing import Optional
 
 import tensorflow as tf
-from tensorflow.contrib.layers import fully_connected
-from tensorflow.contrib.rnn.python.ops.core_rnn_cell_impl import _linear
 
 from configurable import Configurable
 from nn.layers import AttentionMapper, MergeLayer, SequenceEncoder, get_keras_initialization, SequenceMapper, \
@@ -206,7 +204,7 @@ class StaticAttentionSelf(SequenceMapper):
 
     def __init__(self, attention: SimilarityFunction,
                  merge: Optional[MergeLayer]=None,
-                 alignment_bias=False):
+                 alignment_bias=True):
         self.alignment_bias = alignment_bias
         self.attention = attention
         self.merge = merge
@@ -222,7 +220,7 @@ class StaticAttentionSelf(SequenceMapper):
         if joint_mask is not None:
             dist_matrix += VERY_NEGATIVE_NUMBER * (1 - tf.cast(joint_mask, dist_matrix.dtype))
 
-        if self.alignment_bias is None:
+        if not self.alignment_bias:
             select_probs = tf.nn.softmax(dist_matrix)
         else:
             bias = tf.exp(tf.get_variable("no-alignment-bias", initializer=tf.constant(-1.0, dtype=tf.float32)))
@@ -239,8 +237,8 @@ class StaticAttentionSelf(SequenceMapper):
             return response
 
     def __setstate__(self, state):
-        if "alignment_bias" not in state["state"]:
-            state["state"]["alignment_bias"] = False
+        if "state" in state:
+            state["state"]["alignment_bias"] = True
         super().__setstate__(state)
 
 
@@ -288,8 +286,9 @@ class BiAttention(AttentionMapper):
             return tf.concat([x, select_query, x * select_context], axis=2)
 
     def __setstate__(self, state):
-        if "query_dots" not in state["state"]:
-            state["state"]["query_dots"] = True
+        if "state" in state:
+            if "query_dots" not in state["state"]:
+                state["state"]["query_dots"] = True
         super().__setstate__(state)
 
 

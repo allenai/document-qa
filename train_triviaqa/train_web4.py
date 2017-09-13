@@ -1,11 +1,12 @@
 from tensorflow.contrib.keras.python.keras.initializers import TruncatedNormal
 from tqdm import tqdm
 
+import model_dir
 import trainer
 from data_processing.document_splitter import MergeParagraphs, TopTfIdf, Truncate
-from data_processing.multi_paragraph_qa import RandomParagraphDatasetBuilder, StratifyParagraphsBuilder
+from data_processing.multi_paragraph_qa import RandomParagraphsBuilder, StratifyParagraphsBuilder
 from data_processing.preprocessed_corpus import PreprocessedData
-from data_processing.qa_training_data import ParagraphAndQuestionDatasetBuilder, ContextLenBucketedKey, ContextLenKey
+from data_processing.qa_training_data import ParagraphAndQuestionsBuilder, ContextLenBucketedKey, ContextLenKey
 from data_processing.text_utils import NltkPlusStopWords, NameDetector
 from dataset import ListBatcher, ClusteredBatcher
 from doc_qa_models import Attention
@@ -25,7 +26,7 @@ from squad.squad_evaluators import BoundedSquadSpanEvaluator
 from text_preprocessor import WithIndicators
 from trainer import SerializableOptimizer, TrainParams
 from trivia_qa.build_span_corpus import TriviaQaWebDataset
-from trivia_qa.lazy_data import LazyRandomParagraphBuilder
+from experimental.lazy_data import LazyRandomParagraphBuilder
 from trivia_qa.training_data import ExtractSingleParagraph, ExtractMultiParagraphs
 from trivia_qa.triviaqa_evaluators import ConfidenceEvaluator, BoundedSpanEvaluator
 from utils import get_output_name_from_cli
@@ -91,11 +92,11 @@ def main():
     data = PreprocessedData(TriviaQaWebDataset(),
                             ExtractSingleParagraph(MergeParagraphs(400), TopTfIdf(stop, 1),
                                                    model.preprocessor, intern=True),
-                            ParagraphAndQuestionDatasetBuilder(train_batching, eval_batching), eval_on_verified=False)
+                            ParagraphAndQuestionsBuilder(train_batching, eval_batching), eval_on_verified=False)
     eval = [LossEvaluator(), BoundedSpanEvaluator([4, 8])]
     data.preprocess(6, 1000)
 
-    trainer.start_training(data, model, train_params, eval, trainer.ModelDir(out), notes)
+    trainer.start_training(data, model, train_params, eval, model_dir.ModelDir(out), notes)
 
 if __name__ == "__main__":
     main()

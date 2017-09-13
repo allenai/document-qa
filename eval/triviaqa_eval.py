@@ -13,7 +13,7 @@ from data_processing.text_utils import NltkPlusStopWords
 from dataset import FixedOrderBatcher
 from eval.squad_full_document_eval import RecordParagraphSpanPrediction
 from evaluator import Evaluator, Evaluation
-from trainer import ModelDir
+from model_dir import ModelDir
 from trivia_qa.build_span_corpus import TriviaQaWebDataset
 from trivia_qa.training_data import ExtractSingleParagraph, DocumentParagraphQuestion
 from trivia_qa.trivia_qa_eval import f1_score as trivia_f1_score

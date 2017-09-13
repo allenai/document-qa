@@ -11,7 +11,7 @@ from nn.layers import get_keras_activation, get_keras_initialization, SequenceMa
 
 from tensorflow.contrib.rnn import LSTMStateTuple, DropoutWrapper, LSTMBlockFusedCell, GRUBlockCell
 from tensorflow.python.ops.rnn import dynamic_rnn, bidirectional_dynamic_rnn
-from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
+
 
 
 from nn.ops import dropout
@@ -103,8 +103,9 @@ class LstmCellSpec(RnnCellSpec):
             return SwitchableDropoutWrapper(cell, is_train, self.keep_probs)
 
     def __setstate__(self, state):
-        if "keep_recurrent_probs" not in state["state"]:
-            state["state"]["keep_recurrent_probs"] = 1.0
+        if "state" in state:
+            if "keep_recurrent_probs" not in state["state"]:
+                state["state"]["keep_recurrent_probs"] = 1.0
         super().__setstate__(state)
 
 
@@ -161,91 +162,94 @@ def _compute_gates(input, hidden, num_units, forget_bias, kernel_init, recurrent
         return tf.split(value=mat, num_or_size_splits=4, axis=1)
 
 
-class InitializedLSTMCell(RNNCell):
-    def __init__(self, num_units,
-                 kernel_initializer,
-                 recurrent_initializer,
-                 activation,
-                 recurrent_activation,
-                 forget_bias=1.0,
-                 keep_recurrent_probs=1.0,
-                 is_train=None,
-                 scope=None):
-        self.scope = scope if scope is not None else "init_lstm_cell"
-        self.is_train = is_train
-        self.num_units = num_units
-        self.activation = activation
-        self.recurrent_activation = recurrent_activation
-        self.kernel_initializer = kernel_initializer
-        self.recurrent_initializer = recurrent_initializer
-        self.forget_bias = forget_bias
-        self.keep_recurrent_probs = keep_recurrent_probs
-
-    @property
-    def state_size(self):
-        return LSTMStateTuple(self.num_units, self.num_units)
-
-    @property
-    def output_size(self):
-        return self.num_units
-
-    def __call__(self, inputs, state, scope=None):
-        with tf.variable_scope(self.scope):
-            c, h = state
-            h = dropout(h, self.keep_recurrent_probs, self.is_train)
-
-            mat = _compute_gates(inputs, h, self.num_units, self.forget_bias,
-                                        self.kernel_initializer, self.recurrent_initializer, True)
-
-            i, j, f, o = tf.split(value=mat, num_or_size_splits=4, axis=1)
-
-            new_c = (c * self.recurrent_activation(f) + self.recurrent_activation(i) *
-                     self.activation(j))
-            new_h = self.activation(new_c) * self.recurrent_activation(o)
-
-            new_state = LSTMStateTuple(new_c, new_h)
-
-        return new_h, new_state
-
-
-class GRUCell(RNNCell):
-
-    def __init__(self, num_units, bias_init, kernel_init, recurrent_init,
-                 candidate_init, activation=tf.tanh):
-        self.num_units = num_units
-        self.activation = activation
-        self.kernal_init = kernel_init
-        self.recurrent_init = recurrent_init
-        self.bias_init = bias_init
-        self.candidate_init = candidate_init
-
-    @property
-    def state_size(self):
-        return self.num_units
-
-    @property
-    def output_size(self):
-        return self.num_units
-
-    def __call__(self, inputs, state, scope=None):
-        with tf.variable_scope("gru"):
-
-            def _init_stacked_weights(shape, dtype=None, partition_info=None):
-                kernal_shape = list(shape)
-                kernal_shape[0] = inputs.shape.as_list()[-1]
-                recurrent_shape = list(shape)
-                recurrent_shape[0] = state.shape.as_list()[-1]
-                return tf.concat([self.kernal_init(kernal_shape, dtype), self.recurrent_init(recurrent_shape, dtype)], axis=0)
-
-
-            value = tf.sigmoid(_linear(tf.concat([inputs, state], axis=1), self.num_units*2,
-                                       True, self.bias_init, _init_stacked_weights))
-            r, u = tf.split(value=value, num_or_size_splits=2, axis=1)
-        with tf.variable_scope("candidate"):
-            c = self.activation(_linear(tf.concat([inputs, r * state], axis=1), self.num_units, True,
-                                        tf.zeros_initializer(), self.candidate_init))
-        new_h = u * state + (1 - u) * c
-        return new_h, new_h
+# from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
+#
+#
+# class InitializedLSTMCell(RNNCell):
+#     def __init__(self, num_units,
+#                  kernel_initializer,
+#                  recurrent_initializer,
+#                  activation,
+#                  recurrent_activation,
+#                  forget_bias=1.0,
+#                  keep_recurrent_probs=1.0,
+#                  is_train=None,
+#                  scope=None):
+#         self.scope = scope if scope is not None else "init_lstm_cell"
+#         self.is_train = is_train
+#         self.num_units = num_units
+#         self.activation = activation
+#         self.recurrent_activation = recurrent_activation
+#         self.kernel_initializer = kernel_initializer
+#         self.recurrent_initializer = recurrent_initializer
+#         self.forget_bias = forget_bias
+#         self.keep_recurrent_probs = keep_recurrent_probs
+#
+#     @property
+#     def state_size(self):
+#         return LSTMStateTuple(self.num_units, self.num_units)
+#
+#     @property
+#     def output_size(self):
+#         return self.num_units
+#
+#     def __call__(self, inputs, state, scope=None):
+#         with tf.variable_scope(self.scope):
+#             c, h = state
+#             h = dropout(h, self.keep_recurrent_probs, self.is_train)
+#
+#             mat = _compute_gates(inputs, h, self.num_units, self.forget_bias,
+#                                         self.kernel_initializer, self.recurrent_initializer, True)
+#
+#             i, j, f, o = tf.split(value=mat, num_or_size_splits=4, axis=1)
+#
+#             new_c = (c * self.recurrent_activation(f) + self.recurrent_activation(i) *
+#                      self.activation(j))
+#             new_h = self.activation(new_c) * self.recurrent_activation(o)
+#
+#             new_state = LSTMStateTuple(new_c, new_h)
+#
+#         return new_h, new_state
+#
+#
+# class GRUCell(RNNCell):
+#
+#     def __init__(self, num_units, bias_init, kernel_init, recurrent_init,
+#                  candidate_init, activation=tf.tanh):
+#         self.num_units = num_units
+#         self.activation = activation
+#         self.kernal_init = kernel_init
+#         self.recurrent_init = recurrent_init
+#         self.bias_init = bias_init
+#         self.candidate_init = candidate_init
+#
+#     @property
+#     def state_size(self):
+#         return self.num_units
+#
+#     @property
+#     def output_size(self):
+#         return self.num_units
+#
+#     def __call__(self, inputs, state, scope=None):
+#         with tf.variable_scope("gru"):
+#
+#             def _init_stacked_weights(shape, dtype=None, partition_info=None):
+#                 kernal_shape = list(shape)
+#                 kernal_shape[0] = inputs.shape.as_list()[-1]
+#                 recurrent_shape = list(shape)
+#                 recurrent_shape[0] = state.shape.as_list()[-1]
+#                 return tf.concat([self.kernal_init(kernal_shape, dtype), self.recurrent_init(recurrent_shape, dtype)], axis=0)
+#
+#
+#             value = tf.sigmoid(_linear(tf.concat([inputs, state], axis=1), self.num_units*2,
+#                                        True, self.bias_init, _init_stacked_weights))
+#             r, u = tf.split(value=value, num_or_size_splits=2, axis=1)
+#         with tf.variable_scope("candidate"):
+#             c = self.activation(_linear(tf.concat([inputs, r * state], axis=1), self.num_units, True,
+#                                         tf.zeros_initializer(), self.candidate_init))
+#         new_h = u * state + (1 - u) * c
+#         return new_h, new_h
 
 #
 # _gru_ops_so = tf.load_op_library(
@@ -614,14 +618,15 @@ class CudnnGru(CudnnRnnMapper, SequenceMapper):
         return super().map(is_train, x, mask)
 
     def __setstate__(self, state):
-        if "_kind" not in state["state"]:
-            state["state"]["_kind"] = "GRU"
-        if "learn_initial_states" not in state["state"]:
-            state["state"]["learn_initial_states"] = False
-        if "recurrent_init" not in state["state"]:
-            state["state"]["recurrent_init"] = None
-        if "keep_recurrent" not in state["state"]:
-            state["state"]["keep_recurrent"] = 1
+        if "state" in state:
+            if "_kind" not in state["state"]:
+                state["state"]["_kind"] = "GRU"
+            if "learn_initial_states" not in state["state"]:
+                state["state"]["learn_initial_states"] = False
+            if "recurrent_init" not in state["state"]:
+                state["state"]["recurrent_init"] = None
+            if "keep_recurrent" not in state["state"]:
+                state["state"]["keep_recurrent"] = 1
         super().__setstate__(state)
 
 
@@ -695,6 +700,13 @@ class FusedRecurrentEncoder(SequenceEncoder):
             raise ValueError()
         return state
 
+    def __setstate__(self, state):
+        if "n_units" not in state:
+            self.__dict__ = state["state"]
+        else:
+            self.__dict__ = state
+
+
 
 class RecurrentMapper(SequenceMapper):
 
@@ -735,10 +747,11 @@ class BiRecurrentMapper(SequenceMapper):
             return self.merge.apply(is_train, fw, bw)
 
     def __setstate__(self, state):
-        if "merge" not in state["state"]:
-            state["state"]["merge"] = None
-        if "swap_memory" not in state["state"]:
-            state["state"]["swap_memory"] = False
+        if "state" in state:
+            if "merge" not in state["state"]:
+                state["state"]["merge"] = None
+            if "swap_memory" not in state["state"]:
+                state["state"]["swap_memory"] = False
         super().__setstate__(state)
 
 

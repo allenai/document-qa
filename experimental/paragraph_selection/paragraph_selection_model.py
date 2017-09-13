@@ -169,10 +169,11 @@ class ParagraphSelectionFeaturizer(Preprocessor):
         return FilteredData(out, true_len, no_answer_pruned, no_answer_split_pruned, voc)
 
     def __setstate__(self, state):
-        if "intern" not in state["state"]:
-            state["state"]["intern"] = False
-        if "context_voc" not in state["state"]:
-            state["state"]["context_voc"] = False
+        if "state" in state:
+            if "intern" not in state["state"]:
+                state["state"]["intern"] = False
+            if "context_voc" not in state["state"]:
+                state["state"]["context_voc"] = False
         super().__setstate__(state)
 
 

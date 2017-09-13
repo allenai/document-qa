@@ -1,6 +1,9 @@
 import argparse
+from os.path import basename
+
 import pandas as pd
 import numpy as np
+from scipy.stats import kendalltau
 from tqdm import tqdm
 
 from data_processing.text_utils import NltkPlusStopWords
@@ -36,17 +39,24 @@ def show_scores_table(scores, n_to_show=10):
 
 def main():
     parser = argparse.ArgumentParser(description='')
-    parser.add_argument('answers', help='answer file')
+    parser.add_argument('answers', help='answer files', nargs="+")
     args = parser.parse_args()
 
     print("Loading answers..")
-    answer_df = pd.read_csv(args.answers)
+    answer_dfs = []
+    for f in args.answers:
+        answer_dfs.append(pd.read_csv(f))
+
 
     print("Scoring...")
-    answer_df.sort_values(["rank"], inplace=True)
-    model_scores = compute_model_scores(answer_df, "predicted_score", "text_f1", ["question_id"])
-    print(model_scores)
-    show_scores_table(pd.DataFrame({"model_score": model_scores}), 12)
+    out = {}
+    for f, answer_df in zip(args.answers, answer_dfs):
+        answer_df.sort_values(["rank"], inplace=True)
+        model_scores = compute_model_scores(answer_df, "predicted_score", "text_f1", ["question_id"])
+
+        out[f] = model_scores
+
+    print(pd.DataFrame(out))
 
 
 if __name__ == "__main__":

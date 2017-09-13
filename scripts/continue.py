@@ -1,6 +1,7 @@
 import argparse
 
-from trainer import resume_training, ModelDir
+from trainer import resume_training
+from model_dir import ModelDir
 
 
 def main():

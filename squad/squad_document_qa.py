@@ -1,5 +1,5 @@
 import numpy as np
-from typing import List
+from typing import List, Optional
 from collections import Counter
 
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -7,11 +7,14 @@ from sklearn.metrics import pairwise_distances
 
 from configurable import Configurable
 from data_processing.document_splitter import ParagraphFilter
+from data_processing.multi_paragraph_qa import ParagraphWithAnswers, MultiParagraphQuestion, TokenSpanGroup
 from data_processing.preprocessed_corpus import Preprocessor, DatasetBuilder
-from data_processing.qa_training_data import ParagraphAndQuestionSpec, WordCounts, QaCorpusStats
+from data_processing.qa_training_data import ParagraphAndQuestionSpec, WordCounts, QaCorpusStats, ParagraphAndQuestion, \
+    ContextAndQuestion, Answer
 from data_processing.span_data import TokenSpans
 from dataset import Dataset, ListBatcher
 from squad.squad_data import Document, Paragraph, DocParagraphAndQuestion
+from text_preprocessor import TextPreprocessor
 from utils import flatten_iterable
 
 
@@ -20,100 +23,73 @@ Preprocessors to build a document-level question and answer dataset from SQuAD d
 """
 
 
-class MultiParagraphSquadQuestion(object):
-    def __init__(self, question_id, question, paragraphs: List[Paragraph],
-                 paragraph_answer_spans, answer_text):
-        self.question_id = question_id
-        self.question = question
-        self.paragraphs = paragraphs
-        self.paragraph_answer_spans = paragraph_answer_spans
-        self.answer_text = answer_text
+class SquadParagraphWithAnswers(ParagraphWithAnswers):
+
+    @classmethod
+    def merge(cls, paras: List):
+        paras.sort(key=lambda x: x.get_order())
+        answer_spans = []
+        text = []
+        original_text = ""
+        spans = []
+        for para in paras:
+            answer_spans.append(len(text) + para.answer_spans)
+            spans.append(len(original_text) + para.spans)
+            original_text += para.original_text
+            text += para.text
+
+        para = SquadParagraphWithAnswers(text, np.concatenate(answer_spans),
+                                         paras[0].doc_id, paras[0].paragraph_num,
+                                         original_text, np.concatenate(spans))
+        return para
+
+    __slots__ = ["doc_id", "original_text", "paragraph_num", "spans"]
+
+    def __init__(self, text: List[str], answer_spans: np.ndarray, doc_id: str, paragraph_num: int,
+                 original_text: str, spans: np.ndarray):
+        super().__init__(text, answer_spans)
+        self.doc_id = doc_id
+        self.original_text = original_text
+        self.paragraph_num = paragraph_num
+        self.spans = spans
+
+    def get_order(self):
+        return self.paragraph_num
+
+    def get_original_text(self, start, end):
+        return self.original_text[self.spans[start][0]:self.spans[end][1]]
+
+    def build_qa_pair(self, question, question_id, answer_text, group=None):
+        if group is None:
+            ans = TokenSpans(answer_text, self.answer_spans)
+        else:
+            ans = TokenSpanGroup(answer_text, self.answer_spans, group)
+        # returns a context-and-question equiped with a get_original_text method
+        return QuestionAndSquadParagraph(question, ans, question_id, self)
 
 
-class RandomSquadParagraphDataset(Dataset):
-    def __init__(self,
-                 questions: List[MultiParagraphSquadQuestion],
-                 force_answer: float,
-                 true_len: int,
-                 batcher: ListBatcher):
-        self.questions = questions
-        self.force_answer = force_answer
-        self.batcher = batcher
-        self.true_len = true_len
+class QuestionAndSquadParagraph(ContextAndQuestion):
+    def __init__(self, question: List[str], answer: Optional[Answer], question_id: str, para: SquadParagraphWithAnswers):
+        super().__init__(question, answer, question_id, para.doc_id)
+        self.para = para
 
-    def get_vocab(self):
-        voc = set()
-        for q in self.questions:
-            voc.update(q.question)
-            for para in q.paragraphs:
-                for sent in para.context:
-                    voc.update(sent)
-        return voc
+    def get_original_text(self, start, end):
+        return self.para.get_original_text(start, end)
 
-    def get_spec(self):
-        max_q_len = max(len(q.question) for q in self.questions)
-        max_c_len = max(max(p.n_context_words for p in q.paragraphs) for q in self.questions)
-        return ParagraphAndQuestionSpec(self.batcher.get_fixed_batch_size(), max_q_len,
-                                        max_c_len, None)
+    def get_context(self):
+        return self.para.text
 
-    def get_samples(self, n_examples):
-        n_batches = n_examples // self.batcher.batch_size
-        return self.get_batches(n_batches), n_batches
-
-    def get_epoch(self):
-        questions = self.questions
-        out = []
-        for q in questions:
-            if self.force_answer > 0 and np.random.random() < self.force_answer:
-                candidates = [i for i,x in enumerate(q.paragraph_answer_spans) if len(x) > 0]
-                if len(candidates) == 0:
-                    raise ValueError()
-                selected = candidates[np.random.randint(len(candidates))]
-            else:
-                selected = np.random.randint(len(q.paragraphs))
-
-            para = q.paragraphs[selected]
-            answer_spans = q.paragraph_answer_spans[selected]
-            out.append(DocParagraphAndQuestion(q.question, TokenSpans(q.answer_text, answer_spans), q.question_id, para))
-
-        return self.batcher.get_epoch(out)
-
-    def percent_filtered(self):
-        return (self.true_len - len(self.questions)) / self.true_len
-
-    def __len__(self):
-        return self.batcher.epoch_size(len(self.questions))
-
-
-class RandomSquadParagraphBuilder(DatasetBuilder):
-    def __init__(self, train_batching: ListBatcher, eval_batching: ListBatcher,
-                 force_answer: float):
-        self.train_batching = train_batching
-        self.eval_batching = eval_batching
-        self.force_answer = force_answer
-
-    def build_stats(self, data: List[MultiParagraphSquadQuestion]):
-        context_counts = Counter()
-        question_counts = Counter()
-        for point in data:
-            question_counts.update(point.question)
-            factor = 1/len(point.paragraphs)
-            for para in point.paragraphs:
-                for sent in para.context:
-                    for word in sent:
-                        context_counts[word] += factor
-        return QaCorpusStats(question_counts, context_counts)
-
-    def build_dataset(self, data, evidence, is_train: bool) -> Dataset:
-        batching = self.train_batching if is_train else self.eval_batching
-        return RandomSquadParagraphDataset(data, self.force_answer, len(data), batching)
+    @property
+    def n_context_words(self) -> int:
+        return len(self.para.text)
 
 
 class SquadTfIdfRanker(Preprocessor):
-    def __init__(self, stop, n_to_select: int, force_answer: bool):
+    def __init__(self, stop, n_to_select: int, force_answer: bool, text_process: TextPreprocessor=None):
         self.stop = stop
         self.n_to_select = n_to_select
         self.force_answer = force_answer
+        self.text_process = text_process
         self._tfidf = TfidfVectorizer(strip_accents="unicode", stop_words=self.stop.words)
 
     def preprocess(self, question: List[Document], evidence):
@@ -126,28 +102,37 @@ class SquadTfIdfRanker(Preprocessor):
         scores = pairwise_distances(q_features, para_features, "cosine")
         return scores
 
-    def ranked_questions(self, docs: List[Document]) -> List[MultiParagraphSquadQuestion]:
+    def ranked_questions(self, docs: List[Document]) -> List[MultiParagraphQuestion]:
         out = []
         for doc in docs:
             scores = self.rank(flatten_iterable([q.words for q in x.questions] for x in doc.paragraphs),
-                               [x.context for x in doc.paragraphs])
+                               [x.text for x in doc.paragraphs])
             q_ix = 0
             for para_ix, para in enumerate(doc.paragraphs):
                 for q in para.questions:
                     para_scores = scores[q_ix]
                     para_ranks = np.argsort(para_scores)
                     selection = [i for i in para_ranks[:self.n_to_select]]
-                    answer_spans = [np.zeros((0, 2), np.int32) for _ in selection]
 
                     if self.force_answer and para_ix not in selection:
                         selection[-1] = para_ix
-                        answer_spans[-1] = q.answer.answer_spans
-                    else:
-                        correct_ix = [ix for ix,i in enumerate(selection) if i == para_ix]
-                        if len(correct_ix) > 0:
-                            answer_spans[correct_ix[0]] = q.answer.answer_spans
 
-                    out.append(MultiParagraphSquadQuestion(q.question_id, q.words, [doc.paragraphs[i] for i in selection],
-                                                           answer_spans, q.answer.answer_text))
+                    para = []
+                    for ix in selection:
+                        if ix == para_ix:
+                            ans = q.answer.answer_spans
+                        else:
+                            ans = np.zeros((0, 2), dtype=np.int32)
+                        p = doc.paragraphs[ix]
+                        if self.text_process:
+                            text, ans, inv = self.text_process.encode_paragraph(q.words,  [flatten_iterable(p.text)],
+                                                               p.paragraph_num == 0, ans, p.spans)
+                            para.append(SquadParagraphWithAnswers(text, ans, doc.doc_id,
+                                                                  ix, p.original_text, inv))
+                        else:
+                            para.append(SquadParagraphWithAnswers(flatten_iterable(p.text), ans, doc.doc_id,
+                                                                  ix, p.original_text, p.spans))
+
+                    out.append(MultiParagraphQuestion(q.question_id, q.words, q.answer.answer_text, para))
                     q_ix += 1
         return out

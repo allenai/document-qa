@@ -3,75 +3,26 @@ import pickle
 import shutil
 import time
 from datetime import datetime
-from os.path import exists, join, relpath, isabs
-from threading import Thread, Event
-from typing import List, Union, Tuple, Optional, Dict
+from os.path import exists, join, relpath
+from threading import Thread
+from typing import List, Union, Optional, Dict
 
-import tensorflow as tf
 import numpy as np
-from tqdm import tqdm
-
-from configurable import Configurable
-from dataset import TrainingData, Dataset
-from evaluator import Evaluator, Evaluation, AysncEvaluatorRunner, EvaluatorRunner
+import tensorflow as tf
 from tensorflow.python.training.adadelta import AdadeltaOptimizer
 from tensorflow.python.training.adam import AdamOptimizer
 
 import configurable
+from configurable import Configurable
+from data_processing.preprocessed_corpus import PreprocessedData
+from dataset import TrainingData, Dataset
+from evaluator import Evaluator, Evaluation, AysncEvaluatorRunner, EvaluatorRunner
 from model import Model
-from utils import NumpyEncoder, flatten_iterable
+from model_dir import ModelDir
 
-
-class ModelDir(object):
-    def __init__(self, name: str):
-        if isabs(name):
-            print("WARNING!!!, using an absolute paths for models name can break restoring "
-                  "the model if the model directory is used")
-        self.dir = name
-
-    def get_model(self) -> Model:
-        with open(join(self.dir, "model.npy"), "rb") as f:
-            return pickle.load(f)
-
-    def get_eval_dir(self):
-        answer_dir = join(self.dir, "answers")
-        if not exists(answer_dir):
-            os.mkdir(answer_dir)
-        return answer_dir
-
-    def get_last_train_params(self):
-        last_train_file = None
-        last_train_step = -1
-        for file in os.listdir(self.dir):
-            if file.startswith("train_from_") and file.endswith("npy"):
-                step = int(file[11:file.rfind(".npy")])
-                if step > last_train_step:
-                    last_train_step = step
-                    last_train_file = join(self.dir, file)
-
-        print("Resuming using the parameters stored in: " + last_train_file)
-        with open(last_train_file, "rb") as f:
-            return pickle.load(f)
-
-    def get_latest_checkpoint(self):
-        print(self.save_dir)
-        return tf.train.latest_checkpoint(self.save_dir)
-
-    def get_checkpoint(self, step):
-        # I cant find much formal documentation on how to do this, but this seems to work
-        return join(self.save_dir, "checkpoint-%d-%d" % (step, step))
-
-    @property
-    def eval_dir(self):
-        return join(self.dir, "eval")
-
-    @property
-    def save_dir(self):
-        return join(self.dir, "save")
-
-    @property
-    def log_dir(self):
-        return join(self.dir, "log")
+"""
+Contains the train-loop and test-loop for our models
+"""
 
 
 class SerializableOptimizer(Configurable):
@@ -101,8 +52,7 @@ class SerializableOptimizer(Configurable):
 
 
 def init(out: ModelDir, model: Model, override=False):
-    import socket
-    hostname = socket.gethostname()
+    """ Save our initialization into `out` """
 
     for dir in [out.save_dir, out.log_dir]:
         if os.path.exists(dir):
@@ -116,13 +66,11 @@ def init(out: ModelDir, model: Model, override=False):
         else:
             os.makedirs(dir)
 
-    init = dict(date=datetime.now().strftime("%m%d-%H%M%S"),
-                host=hostname)
-
-    with open(join(out.dir, "init.json"), "w") as f:
-        f.write(configurable.config_to_json(init, indent=2))
+    # JSON config just so we have a human-readable dump of what we are working with
     with open(join(out.dir, "model.json"), "w") as f:
         f.write(configurable.config_to_json(model, indent=2))
+
+    # Actual model saved via pickle
     with open(join(out.dir, "model.npy"), "wb") as f:
         pickle.dump(model, f)
 
@@ -166,8 +114,10 @@ def save_train_start(out,
                      evaluators: List[Evaluator],
                      train_params: TrainParams,
                      notes: str):
+    """ Record the training parameters we are about to use into `out`  """
+
     if notes is not None:
-        with open(join(out, "train_from_%d_notes.text" % global_step), "w") as f:
+        with open(join(out, "train_from_%d_notes.txt" % global_step), "w") as f:
             f.write(notes)
 
     import socket
@@ -194,8 +144,13 @@ def _build_train_ops(train_params):
         raise RuntimeError("No losses found in losses collection")
     loss = tf.add_n(loss, name="loss")
 
-    summary_tensor = tf.summary.merge([[tf.summary.tensor_summary("loss", loss)] +
-                                       tf.get_collection(tf.GraphKeys.SUMMARIES)])
+    if len(tf.get_collection(tf.GraphKeys.SUMMARIES)) > 0:
+        # Add any summaries client stored in SUMMARIES
+        summary_tensor = tf.summary.merge([[tf.summary.tensor_summary("loss", loss)] +
+                                           tf.get_collection(tf.GraphKeys.SUMMARIES)])
+    else:
+        summary_tensor = tf.summary.tensor_summary("loss", loss)
+
     train_objective = loss
 
     regularizers = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
@@ -218,6 +173,7 @@ def _build_train_ops(train_params):
             # Run the old training op, then update the averages.
             train_opt = tf.group(ema_op)
 
+    # Any collections starting with "monitor" are also added as summaries
     to_monitor = {}
     for col in tf.get_default_graph().get_all_collection_keys():
         if col.startswith("monitor"):
@@ -235,11 +191,11 @@ def _build_train_ops(train_params):
             [tf.summary.scalar(col, monitor_ema.average(v)) for col, v in to_monitor.items()] +
             [summary_tensor])
 
+    # EMA for the loss and what we monitoring
     if train_params.loss_ema is not None:
         loss_ema = tf.train.ExponentialMovingAverage(decay=train_params.loss_ema, name="LossEMA", zero_debias=True)
 
         if regularization_loss is None:
-            print(loss)
             ema_op = loss_ema.apply([loss])
             train_opt = tf.group(train_opt, ema_op)
             ema_var = loss_ema.average(loss)
@@ -251,10 +207,9 @@ def _build_train_ops(train_params):
             tensor_vars = [
                 tf.summary.scalar("training-ema/loss", loss_ema.average(loss)),
                 tf.summary.scalar("training-ema/objective", loss_ema.average(train_objective)),
-            ]
-            if regularization_loss is not None:
-                tensor_vars.append(tf.summary.scalar("training-ema/regularization-loss",
-                                                     loss_ema.average(regularization_loss)))
+                tf.summary.scalar("training-ema/regularization-loss",
+                                  loss_ema.average(regularization_loss))
+                ]
             summary_tensor = tf.summary.merge([tensor_vars, summary_tensor])
 
     return loss, summary_tensor, train_opt, global_step
@@ -268,6 +223,7 @@ def continue_training(
         out: ModelDir,
         notes: str = None,
         dry_run=False):
+    """ Train an already existing model, or start for scatch """
     if not exists(out.dir) or os.listdir(out.dir) == 0:
         start_training(data, model, train_params, evaluators, out, notes, dry_run)
     else:
@@ -284,10 +240,11 @@ def start_training(
         notes: str = None,
         initialize_from=None,
         dry_run=False):
+    """ Train a model from scratch """
     if initialize_from is None:
         print("Initializing model at: " + out.dir)
-        # print("ASDFASDF")
         model.init(data.get_train_corpus(), data.get_resource_loader())
+    # Else we assume the model has already completed its first phase of initialization
 
     if not dry_run:
         init(out, model, False)
@@ -297,21 +254,23 @@ def start_training(
 
 
 def resume_training(out: ModelDir, notes: str = None, dry_run=False, start_eval=False):
+    """ Resume training an existing model """
+
     train_params = out.get_last_train_params()
     model = out.get_model()
 
     train_data = train_params["data"]
 
-    # TODO make preprocess officially in the training_data API
-    train_data.preprocess(6, 1000)
-    # train_data.load_preprocess("tfidf-top4-in-mem.pkl.gz")
+    if isinstance(train_data, PreprocessedData):
+        # TODO don't hard code # of processes
+        train_data.preprocess(6, 1000)
 
     evaluators = train_params["evaluators"]
     params = train_params["train_params"]
 
     latest = tf.train.latest_checkpoint(out.save_dir)
     if latest is None:
-        raise ValueError()
+        raise ValueError("No checkpoint to resume from found in " + out.save_dir)
 
     _train(model, train_data, latest, None, False, params, evaluators, out, notes, dry_run, start_eval)
 
@@ -323,9 +282,12 @@ def resume_training_with(
         evaluators: List[Evaluator],
         notes: str = None,
         dry_run: bool = False):
+    """ Resume training an existing model with the specified parameters """
     with open(join(out.dir, "model.npy"), "rb") as f:
         model = pickle.load(f)
     latest = out.get_latest_checkpoint()
+    if latest is None:
+        raise ValueError("No checkpoint to resume from found in " + out.save_dir)
 
     _train(model, data, latest, None, False,
            train_params, evaluators, out, notes, dry_run)
@@ -398,7 +360,7 @@ def _train(model: Model,
             print("Initializing parameters...")
             sess.run(tf.global_variables_initializer())
 
-    # Make sure not bugs occur that add to the graph in the train loop, that can cause (eventuall) OOMs
+    # Make sure no bugs occur that add to the graph in the train loop, that can cause (eventuall) OOMs
     tf.get_default_graph().finalize()
 
     print("Start training!")
@@ -427,10 +389,13 @@ def _train(model: Model,
             encoded = model.encode(batch, True)
 
             if get_summary:
-                summary, _ = sess.run([summary_tensor, train_opt], feed_dict=encoded)
+                summary, _, batch_loss = sess.run([summary_tensor, train_opt, loss], feed_dict=encoded)
             else:
                 summary = None
-                sess.run([train_opt], feed_dict=encoded)
+                _, batch_loss = sess.run([train_opt, loss], feed_dict=encoded)
+
+            if np.isnan(batch_loss):
+                raise RuntimeError("NaN loss!")
 
             batch_time += time.perf_counter() - t0
             if get_summary:
@@ -461,46 +426,6 @@ def _train(model: Model,
 
     saver.save(sess, relpath(join(out.save_dir, "checkpoint-" + str(on_step))), global_step=global_step)
     sess.close()
-
-
-def test(model: Model, evaluators, datasets: Dict[str, Dataset], loader, checkpoint,
-         ema=False, aysnc_encoding=None, sample=None) -> Dict[str, Evaluation]:
-    print("Setting up model")
-    model.set_inputs(list(datasets.values()), loader)
-
-    if aysnc_encoding:
-        evaluator_runner = AysncEvaluatorRunner(evaluators, model, aysnc_encoding)
-        inputs = evaluator_runner.dequeue_op
-    else:
-        evaluator_runner = EvaluatorRunner(evaluators, model)
-        inputs = model.get_placeholders()
-    input_dict = {p: x for p, x in zip(model.get_placeholders(), inputs)}
-
-    sess = tf.Session(config=tf.ConfigProto(allow_soft_placement=True))
-    with sess.as_default():
-        pred = model.get_predictions_for(input_dict)
-    evaluator_runner.set_input(pred)
-
-    print("Restoring variables")
-    saver = tf.train.Saver()
-    saver.restore(sess, checkpoint)
-
-    if ema:
-        # FIXME This is a bit stupid, since we are loading variables twice, but I found it
-        # a bit fiddly to load the variables directly....
-        print("Restoring EMA variables")
-        ema = tf.train.ExponentialMovingAverage(0)
-        saver = tf.train.Saver({ema.average_name(x): x for x in tf.trainable_variables()})
-        saver.restore(sess, checkpoint)
-
-    tf.get_default_graph().finalize()
-
-    print("Begin evaluation")
-
-    dataset_outputs = {}
-    for name, dataset in datasets.items():
-        dataset_outputs[name] = evaluator_runner.run_evaluators(sess, dataset, name, sample, {})
-    return dataset_outputs
 
 
 def _train_async(model: Model,
@@ -622,10 +547,13 @@ def _train_async(model: Model,
                 get_summary = on_step % train_params.log_period == 0
 
                 if get_summary:
-                    summary, _ = sess.run([summary_tensor, train_opt], feed_dict=train_dict)
+                    summary, _, batch_loss = sess.run([summary_tensor, train_opt, loss], feed_dict=train_dict)
                 else:
                     summary = None
-                    sess.run([train_opt], feed_dict=train_dict)
+                    _, batch_loss = sess.run([train_opt, loss], feed_dict=train_dict)
+
+                if np.isnan(batch_loss):
+                    raise RuntimeError("NaN loss!")
 
                 batch_time += time.perf_counter() - t0
                 if summary is not None:
@@ -660,3 +588,43 @@ def _train_async(model: Model,
 
     saver.save(sess, relpath(join(out.save_dir, "checkpoint-" + str(on_step))), global_step=global_step)
     sess.close()
+
+
+def test(model: Model, evaluators, datasets: Dict[str, Dataset], loader, checkpoint,
+         ema=False, aysnc_encoding=None, sample=None) -> Dict[str, Evaluation]:
+    print("Setting up model")
+    model.set_inputs(list(datasets.values()), loader)
+
+    if aysnc_encoding:
+        evaluator_runner = AysncEvaluatorRunner(evaluators, model, aysnc_encoding)
+        inputs = evaluator_runner.dequeue_op
+    else:
+        evaluator_runner = EvaluatorRunner(evaluators, model)
+        inputs = model.get_placeholders()
+    input_dict = {p: x for p, x in zip(model.get_placeholders(), inputs)}
+
+    sess = tf.Session(config=tf.ConfigProto(allow_soft_placement=True))
+    with sess.as_default():
+        pred = model.get_predictions_for(input_dict)
+    evaluator_runner.set_input(pred)
+
+    print("Restoring variables")
+    saver = tf.train.Saver()
+    saver.restore(sess, checkpoint)
+
+    if ema:
+        # FIXME This is a bit stupid, since we are loading variables twice, but I found it
+        # a bit fiddly to load the variables directly....
+        print("Restoring EMA variables")
+        ema = tf.train.ExponentialMovingAverage(0)
+        saver = tf.train.Saver({ema.average_name(x): x for x in tf.trainable_variables()})
+        saver.restore(sess, checkpoint)
+
+    tf.get_default_graph().finalize()
+
+    print("Begin evaluation")
+
+    dataset_outputs = {}
+    for name, dataset in datasets.items():
+        dataset_outputs[name] = evaluator_runner.run_evaluators(sess, dataset, name, sample, {})
+    return dataset_outputs

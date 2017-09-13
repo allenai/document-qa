@@ -12,19 +12,24 @@ def _vec_path(vec_name):
 
 
 def load_word_vectors(vec_name: str, vocab: Optional[Iterable[str]]=None):
+    vec_path = _vec_path(vec_name)
+    return load_word_vector_file(vec_path, vocab)
+
+
+def load_word_vector_file(vec_path: str, vocab: Optional[Iterable[str]] = None):
     if vocab is not None:
         vocab = set(x.lower() for x in vocab)
     pruned_dict = {}
-    vec_path = _vec_path(vec_name)
+
+    # some of the large vec files produce utf-8 errors for some words, just skip them
     if not exists(vec_path):
-        vec_path += "gz"
+        vec_path += ".gz"
         if not exists(vec_path):
-            raise ValueError("Could not find word vectors: %s at %s" % (vec_name, vec_path))
+            raise ValueError("Could not find word vectors: %s" % vec_path)
         handle = lambda x: gzip.open(x, 'r', encoding='utf-8', errors='ignore')
     else:
         handle = lambda x: open(x, 'r', encoding='utf-8', errors='ignore')
 
-    # some of the large vec files produce utf-8 errors for some words, just skip them
     with handle(vec_path) as fh:
         for line in fh:
             word_ix = line.find(" ")

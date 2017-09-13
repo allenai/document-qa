@@ -39,6 +39,7 @@ def show_scores_table(df, n_to_show, cols):
 def main():
     parser = argparse.ArgumentParser(description='')
     parser.add_argument('answers', help='answer file', nargs="+")
+    parser.add_argument('--em', action="store_true")
     parser.add_argument('--open', action="store_true")
     args = parser.parse_args()
 
@@ -85,7 +86,10 @@ def main():
         # answer_df["none_prob"] = -answer_df["none_prob"]
         model_scores = compute_model_scores(answer_df, "predicted_score", "text_f1",
                                             ["question_id"] if args.open else ["question_id", "doc_id"])
-        data["answers_%d" % i] = model_scores
+        data["answers_%d_f1" % i] = model_scores
+        model_scores = compute_model_scores(answer_df, "predicted_score", "text_em",
+                                            ["question_id"] if args.open else ["question_id", "doc_id"])
+        data["answers_%d_em" % i] = model_scores
 
     show_scores_table(pd.DataFrame(data), 30 if args.open else 12, list(data.keys()))
 

@@ -1,7 +1,7 @@
 """
 Data for cases where we have many paragraphs mapped to a single question
 """
-from typing import List
+from typing import List, Union
 from collections import Counter, defaultdict
 
 from data_processing.preprocessed_corpus import DatasetBuilder, FilteredData
@@ -14,24 +14,79 @@ import numpy as np
 from utils import flatten_iterable
 
 
-class DocumentParagraph(object):
-    __slots__ = ["doc_id", "start", "end", "answer_spans", "text", "rank"]
+class ParagraphWithAnswers(object):
+    __slots__ = ["text", "answer_spans"]
+
+    def __init__(self, text: List[str], answer_spans: np.ndarray):
+        self.text = text
+        self.answer_spans = answer_spans
+
+    @classmethod
+    def merge(cls, paras: List):
+        paras.sort(key=lambda x: x.get_order())
+        answer_spans = []
+        text = []
+        for para in paras:
+            answer_spans.append(len(text) + para.answer_spans)
+            text += para.text
+        return ParagraphWithAnswers(text, np.concatenate(answer_spans))
+
+    def get_context(self):
+        return self.text
+
+    def get_order(self):
+        raise NotImplementedError()
+
+    def build_qa_pair(self, question, question_id, answer_text, group=None) -> ContextAndQuestion:
+        if group is None:
+            ans = TokenSpans(answer_text, self.answer_spans)
+        else:
+            ans = TokenSpanGroup(answer_text, self.answer_spans, group)
+        return ParagraphAndQuestion(self.text, question, ans, question_id)
+
+    def with_tokens(self, tokens, ixs, remove_cross_answers):
+        offset = 0
+        text = list(self.text)
+        for ix, token in zip(tokens, ixs):
+            text.insert(ix, token)
+            offset += 1
+
+
+class DocumentParagraph(ParagraphWithAnswers):
+    __slots__ = ["doc_id", "start", "end", "rank"]
 
     def __init__(self, doc_id: str, start: int, end: int, rank: int,
                  answer_spans: np.ndarray, text: List[str]):
+        super().__init__(text, answer_spans)
         self.doc_id = doc_id
         self.start = start
         self.rank = rank
         self.end = end
-        self.answer_spans = answer_spans
-        self.text = text
+
+    def get_order(self):
+        return self.start
+
+
+class DocumentParagraph(ParagraphWithAnswers):
+    __slots__ = ["doc_id", "start", "end", "rank"]
+
+    def __init__(self, doc_id: str, start: int, end: int, rank: int,
+                 answer_spans: np.ndarray, text: List[str]):
+        super().__init__(text, answer_spans)
+        self.doc_id = doc_id
+        self.start = start
+        self.rank = rank
+        self.end = end
+
+    def get_order(self):
+        return self.start
 
 
 class MultiParagraphQuestion(object):
     __slots__ = ["question_id", "question", "end", "answer_text", "paragraphs"]
 
     def __init__(self, question_id: str, question: List[str], answer_text: List[str],
-                 paragraphs: List[DocumentParagraph]):
+                 paragraphs: List[ParagraphWithAnswers]):
         self.question_id = question_id
         self.question = question
         self.answer_text = answer_text
@@ -87,8 +142,7 @@ class RandomParagraphDataset(Dataset):
                 probs = (answer_probs + uniform_probs) / 2.0
                 selected = np.random.choice(q.paragraphs, self.n_to_sample, p=probs, replace=False)
             for s in selected:
-                out.append(ParagraphAndQuestion(s.text, q.question,
-                                                TokenSpans(q.answer_text, s.answer_spans), q.question_id))
+                out.append(s.build_qa_pair(q.question, q.question_id, q.answer_text))
 
         return self.batcher.get_epoch(out)
 
@@ -104,9 +158,11 @@ class StratifyParagraphsDataset(Dataset):
                  questions: List[MultiParagraphQuestion],
                  true_len: int,
                  oversample_answer: int,
+                 overample_first_answer: int,
                  batcher: ListBatcher):
         self.questions = questions
         self.oversample_answer = oversample_answer
+        self.overample_first_answer = overample_first_answer
         self.batcher = batcher
         self.true_len = true_len
 
@@ -119,11 +175,18 @@ class StratifyParagraphsDataset(Dataset):
                 # No need to oversample
                 order = list(range(len(paras)))
             else:
+                if self.overample_first_answer > 0:
+                    for i, p in enumerate(paras):
+                        if len(p.answer_spans) > 0:
+                            order += [i] * self.overample_first_answer
+                            break
+
                 for i, p in enumerate(paras):
                     if len(p.answer_spans) == 0:
                         order.append(i)
                     else:
-                        order += [i] * self.oversample_answer
+                        order += [i] * (self.oversample_answer + 1)
+
             order = np.array(order, dtype=np.int32)
             np.random.shuffle(order)
             self._order.append(order)
@@ -157,8 +220,7 @@ class StratifyParagraphsDataset(Dataset):
                 np.random.shuffle(order)
                 self._on[i] = 0
 
-            out.append(ParagraphAndQuestion(selected.text, q.question,
-                                            TokenSpans(q.answer_text, selected.answer_spans), q.question_id))
+            out.append(selected.build_qa_pair(q.question, q.question_id, q.answer_text))
 
         return self.batcher.get_epoch(out)
 
@@ -167,34 +229,6 @@ class StratifyParagraphsDataset(Dataset):
 
     def __len__(self):
         return self.batcher.epoch_size(len(self.questions))
-
-
-class SampleQuestionDataset(ParagraphAndQuestionDataset):
-    def __init__(self, data: List[MultiParagraphQuestion],
-                 batching: ListBatcher, sample_doc=True):
-        self.grouped = defaultdict(list)
-        flattened = []
-        for point in data:
-            for para in point.paragraphs:
-                pair = ParagraphAndQuestion(para.text, point.question,
-                                             TokenSpans(point.answer_text, para.answer_spans),
-                                             point.question_id, para.doc_id)
-                if sample_doc:
-                    self.grouped[(point.question_id, para.doc_id)].append(pair)
-                else:
-                    self.grouped[point.question_id].append(pair)
-                flattened.append(pair)
-        print("Built %d groups" % len(self.grouped))
-        super().__init__(flattened, batching)
-
-    def get_samples(self, n_examples):
-        print("Sampled %d questions, to a total of %d elements" % (len(self.grouped), n_examples))
-        all_ids = list(self.grouped)
-        # we can't sample directly since numpy will interpret the list of tuple as a 2d array
-        ids = [all_ids[i] for i in np.random.choice(len(all_ids), n_examples, replace=False)]
-        out = flatten_iterable(self.grouped[k] for k in ids)
-
-        return self.batching.get_epoch(out), self.batching.epoch_size(len(out))
 
 
 class TokenSpanGroup(TokenSpans):
@@ -216,15 +250,15 @@ class RandomParagraphSetDataset(Dataset):
     """
 
     def __init__(self,
-                 questions: List[MultiParagraphQuestion],
-                 n_paragraphs,
-                 force_answer: bool,
-                 true_len: int,
-                 batch_size: int):
-        self.n_paragraphs = n_paragraphs
+                 questions: List[MultiParagraphQuestion], true_len: int, n_paragraphs: int,
+                 batch_size: int, mode: str, force_answer: bool, oversample_first_answer: int):
+        self.mode = mode
         self.questions = questions
         self.force_answer = force_answer
         self.true_len = true_len
+        self.n_paragraphs = n_paragraphs
+        self.oversample_first_answer = oversample_first_answer
+        self._n_pairs = sum(min(len(q.paragraphs), n_paragraphs) for q in questions)
         self.batcher = ClusteredBatcher(batch_size, lambda x: x.n_context_words, truncate_batches=True)
 
     def get_vocab(self):
@@ -238,7 +272,8 @@ class RandomParagraphSetDataset(Dataset):
     def get_spec(self):
         max_q_len = max(len(q.question) for q in self.questions)
         max_c_len = max(max(len(p.text) for p in q.paragraphs) for q in self.questions)
-        return ParagraphAndQuestionSpec(None, max_q_len, max_c_len, None)
+        return ParagraphAndQuestionSpec(self.batcher.get_fixed_batch_size() if self.mode == "merge" else None,
+                                        max_q_len, max_c_len, None)
 
     def get_epoch(self):
         return self._build_expanded_batches(self.questions)
@@ -250,41 +285,65 @@ class RandomParagraphSetDataset(Dataset):
         for q in questions:
             if len(q.paragraphs) <= self.n_paragraphs:
                 selected = np.arange(len(q.paragraphs))
-            elif self.force_answer:
+            elif not self.force_answer:
+                selected = np.random.choice(len(q.paragraphs), self.n_paragraphs, replace=False)
+            else:
                 with_answer = [i for i, p in enumerate(q.paragraphs) if len(p.answer_spans) > 0]
                 answer_selection = with_answer[np.random.randint(len(with_answer))]
                 other = np.array([i for i, x in enumerate(q.paragraphs) if i != answer_selection])
                 selected = np.random.choice(other, min(len(other), self.n_paragraphs-1), replace=False)
                 selected = np.insert(selected, 0, answer_selection)
-            else:
-                selected = np.random.choice(len(q.paragraphs), self.n_paragraphs, replace=False)
 
-            out.append(ParagraphSelection(q, selected))
+            if self.mode == "flatten":
+                for i in selected:
+                    out.append(q.paragraphs[i].build_qa_pair(q.question, q.question_id, q.answer_text))
+            else:
+                out.append(ParagraphSelection(q, selected))
 
         out.sort(key=lambda x: x.n_context_words)
 
-        group = 0
-        for selection_batch in self.batcher.get_epoch(out):
-            batch = []
-            for selected in selection_batch:
-                q = selected.question
-                for i in selected.selection:
-                    para = q.paragraphs[i]
-                    batch.append(ParagraphAndQuestion(para.text, q.question,
-                                            TokenSpanGroup(q.answer_text, para.answer_spans, group),
-                                            q.question_id, para.doc_id))
-                group += 1
-            yield batch
+        if self.mode == "flatten":
+            for batch in self.batcher.get_epoch(out):
+                yield batch
+        elif self.mode == "group":
+            group = 0
+            for selection_batch in self.batcher.get_epoch(out):
+                batch = []
+                for selected in selection_batch:
+                    q = selected.question
+                    for i in selected.selection:
+                        para = q.paragraphs[i]
+                        batch.append(para.build_qa_pair(q.question, q.question_id, q.answer_text, group))
+                    group += 1
+                yield batch
+        elif self.mode == "merge":
+            for selection_batch in self.batcher.get_epoch(out):
+                batch = []
+                for selected in selection_batch:
+                    q = selected.question
+                    paras = [q.paragraphs[i] for i in selected.selection]
+                    para = paras[0].merge(paras)
+                    batch.append(para.build_qa_pair(q.question, q.question_id, q.answer_text))
+                yield batch
+        else:
+            raise RuntimeError()
 
     def get_samples(self, n_examples):
-        n_batches = self.batcher.epoch_size(n_examples)
-        return self._build_expanded_batches(np.random.choice(self.questions, n_examples, replace=False)), n_batches
+        questions = np.random.choice(self.questions, n_examples, replace=False)
+        if self.mode == "flatten":
+            n_batches = self.batcher.epoch_size(sum(min(len(q.paragraphs), self.n_paragraphs) for q in questions))
+        else:
+            n_batches = self.batcher.epoch_size(n_examples)
+        return self._build_expanded_batches(np.random.choice(questions, n_examples, replace=False)), n_batches
 
     def percent_filtered(self):
         return (self.true_len - len(self.questions)) / self.true_len
 
     def __len__(self):
-        return self.batcher.epoch_size(len(self.questions))
+        if self.mode == "flatten":
+            return self.batcher.epoch_size(self._n_pairs)
+        else:
+            return self.batcher.epoch_size(len(self.questions))
 
 
 class StratifiedParagraphSetDataset(Dataset):
@@ -294,7 +353,10 @@ class StratifiedParagraphSetDataset(Dataset):
                  true_len: int,
                  batch_size: int,
                  force_answer: bool,
+                 overample_first_answer: int,
                  merge: bool):
+        print("Merge: " + str(merge))
+        self.overample_first_answer = overample_first_answer
         self.questions = questions
         self.merge = merge
         self.true_len = true_len
@@ -308,7 +370,14 @@ class StratifiedParagraphSetDataset(Dataset):
             if force_answer:
                 sample1 = [i for i, p in enumerate(q.paragraphs) if len(p.answer_spans) > 0]
             else:
-                sample1 = range(len(q.paragraphs))
+                sample1 = list(range(len(q.paragraphs)))
+
+            if self.overample_first_answer > 0:
+                if not (force_answer and len(sample1) == 1):
+                    for i, p in enumerate(q.paragraphs):
+                        if len(p.answer_spans) > 0:
+                            sample1 += [i] * self.overample_first_answer
+                            break
 
             permutations = []
             for i in sample1:
@@ -354,7 +423,8 @@ class StratifiedParagraphSetDataset(Dataset):
                 q = selected.question
                 if self.merge:
                     paras = [q.paragraphs[i] for i in selected.selection]
-                    paras.sort(key=lambda x: x.start)
+                    # Sort paragraph my reading order, not rank order
+                    paras.sort(key=lambda x: x.get_order())
                     answer_spans = []
                     text = []
                     for para in paras:
@@ -366,9 +436,7 @@ class StratifiedParagraphSetDataset(Dataset):
                 else:
                     for i in selected.selection:
                         para = q.paragraphs[i]
-                        batch.append(ParagraphAndQuestion(para.text, q.question,
-                                                TokenSpanGroup(q.answer_text, para.answer_spans, group),
-                                                q.question_id, para.doc_id))
+                        batch.append(para.build_qa_pair(q.question, q.question_id, q.answer_text, group))
                     group += 1
             yield batch
 
@@ -388,92 +456,115 @@ def multi_paragraph_word_counts(data):
     for point in data:
         wc.update(point.question)
         for para in point.paragraphs:
-            for sent in para.text:
-                wc.update(sent)
+            wc.update(para.get_context())
     return WordCounts(wc)
 
 
 class IndividualParagraphBuilder(DatasetBuilder):
     """ Treat each paragraph as its own training point """
 
-    def __init__(self, train_batcher: ListBatcher, eval_batcher: ListBatcher,
-                 force_answer: float):
-        self.train_batcher = train_batcher
-        self.eval_batcher = eval_batcher
+    def __init__(self, batcher: ListBatcher, force_answer: float):
+        self.batcher = batcher
         self.force_answer = force_answer
 
     def build_stats(self, data: FilteredData):
         return multi_paragraph_word_counts(data.data)
 
-    def build_dataset(self, data: FilteredData, corpus, is_train: bool) -> Dataset:
+    def build_dataset(self, data: FilteredData, corpus) -> Dataset:
         flattened = []
         for point in data.data:
             for para in point.paragraphs:
                 flattened.append(ParagraphAndQuestion(para.text, point.question,
                                             TokenSpans(point.answer_text, para.answer_spans),
                                             point.question_id))
-        return ParagraphAndQuestionDataset(flattened, self.train_batcher if is_train else self.eval_batcher)
+        return ParagraphAndQuestionDataset(flattened, self.batcher)
 
 
-class RandomParagraphDatasetBuilder(DatasetBuilder):
-    def __init__(self, train_batcher: ListBatcher, eval_batcher: ListBatcher, force_answer: float, n_to_sample=1):
-        self.train_batcher = train_batcher
-        self.eval_batcher = eval_batcher
+class RandomParagraphsBuilder(DatasetBuilder):
+    def __init__(self, batching: ListBatcher, force_answer: float, n_to_sample=1):
+        self.batching = batching
         self.force_answer = force_answer
         self.n_to_sample = n_to_sample
 
-    def build_stats(self, data: FilteredData):
-        return multi_paragraph_word_counts(data.data)
-
-    def build_dataset(self, data: FilteredData, corpus, is_train: bool) -> Dataset:
-        if is_train:
-            return RandomParagraphDataset(data.data, self.force_answer, data.true_len,
-                                          self.n_to_sample, self.train_batcher)
+    def build_stats(self, data: Union[FilteredData, List]):
+        if isinstance(data, FilteredData):
+            return multi_paragraph_word_counts(data.data)
         else:
-            return RandomParagraphDataset(data.data, self.force_answer, data.true_len,
-                                          self.n_to_sample, self.eval_batcher)
+            return multi_paragraph_word_counts(data)
+
+    def build_dataset(self, data: Union[FilteredData, List], corpus) -> Dataset:
+        if isinstance(data, FilteredData):
+            l = data.true_len
+            data = data.data
+        else:
+            l = len(data)
+        return RandomParagraphDataset(data, self.force_answer, l,
+                                      self.n_to_sample, self.batching)
 
 
 class StratifyParagraphsBuilder(DatasetBuilder):
-    def __init__(self, batcher: ListBatcher, oversample: int):
+    def __init__(self, batcher: ListBatcher, oversample: int, oversample_first: int):
         self.batcher = batcher
+        self.oversample_first = oversample_first
         self.oversample = oversample
 
-    def build_dataset(self, data, evidence, is_train: bool, n_feature=None) -> Dataset:
-        return StratifyParagraphsDataset(data.data, data.true_len, self.oversample, self.batcher)
+    def build_dataset(self, data, evidence) -> Dataset:
+        if isinstance(data, FilteredData):
+            l = data.true_len
+            data = data.data
+        else:
+            l = len(data)
+        return StratifyParagraphsDataset(data, l, self.oversample, self.oversample_first, self.batcher)
 
     def build_stats(self, data) -> object:
-        return multi_paragraph_word_counts(data.data)
+        if isinstance(data, FilteredData):
+            return multi_paragraph_word_counts(data.data)
+        else:
+            return multi_paragraph_word_counts(data)
 
 
 class RandomParagraphSetDatasetBuilder(DatasetBuilder):
-    def __init__(self, train_batch_size: int, test_batch_size: int, n_paragraphs: int, force_answer: bool):
-        self.n_paragraphs = n_paragraphs
-        self.test_batch_size = test_batch_size
-        self.train_batch_size = train_batch_size
+    def __init__(self, batch_size: int, mode: str, force_answer: bool, oversample_first_answer: int):
+        self.mode = mode
+        self.oversample_first_answer = oversample_first_answer
+        self.batch_size = batch_size
         self.force_answer = force_answer
 
-    def build_stats(self, data: FilteredData):
-        return multi_paragraph_word_counts(data.data)
+    def build_stats(self, data: Union[FilteredData, List]):
+        if isinstance(data, FilteredData):
+            return multi_paragraph_word_counts(data.data)
+        else:
+            return multi_paragraph_word_counts(data)
 
-    def build_dataset(self, data: FilteredData, corpus, is_train: bool) -> Dataset:
-        return RandomParagraphSetDataset(data.data, self.n_paragraphs, self.force_answer,
-                                         data.true_len,
-                                         self.train_batch_size if is_train else self.test_batch_size)
+    def build_dataset(self, data: Union[FilteredData, List], corpus) -> Dataset:
+        if isinstance(data, FilteredData):
+            l = data.true_len
+            data = data.data
+        else:
+            l = len(data)
+        return RandomParagraphSetDataset(data, l, 2, self.batch_size, self.mode,
+                                         self.force_answer, self.oversample_first_answer)
 
 
-class StratifiedParagraphSetDatasetBuilder(DatasetBuilder):
-    def __init__(self, train_batch_size: int, test_batch_size: int, merge: bool, force_answer: bool):
-        self.test_batch_size = test_batch_size
-        self.train_batch_size = train_batch_size
+class StratifyParagraphSetsBuilder(DatasetBuilder):
+    def __init__(self, batch_size: int, merge: bool, force_answer: bool, oversample_first_answer: int):
+        self.batch_size = batch_size
         self.merge = merge
         self.force_answer = force_answer
+        self.oversample_first_answer = oversample_first_answer
 
-    def build_stats(self, data: FilteredData):
-        return multi_paragraph_word_counts(data.data)
+    def build_stats(self, data: Union[List, FilteredData]):
+        if isinstance(data, FilteredData):
+            return multi_paragraph_word_counts(data.data)
+        else:
+            return multi_paragraph_word_counts(data)
 
-    def build_dataset(self, data: FilteredData, corpus, is_train: bool) -> Dataset:
-        return StratifiedParagraphSetDataset(data.data, data.true_len,
-                                             self.train_batch_size if is_train else self.test_batch_size,
-                                             self.force_answer, self.merge)
+    def build_dataset(self, data: Union[FilteredData, List], corpus) -> Dataset:
+        if isinstance(data, FilteredData):
+            l = data.true_len
+            data = data.data
+        else:
+            l = len(data)
+        return StratifiedParagraphSetDataset(data, l, self.batch_size, self.force_answer,
+                                             self.oversample_first_answer, self.merge)
 

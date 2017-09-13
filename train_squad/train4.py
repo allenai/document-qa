@@ -1,5 +1,6 @@
 from tensorflow.contrib.keras.python.keras.initializers import TruncatedNormal
 
+import model_dir
 import trainer
 from data_processing.qa_training_data import ContextLenBucketedKey, ContextLenKey
 from dataset import ListBatcher, ClusteredBatcher
@@ -71,7 +72,7 @@ def main():
     data = DocumentQaTrainingData(corpus, None, train_batching, eval_batching)
 
     eval = [LossEvaluator(), BoundedSquadSpanEvaluator(bound=[17])]
-    trainer.start_training(data, model, train_params, eval, trainer.ModelDir(out), notes)
+    trainer.start_training(data, model, train_params, eval, model_dir.ModelDir(out), notes)
 
 
 if __name__ == "__main__":

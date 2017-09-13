@@ -13,7 +13,8 @@ from nn.prediction_layers import ChainConcatConfidenceHack
 from nn.recurrent_layers import BiRecurrentMapper, LstmCellSpec
 from nn.span_prediction import ConfidencePredictor
 from squad.squad_evaluators import SquadConfidenceEvaluator
-from trainer import ModelDir, TrainParams, SerializableOptimizer
+from trainer import TrainParams, SerializableOptimizer
+from model_dir import ModelDir
 
 
 def main():

@@ -15,7 +15,7 @@ from evaluator import Evaluator, Evaluation, RecordSpanPrediction, RecordQuestio
 from paragraph_selection.paragraph_selection_evaluators import AnyTopNEvaluator
 from experimental.paragraph_selection.paragraph_selection_model import NParagraphsSortKey, SelectionDatasetBuilder, \
     FeaturizeredParagraph
-from trainer import ModelDir
+from model_dir import ModelDir
 from trivia_qa.build_span_corpus import TriviaQaWebDataset
 from trivia_qa.trivia_qa_eval import f1_score as trivia_f1_score
 from trivia_qa.triviaqa_evaluators import BoundedSpanEvaluator

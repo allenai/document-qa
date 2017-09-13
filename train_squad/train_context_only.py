@@ -1,3 +1,4 @@
+import model_dir
 import trainer
 from data_processing.document_splitter import MergeParagraphs, TopTfIdf
 from data_processing.qa_training_data import ContextLenKey, ContextLenBucketedKey
@@ -39,7 +40,7 @@ def main():
     data = DocumentQaTrainingData(corpus, None, train_batching, eval_batching)
 
     eval = [LossEvaluator(), BoundedSquadSpanEvaluator(bound=[17])]
-    trainer.start_training(data, model, train_params, eval, trainer.ModelDir(out), "")
+    trainer.start_training(data, model, train_params, eval, model_dir.ModelDir(out), "")
 
 if __name__ == "__main__":
     # tmp()

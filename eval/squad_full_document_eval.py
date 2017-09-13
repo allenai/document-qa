@@ -20,9 +20,10 @@ from evaluator import Evaluator, Evaluation
 from squad.document_rd_corpus import get_doc_rd_doc
 from squad.squad_document_qa import SquadTfIdfRanker
 from squad.squad_data import SquadCorpus, Paragraph, DocParagraphAndQuestion
-from trainer import ModelDir
+from model_dir import ModelDir
 from trivia_qa.trivia_qa_eval import f1_score as trivia_f1_score
 from utils import ResourceLoader, flatten_iterable
+import tensorflow as tf
 
 
 class RankedParagraphQuestion(ContextAndQuestion):
@@ -54,7 +55,8 @@ class RecordParagraphSpanPrediction(Evaluator):
 
     def tensors_needed(self, prediction):
         span, score = prediction.get_best_span(self.bound)
-        return dict(spans=span, model_scores=score)
+        return dict(spans=span, model_scores=score,
+                    mean_score=prediction.get_mean_logit())
 
     def evaluate(self, data: List[RankedParagraphQuestion], true_len, **kargs):
         print("Begining evaluation")
@@ -85,6 +87,7 @@ class RecordParagraphSpanPrediction(Evaluator):
         results = {}
         results["n_answers"] = [0 if x.answer is None else len(x.answer.answer_spans) for x in data]
         results["predicted_score"] = model_scores
+        results["mean_score"] = kargs["mean_score"]
         results["predicted_start"] = spans[:, 0]
         results["predicted_end"] = spans[:, 1]
         results["rank"] = [x.rank for x in data]
@@ -134,11 +137,13 @@ def main():
                     RankedParagraphQuestion(question.words,
                                             TokenSpans(question.answer_text, np.zeros((0, 2))),
                                             question.question_id, paragraphs[para_num], para_rank)
+        rl = ResourceLoader()
     else:
         if args.corpus == "dev":
             docs = SquadCorpus().get_dev()
         else:
             docs = SquadCorpus().get_train()
+        rl = SquadCorpus().get_resource_loader()
 
         if args.n_sample is not None:
             docs.sort(key=lambda x:x.doc_id)
@@ -148,9 +153,9 @@ def main():
         for q in ranker.ranked_questions(docs):
             for i, p in enumerate(q.paragraphs):
                 questions.append(RankedParagraphQuestion(q.question,
-                                                         TokenSpans(q.answer_text, q.paragraph_answer_spans[i]),
+                                                         TokenSpans(q.answer_text, p.answer_spans),
                                                          q.question_id,
-                                                         ParagraphWithInverse(p.context, p.original_text, p.spans),
+                                                         ParagraphWithInverse([p.text], p.original_text, p.spans),
                                                          i, p.paragraph_num))
 
     print("Split %d docs into %d paragraphs" % (len(docs), len(questions)))
@@ -162,17 +167,14 @@ def main():
 
     model = model_dir.get_model()
     evaluation = trainer.test(model, [RecordParagraphSpanPrediction(args.answer_bound)],
-                              {args.corpus: data}, ResourceLoader(), checkpoint,
+                              {args.corpus: data}, rl, checkpoint,
                               args.ema, args.async)[args.corpus]
 
     print("Saving result")
     # output_file = join(model_dir.get_eval_dir(), args.output)
     output_file = args.output
 
-    if output_file.endswith("json"):
-        with open(output_file, "w") as f:
-            json.dump(evaluation.per_sample, f)
-    elif output_file.endswith("pkl"):
+    if output_file.endswith("pkl"):
         with open(output_file, "wb") as f:
             pickle.dump(evaluation.per_sample, f)
     elif output_file.endswith("csv"):

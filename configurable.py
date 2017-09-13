@@ -99,9 +99,12 @@ class Configurable(object):
         if state["version"] != self.version:
             warn(("%s loaded with version %s, but class " +
                  "version is %s") % (self.__class__.__name__, state["version"], self.version))
+
+        if "state" in state:
             self.__dict__ = state["state"]
         else:
-            self.__dict__ = state["state"]
+            del state["version"]
+            self.__dict__ = state
 
 
 def describe(obj):

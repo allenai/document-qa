@@ -1,3 +1,4 @@
+import model_dir
 import trainer
 from data_processing.paragraph_qa import ContextLenKey, ContextLenBucketedKey, DocumentQaTrainingData
 from dataset import ShuffledBatcher, ClusteredBatcher
@@ -76,7 +77,7 @@ def main():
     eval_batching = ClusteredBatcher(60, ContextLenKey(), False, False)
     data = DocumentQaTrainingData(corpus, None, train_batching, eval_batching)
 
-    trainer.start_training(data, model, train_params, eval, trainer.ModelDir(out), notes, False)
+    trainer.start_training(data, model, train_params, eval, model_dir.ModelDir(out), notes, False)
 
 
 if __name__ == "__main__":

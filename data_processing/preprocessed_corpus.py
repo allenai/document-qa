@@ -10,7 +10,6 @@ from tqdm import tqdm
 from configurable import Configurable
 from data_processing.text_utils import NltkPlusStopWords
 from dataset import TrainingData, Dataset, ListDataset
-from trivia_qa.read_data import TriviaQaQuestion
 from utils import split, flatten_iterable, group, ResourceLoader
 
 
@@ -29,7 +28,7 @@ class Preprocessor(Configurable):
 
 class DatasetBuilder(Configurable):
 
-    def build_dataset(self, data, evidence, is_train: bool, n_feature=None) -> Dataset:
+    def build_dataset(self, data, evidence) -> Dataset:
         """ Map the intermeidate format to a Dataset object """
         raise NotImplementedError()
 
@@ -59,13 +58,13 @@ class FilteredData(object):
         return FilteredData(self.data + other.data, self.true_len + other.true_len)
 
 
-def _preprocess_and_count(questions: List[TriviaQaQuestion], evidence, preprocessor: Preprocessor):
+def _preprocess_and_count(questions: List, evidence, preprocessor: Preprocessor):
     count = len(questions)
     output = preprocessor.preprocess(questions, evidence)
     return output, count
 
 
-def preprocess_par(questions: List[TriviaQaQuestion], evidence, preprocessor,
+def preprocess_par(questions: List, evidence, preprocessor,
                    n_processes=2, chunk_size=200, name=None):
     if n_processes is None or chunk_size is None or\
                     n_processes <= 0 or chunk_size <= 0:
@@ -107,7 +106,7 @@ class PreprocessedData(TrainingData):
                  corpus,
                  preprocesser: Optional[Preprocessor],
                  builder: DatasetBuilder,
-                 eval_builder: DatasetBuilder=None,
+                 eval_builder: DatasetBuilder,
                  eval_on_verified: bool=True,
                  eval_on_train: bool = True,
                  hold_out_train: Optional[Tuple[int, int]]= None,
@@ -206,19 +205,18 @@ class PreprocessedData(TrainingData):
         print("Done")
 
     def get_train(self) -> Dataset:
-        return self.builder.build_dataset(self._train, self.corpus, True)
+        return self.builder.build_dataset(self._train, self.corpus)
 
     def get_train_corpus(self):
         return self.builder.build_stats(self._train)
 
     def get_eval(self) -> Dict[str, Dataset]:
-        builder = self.builder if self.eval_builder is None else self.eval_builder
         corpus = self.corpus
-        eval_set = dict(dev=builder.build_dataset(self._dev, corpus, False))
+        eval_set = dict(dev=self.eval_builder.build_dataset(self._dev, corpus))
         if self.eval_on_train:
-            eval_set["train"] = builder.build_dataset(self._train, corpus, False)
+            eval_set["train"] = self.eval_builder.build_dataset(self._train, corpus)
         if self.eval_on_verified:
-            eval_set["verified-dev"] = builder.build_dataset(self._verified_dev, corpus, False)
+            eval_set["verified-dev"] = self.eval_builder.build_dataset(self._verified_dev, corpus)
         return eval_set
 
     def get_resource_loader(self) -> ResourceLoader:

@@ -7,26 +7,6 @@ from trivia_qa.build_span_corpus import TriviaQaWebDataset
 from utils import flatten_iterable, print_table
 
 
-def compute_model_scores(df, max_over, target_score, by_doc=True):
-    scores = []
-    if by_doc:
-        group_cols = ["quid", "doc_id"]
-    else:
-        group_cols = ["quid"]
-    for quid, group in df.groupby(group_cols):
-        if target_score == max_over:
-            scores.append(group[target_score].cummax().values)
-        else:
-            used_predictions = group[max_over].expanding().apply(lambda x: x.argmax())
-            scores.append(group[target_score].iloc[used_predictions].values)
-
-    max_para = max(len(x) for x in scores)
-    summed_scores = np.zeros(max_para)
-    for s in scores:
-        summed_scores[:len(s)] += s
-        summed_scores[len(s):] += s[-1]
-    return summed_scores/len(scores)
-
 
 def compute_cumsum(df, target_score, by_doc=True):
     scores = []

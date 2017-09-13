@@ -93,7 +93,7 @@ def to_packed_coordinates_np(spans, l, bound=None):
 
 def to_unpacked_coordinates(ix, l, bound):
     ix = tf.cast(ix, tf.int32)
-    # I think you can actually compute the lens in closed form:
+    # You can actually compute the lens in closed form:
     # lens = tf.floor(0.5 * (-tf.sqrt(4 * tf.square(l) + 4 * l - 8 * ix + 1) + 2 * l + 1))
     # but it is very ugly and rounding errors could cause problems, so this approach seems safer
     lens = []

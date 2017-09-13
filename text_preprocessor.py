@@ -1,31 +1,34 @@
 import numpy as np
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from collections import Counter
 
 from tqdm import tqdm
 
 from configurable import Configurable
 from data_processing.document_splitter import ExtractedParagraphWithAnswers, MergeParagraphs
+from data_processing.multi_paragraph_qa import ParagraphWithAnswers
 from data_processing.qa_training_data import ParagraphAndQuestion
+from squad.squad_data import SquadCorpus
 from trivia_qa.build_span_corpus import TriviaQaWebDataset
 from utils import flatten_iterable
 
 
-class ParagraphWithAnswers(object):
-    def __init__(self, text: List[str], answer_spans: np.ndarray):
-        self.text = text
-        self.answer_spans = answer_spans
-
-
 class TextPreprocessor(Configurable):
-    """ Preprocess text input, must be deterministic. """
+    """ Preprocess text input, must be deterministic. Only used thus far adding special indicator tokens """
 
-    def encode_paragraphs(self, question: List[str],
-                          paragraphs: List[ExtractedParagraphWithAnswers]) -> ParagraphWithAnswers:
+    def encode_extracted_paragraph(self, question: List[str], paragraph: ExtractedParagraphWithAnswers):
+        text, answers, _ = self.encode_paragraph(question, paragraph.text,
+                                                 paragraph.start == 0, paragraph.answer_spans)
+        return ParagraphWithAnswers(text, answers)
+
+    def encode_paragraph(self, question: List[str], text: List[List[str]],
+                         is_first, answer_spans: np.ndarray,
+                         token_spans=None) -> Tuple[List[str], np.ndarray, Optional[np.ndarray]]:
+        """ Returns updated (and flattended) text, answer_spans, and token_spans"""
         raise NotImplementedError()
 
     def special_tokens(self) -> List[str]:
-        pass
+        return []
 
 
 class WithIndicators(TextPreprocessor):
@@ -33,44 +36,63 @@ class WithIndicators(TextPreprocessor):
     DOCUMENT_START_TOKEN = "%%DOCUMENT%%"
     PARAGRAPH_GROUP = "%%PARAGRAPH_GROUP%%"
 
-    def __init__(self, remove_cross_answer: bool=True):
+    def __init__(self, remove_cross_answer: bool=True, para_tokens: bool=True, doc_start_token: bool=True):
         self.remove_cross_answer = remove_cross_answer
+        self.doc_start_token = doc_start_token
+        self.para_tokens = para_tokens
 
     def special_tokens(self) -> List[str]:
-        return [self.PARAGRAPH_TOKEN, self.DOCUMENT_START_TOKEN, self.PARAGRAPH_GROUP]
+        tokens = [self.PARAGRAPH_GROUP]
+        if self.doc_start_token:
+            tokens.append(self.DOCUMENT_START_TOKEN)
+        if self.para_tokens:
+            tokens.append(self.PARAGRAPH_TOKEN)
+        return tokens
 
-    def encode_paragraphs(self, question: List[str],
-                          paragraphs: List[ExtractedParagraphWithAnswers]) -> ParagraphWithAnswers:
-        text = []
-        answers = []
+    def encode_paragraph(self, question: List[str], text: List[List[str]], is_first, answer_spans: np.ndarray, inver=None):
+        out = []
+
         offset = 0
-        for paras in paragraphs:
-            if paras.start == 0:
-                text.append(self.DOCUMENT_START_TOKEN)
-            else:
-                text.append(self.PARAGRAPH_GROUP)
-            offset += 1
-            spans = paras.answer_spans + offset
+        if self.doc_start_token and is_first:
+            out.append(self.DOCUMENT_START_TOKEN)
+        else:
+            out.append(self.PARAGRAPH_GROUP)
 
-            text += paras.text[0]
-            offset += len(paras.text[0])
+        if inver is not None:
+            inv_out = [np.zeros((1, 2), dtype=np.int32)]
+        else:
+            inv_out = None
 
-            for sent in paras.text[1:]:
-                if self.remove_cross_answer:
-                    remove = np.logical_and(spans[:, 0] < offset, spans[:, 1] >= offset)
-                    spans = spans[np.logical_not(remove)]
+        offset += 1
+        spans = answer_spans + offset
 
+        out += text[0]
+        offset += len(text[0])
+        on_ix = len(text[0])
+        if inv_out is not None:
+            inv_out.append(inver[:len(text[0])])
+
+        for sent in text[1:]:
+            if self.remove_cross_answer:
+                remove = np.logical_and(spans[:, 0] < offset, spans[:, 1] >= offset)
+                spans = spans[np.logical_not(remove)]
+
+            if self.para_tokens:
                 spans[spans[:, 0] >= offset, 0] += 1
                 spans[spans[:, 1] >= offset, 1] += 1
-                text.append(self.PARAGRAPH_TOKEN)
-                text += sent
-                offset += len(sent) + 1
 
-            answers.append(spans)
+                out.append(self.PARAGRAPH_TOKEN)
+                if inv_out is not None:
+                    inv_out.append(np.full((1, 2), inv_out[-1][-1][1]))
+                offset += 1
 
-        answers = np.concatenate(answers)
+            out += sent
+            offset += len(sent)
+            if inv_out is not None:
+                inv_out.append(inver[on_ix:on_ix+len(sent)])
+            on_ix += len(sent)
 
-        return ParagraphWithAnswers(text, answers)
+        return out, spans, None if inv_out is None else np.concatenate(inv_out)
 
 
 def check_preprocess():
@@ -86,14 +108,14 @@ def check_preprocess():
         doc = rng.choice(q.all_docs, 1)[0]
         text = data.evidence.get_document(doc.doc_id, n_tokens=800)
         paras = merge.split_annotated(text, doc.answer_spans)
-        built = pre.encode_paragraphs(q.question, paras)
+        para = paras[np.random.randint(0, len(paras))]
+        built = pre.encode_extracted_paragraph(q.question, para)
 
-        expected_text = flatten_iterable([flatten_iterable(x.text) for x in paras])
+        expected_text = flatten_iterable(para.text)
         if expected_text != [x for x in built.text if x not in pre.special_tokens()]:
             raise ValueError()
 
-        expected = flatten_iterable([flatten_iterable(p.text)[s:e+1]
-                                     for s, e in p.answer_spans] for p in paras)
+        expected = [expected_text[s:e+1] for s, e in para.answer_spans]
         expected = Counter([tuple(x) for x in expected])
 
         actual = [tuple(built.text[s:e+1]) for s,e in built.answer_spans]
@@ -101,7 +123,7 @@ def check_preprocess():
         if actual_cleaned != expected:
             raise ValueError()
 
-        r_built = remove_cross.encode_paragraphs(q.question, paras)
+        r_built = remove_cross.encode_extracted_paragraph(q.question, para)
         rc = Counter(tuple(r_built.text[s:e + 1]) for s, e in r_built.answer_spans)
         removed = Counter()
         for w in actual:
@@ -111,5 +133,28 @@ def check_preprocess():
         if rc != removed:
             raise ValueError()
 
+
+def check_preprocess_squad():
+    data = SquadCorpus().get_train()
+    remove_cross = WithIndicators(True)
+
+    for doc in tqdm(data):
+        for para in doc.paragraphs:
+            q = para.questions[np.random.randint(0, len(para.questions))]
+
+            text, ans, inv = remove_cross.encode_paragraph(q.words, para.text, para.paragraph_num == 0,
+                                       q.answer.answer_spans, para.spans)
+            if len(inv) != len(text):
+                raise ValueError()
+            for i in range(len(inv)-1):
+                if inv[i, 0] > inv[i+1, 0]:
+                    raise ValueError()
+            for (s1, e1), (s2, e2) in zip(ans, q.answer.answer_spans):
+                if tuple(inv[s1]) != tuple(para.spans[s2]):
+                    raise ValueError()
+                if tuple(inv[e1]) != tuple(para.spans[e2]):
+                    raise ValueError()
+
+
 if __name__ == "__main__":
-    check_preprocess()
+    check_preprocess_squad()

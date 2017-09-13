@@ -71,16 +71,18 @@ class ParagraphAndQuestion(ContextAndQuestion):
         return self.context
 
 
-def split(paras: List[ParagraphWithInverse], delim: str) -> ParagraphWithInverse:
-    original_text = delim.join([x.original_text for x in paras])
-    full_inv = []
-    all_tokens = []
-    on_char = 0
-    for para in paras:
-        all_tokens += para.context
-        full_inv.append(para.spans + on_char)
-        on_char += para.spans[-1][1] + len(delim)
-    return ParagraphWithInverse(all_tokens, original_text, np.concatenate(full_inv))
+class ParagraphWithInvAndQuestion(ContextAndQuestion):
+    def __init__(self, para: ParagraphWithInverse, question: List[str],
+                 answer: Optional[Answer], question_id: object, doc_id=None):
+        super().__init__(question, answer, question_id, doc_id)
+        self.para = para
+
+    @property
+    def n_context_words(self):
+        return self.para.n_tokens
+
+    def get_context(self):
+        return self.para.get_context()
 
 
 class ContextLenKey(Configurable):
@@ -270,11 +272,10 @@ class ParagraphAndQuestionDataset(ListDataset):
         return compute_voc(self.data)
 
 
-class ParagraphAndQuestionDatasetBuilder(DatasetBuilder):
+class ParagraphAndQuestionsBuilder(DatasetBuilder):
     """ For use with the preprocesed_corpus framework """
-    def __init__(self, train_batching: ListBatcher, eval_batching: ListBatcher):
-        self.train_batching = train_batching
-        self.eval_batching = eval_batching
+    def __init__(self, batching: ListBatcher):
+        self.batching = batching
 
     def build_stats(self, data):
         if isinstance(data, FilteredData):
@@ -282,12 +283,11 @@ class ParagraphAndQuestionDatasetBuilder(DatasetBuilder):
         else:
             return QaCorpusLazyStats(data)
 
-    def build_dataset(self, data, evidence, is_train: bool) -> Dataset:
-        batching = self.train_batching if is_train else self.eval_batching
+    def build_dataset(self, data, evidence) -> Dataset:
         if isinstance(data, FilteredData):
-            return ParagraphAndQuestionDataset(data.data, batching, data.true_len)
+            return ParagraphAndQuestionDataset(data.data, self.batching, data.true_len)
         else:
-            return ParagraphAndQuestionDataset(data, batching)
+            return ParagraphAndQuestionDataset(data, self.batching)
 
 
 class ParagraphQaTrainingData(TrainingData):

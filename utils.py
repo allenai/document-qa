@@ -1,14 +1,9 @@
 import argparse
 from datetime import datetime
-from json import JSONEncoder
-
 from os.path import join
 from typing import List, TypeVar, Iterable
 
-from tqdm import tqdm
-
 from data_processing.word_vectors import load_word_vectors
-import numpy as np
 
 
 class ResourceLoader(object):
@@ -24,18 +19,13 @@ class ResourceLoader(object):
         return self.load_vec_fn(vec_name, voc)
 
 
-class DummyResourceLoader(ResourceLoader):
-    def load_word_vec(self, vec_name):
-        return {"the": np.zeros(100, dtype=np.float32)}
-
-
 class CachingResourceLoader(ResourceLoader):
 
     def __init__(self, load_vec_fn=load_word_vectors):
         super().__init__(load_vec_fn)
         self.word_vec = {}
 
-    def load_word_vec(self, vec_name):
+    def load_word_vec(self, vec_name, voc=None):
         if vec_name not in self.word_vec:
             self.word_vec[vec_name] = super().load_word_vec(vec_name)
         return self.word_vec[vec_name]
@@ -55,20 +45,6 @@ def print_table(table: List[List[str]]):
 
 def transpose_lists(lsts):
     return [list(i) for i in zip(*lsts)]
-
-
-def get_output_name_from_cli():
-    parser = argparse.ArgumentParser(description='')
-    parser.add_argument('--name', '-n', nargs=1, help='name of output to exmaine')
-
-    args = parser.parse_args()
-    if args.name:
-        out = join(args.name[0] + "-" + datetime.now().strftime("%m%d-%H%M%S"))
-        print("Starting run on: " + out)
-    else:
-        out = "out/run-" + datetime.now().strftime("%m%d-%H%M%S")
-        print("Starting run on: " + out)
-    return out
 
 
 def max_or_none(a, b):
@@ -118,3 +94,19 @@ def group(lst: List, max_group_size) -> List[List]:
         groups.append(lst[ix:ix + group_size])
         ix += group_size
     return groups
+
+
+def get_output_name_from_cli():
+    parser = argparse.ArgumentParser(description='')
+    parser.add_argument('--name', '-n', nargs=1, help='name of output to exmaine')
+
+    args = parser.parse_args()
+    if args.name:
+        out = join(args.name[0] + "-" + datetime.now().strftime("%m%d-%H%M%S"))
+        print("Starting run on: " + out)
+    else:
+        out = "out/run-" + datetime.now().strftime("%m%d-%H%M%S")
+        print("Starting run on: " + out)
+    return out
+
+

@@ -7,10 +7,10 @@ import numpy as np
 import trainer
 from data_processing.qa_training_data import ParagraphAndQuestionDataset, ContextAndQuestion
 from dataset import FixedOrderBatcher
-from evaluator import RecordQuestionId, Evaluator, Evaluation
+from evaluator import Evaluator, Evaluation
 from squad.squad_data import SquadCorpus, split_docs
 from squad.squad_evaluators import BoundedSquadSpanEvaluator
-from trainer import ModelDir
+from model_dir import ModelDir
 from utils import transpose_lists, print_table
 
 
@@ -84,7 +84,7 @@ def main():
 
         q_id_to_answers = {}
         q_ids = evaluation.per_sample["question_id"]
-        spans = evaluation.per_sample["bound-%d-span-predictions" % args.answer_bounds[0]]
+        spans = evaluation.per_sample["predicted_span"]
         for q_id, (start, end) in zip(q_ids, spans):
             text = quid_to_para[q_id].get_original_text(start, end)
             q_id_to_answers[q_id] = text

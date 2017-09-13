@@ -11,7 +11,8 @@ from nn.attention import AttentionEncoder
 from nn.layers import FullyConnected, ChainConcat, SequenceMapperSeq, DropoutLayer
 from nn.recurrent_layers import BiRecurrentMapper, LstmCellSpec
 from nn.span_prediction import ConfidencePredictor
-from trainer import ModelDir, TrainParams, SerializableOptimizer
+from trainer import TrainParams, SerializableOptimizer
+from model_dir import ModelDir
 from utils import flatten_iterable
 
 

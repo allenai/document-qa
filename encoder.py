@@ -13,12 +13,13 @@ from utils import max_or_none
 
 
 """
-Objects to map python objects we want to classify into numpy arrays we can feed into Tensorflow
+Classes to map python objects we want to classify into numpy arrays we can feed into Tensorflow,
+e.i. to map (quesiton-context-answer) -> (numpy arries)
 """
 
 
 class AnswerEncoder(Configurable):
-    """ Encode just the answers of a paragraph/question object """
+    """ Encode just the answer span """
 
     def init(self, batch_size, context_word_dim):
         raise NotImplementedError()
@@ -31,6 +32,8 @@ class AnswerEncoder(Configurable):
 
 
 class SingleSpanAnswerEncoder(AnswerEncoder):
+    """ Encode the answer as integer coordiantes, pick a random answer span if multiple spans exists """
+
     def __init__(self):
         self.answer_spans = None
 
@@ -73,6 +76,8 @@ class SingleSpanAnswerEncoder(AnswerEncoder):
 
 
 class DenseMultiSpanAnswerEncoder(AnswerEncoder):
+    """ Encode the answer spans into bool (span_start) and (span_end) arrays """
+
     def __init__(self):
         self.answer_starts = None
         self.answer_ends = None
@@ -98,6 +103,9 @@ class DenseMultiSpanAnswerEncoder(AnswerEncoder):
 
 
 class GroupedSpanAnswerEncoder(AnswerEncoder):
+    """ Encode the answer spans into bool (span_start) and (span_end) arrays, and also record
+    the group_id if one is present in the answer """
+
     def __init__(self):
         self.answer_starts = None
         self.answer_ends = None
@@ -132,6 +140,8 @@ class GroupedSpanAnswerEncoder(AnswerEncoder):
 
 
 class PackedMultiSpanAnswerEncoder(AnswerEncoder):
+    """ Records the span in a bool array in the packed format of to_packed_coordinates """
+
     def __init__(self, bound):
         self.bound = bound
         self.correct_spans = None
@@ -153,7 +163,7 @@ class PackedMultiSpanAnswerEncoder(AnswerEncoder):
 
 class DocumentAndQuestionEncoder(Configurable):
     """
-    Uses am WordEmbedder/CharEmbedder to encode text into padded batches of arrays
+    Uses a WordEmbedder/CharEmbedder (passed in by the client in `init`) to encode text into padded batches of arrays
     """
 
     def __init__(self,
@@ -171,7 +181,6 @@ class DocumentAndQuestionEncoder(Configurable):
 
         # Internal stuff we need to set on `init`
         self.len_opt = None
-        self.n_features = None
         self.batch_size = None
         self.max_context_word_dim = None
         self.max_ques_word_dim = None
@@ -200,9 +209,6 @@ class DocumentAndQuestionEncoder(Configurable):
 
         self.batch_size = input_spec.batch_size
         self.len_opt = len_op
-        self.n_features = None  # TODO
-        if self.n_features is not None:
-            print("Using %s pre-encoded features" % self.n_features)
 
         self.max_ques_word_dim = input_spec.max_num_quesiton_words
         if self._char_emb is not None:
@@ -226,34 +232,28 @@ class DocumentAndQuestionEncoder(Configurable):
 
         self.context_words = tf.placeholder('int32', [batch_size, n_context_words], name='context_words')
         self.context_len = tf.placeholder('int32', [batch_size], name='context_len')
-        self.context_word_len = tf.placeholder('int32', [batch_size, n_context_words], name='context_len')
 
         self.question_words = tf.placeholder('int32', [batch_size, n_question_words], name='question_words')
         self.question_len = tf.placeholder('int32', [batch_size], name='question_len')
-        self.question_word_len = tf.placeholder('int32', [batch_size, n_question_words], name='question_len')
 
         if self._char_emb:
             self.context_chars = tf.placeholder('int32', [batch_size, n_context_words, self.max_char_dim], name='context_chars')
             self.question_chars = tf.placeholder('int32', [batch_size, n_question_words, self.max_char_dim], name='question_chars')
+            self.question_word_len = tf.placeholder('int32', [batch_size, n_question_words], name='question_len')
+            self.context_word_len = tf.placeholder('int32', [batch_size, n_context_words], name='context_len')
         else:
             self.context_chars = None
             self.question_chars = None
+            self.context_word_len = None
+            self.question_word_len = None
 
         if self.word_featurizer is not None:
-            if self.n_features is not None:
-                raise NotImplementedError()
             self.question_features = tf.placeholder('float32',
                                                     [batch_size, n_question_words,
                                                      self.word_featurizer.n_question_features()],
                                                     name='question_features')
             self.context_features = tf.placeholder('float32', [batch_size, n_context_words,
                                                                self.word_featurizer.n_context_features()],
-                                                   name='context_features')
-        elif self.n_features is not None:
-            self.question_features = tf.placeholder('float32',
-                                                    [batch_size, n_question_words, self.n_features],
-                                                    name='question_features')
-            self.context_features = tf.placeholder('float32', [batch_size, n_context_words, self.n_features],
                                                    name='context_features')
         else:
             self.question_features = None
@@ -376,14 +376,6 @@ class DocumentAndQuestionEncoder(Configurable):
                 context_word_features[doc_ix, :c_f.shape[0]] = c_f
             feed_dict[self.context_features] = context_word_features
             feed_dict[self.question_features] = question_word_features
-        elif self.context_features is not None:
-            question_word_features = np.zeros((batch_size, ques_word_dim, self.n_features))
-            context_word_features = np.zeros((batch_size, context_word_dim, self.n_features))
-            for doc_ix, doc in enumerate(batch):
-                context_word_features[doc_ix, :doc.c_features.shape[0]] = doc.c_features
-                question_word_features[doc_ix, :doc.q_features.shape[0]] = doc.q_features
-            feed_dict[self.context_features] = context_word_features
-            feed_dict[self.question_features] = question_word_features
 
         return feed_dict
 
@@ -490,10 +482,10 @@ class CheatingEncoder(DocumentAndQuestionEncoder):
 
         if is_train and context_word_dim is not None:
             # Context might be truncated
-            context_len = np.array([min(sum(len(s) for s in doc.context), context_word_dim)
+            context_len = np.array([min(doc.n_context_words, context_word_dim)
                                     for doc in batch], dtype='int32')
         else:
-            context_len = np.array([sum(len(s) for s in doc.context) for doc in batch], dtype='int32')
+            context_len = np.array([doc.n_context_words for doc in batch], dtype='int32')
             context_word_dim = context_len.max()
 
         question_len = np.array([len(x.question) for x in batch], dtype='int32')

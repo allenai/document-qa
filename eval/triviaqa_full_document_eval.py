@@ -16,7 +16,7 @@ from data_processing.span_data import TokenSpans
 from data_processing.text_utils import NltkPlusStopWords
 from dataset import FixedOrderBatcher
 from evaluator import Evaluator, Evaluation
-from trainer import ModelDir
+from model_dir import ModelDir
 from trivia_qa.build_span_corpus import TriviaQaWebDataset, TriviaQaOpenDataset
 from trivia_qa.evidence_corpus import TriviaQaEvidenceCorpusTxt
 from trivia_qa.read_data import TriviaQaQuestion

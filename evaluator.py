@@ -1,10 +1,10 @@
-import json
-from threading import Thread, Event
+from threading import Thread
 from typing import List, Dict, Union
 
 import numpy as np
 import tensorflow as tf
-from scipy.stats import kendalltau
+from collections import defaultdict
+from scipy.stats import kendalltau, spearmanr
 from tqdm import tqdm
 
 from configurable import Configurable
@@ -12,10 +12,19 @@ from data_processing.qa_training_data import ContextAndQuestion
 from data_processing.span_data import compute_span_f1
 from dataset import Dataset
 from model import Model, Prediction
-from utils import NumpyEncoder, flatten_iterable
+from utils import flatten_iterable
+
+from squad.squad_official_evaluation import exact_match_score as squad_official_em_score
+from squad.squad_official_evaluation import f1_score as squad_official_f1_score
+
+from trivia_qa.trivia_qa_eval import exact_match_score as triviaqa_f1_score
+from trivia_qa.trivia_qa_eval import f1_score as triviaqa_em_score
 
 
 class Evaluation(object):
+    """
+    Evaluation of model, include scala summaries and per-example records
+    """
 
     def __init__(self, scalars, per_sample: Dict[str, List]=None):
         self.scalars = scalars
@@ -24,7 +33,7 @@ class Evaluation(object):
     def add(self, other):
         for k in self.scalars:
             if k in other.scalars:
-                raise ValueError()
+                raise ValueError("Two evalutions had the same scalar key: " + k)
         self.scalars.update(other.scalars)
 
         if self.per_sample is None:
@@ -67,7 +76,7 @@ class LossEvaluator(Evaluator):
     def tensors_needed(self, _):
         return dict(loss=tf.add_n(tf.get_collection(tf.GraphKeys.LOSSES)))
 
-    def evaluate(self, data, true_len, loss):
+    def evaluate(self, data, true_len, loss, **kwargs):
         return Evaluation({"loss": np.mean(loss)})
 
 
@@ -136,9 +145,81 @@ def span_scores(data: List[ContextAndQuestion], prediction):
     return scores
 
 
+def squad_span_scores(data: List[ContextAndQuestion], prediction):
+    scores = np.zeros((len(data), 4))
+    for i in range(len(data)):
+        para = data[i]
+
+        pred_span = tuple(prediction[i])
+        # For SQuAD, we expect to be working with data points that know how to
+        # retrieve the untokenized "raw" text each span is associated with
+        pred_text = para.get_original_text(pred_span[0], pred_span[1])
+
+        span_correct = False
+        span_max_f1 = 0
+        text_correct = 0
+        text_max_f1 = 0
+        answer = data[i].answer
+        for (start, end), text in zip(answer.answer_spans, answer.answer_text):
+            answer_span = (start, end)
+            span_max_f1 = max(span_max_f1, compute_span_f1(answer_span, pred_span))
+            if answer_span == pred_span:
+                span_correct = True
+            f1 = squad_official_f1_score(pred_text, text)
+            correct = squad_official_em_score(pred_text, text)
+            text_correct = max(text_correct, correct)
+            text_max_f1 = max(text_max_f1, f1)
+
+        scores[i] = [span_correct, span_max_f1, text_correct, text_max_f1]
+
+    return scores
+
+
+def trivia_span_scores(data: List[ContextAndQuestion],
+                       prediction):
+    scores = np.zeros((len(data), 4))
+    for i in range(len(data)):
+        para = data[i]
+        ans = para.answer
+
+        pred_span = prediction[i]
+        # For TriviaQA we have generally called join-spaces approach good enough, since the answers here
+        # tend to be short and the gold standard has better normalization. Possibly could get a very
+        # small gain using the original text, but I have generaly decided its not worth the trouble
+        pred_text = " ".join(para.get_context()[pred_span[0]:pred_span[1]+1])
+
+        span_correct = False
+        span_max_f1 = 0
+        text_correct = 0
+        text_max_f1 = 0
+
+        for word_start, word_end in ans.answer_spans:
+            answer_span = (word_start, word_end)
+            span_max_f1 = max(span_max_f1, compute_span_f1(answer_span, pred_span))
+            if answer_span == tuple(pred_span):
+                span_correct = True
+
+        for text in ans.answer_text:
+            f1 = triviaqa_f1_score(pred_text, text)
+            correct = triviaqa_em_score(pred_text, text)
+            text_correct = max(text_correct, correct)
+            text_max_f1 = max(text_max_f1, f1)
+
+        scores[i] = [span_correct, span_max_f1, text_correct, text_max_f1]
+    return scores
+
+
 class SpanEvaluator(Evaluator):
-    def __init__(self, bound: List[int]):
+    """
+    Evaluate span based models, if text_eval is set should produce exactly
+    the scores returned by the corresponding official evluation scripts
+    """
+
+    def __init__(self, bound: List[int], text_eval: str=None):
+        if text_eval is not None and text_eval not in ["squad", "triviaqa"]:
+            raise ValueError()
         self.bound = bound
+        self.text_eval = text_eval
 
     def tensors_needed(self, prediction):
         return {str(b): prediction.get_best_span(b)[0] for b in self.bound}
@@ -147,59 +228,143 @@ class SpanEvaluator(Evaluator):
         ev = Evaluation({})
         for b in self.bound:
             best_spans = kwargs[str(b)]
-            scores = span_scores(data, best_spans).sum(axis=0) / true_len
+            if self.text_eval is None:
+                scores = span_scores(data, best_spans)
+            elif self.text_eval == "triviaqa":
+                scores = trivia_span_scores(data, best_spans)
+            elif self.text_eval == "squad":
+                scores = squad_span_scores(data, best_spans)
+            else:
+                raise RuntimeError()
+
+            scores = scores.sum(axis=0) / true_len
+
             prefix = "b%d/"%b
-            bound_eval = Evaluation({
+            out = {
                 prefix + "accuracy": scores[0],
                 prefix + "f1": scores[1],
-            })
-            ev.add(bound_eval)
+            }
+            if self.text_eval is not None:
+                out[prefix + "text-f1"] = scores[2]
+                out[prefix + "text-em"] = scores[3]
+
+            ev.add(Evaluation(out))
         return ev
+
+
+class MultiParagraphSpanEvaluator(Evaluator):
+    """
+    Measure error with multiple paragraphs per a question
+    """
+
+    def __init__(self, bound: int, eval, paragraph_level=True, k_tau=True):
+        if eval not in ["squad", "triviaqa"]:
+            raise ValueError()
+        self.bound = bound
+        self.eval = eval
+        self.paragraph_level = paragraph_level
+        self.k_tau = k_tau
+
+    def tensors_needed(self, prediction):
+        span, score = prediction.get_best_span(self.bound)
+        return dict(span=span, score=score)
+
+    def evaluate(self, data: List[ContextAndQuestion], true_len, **kwargs):
+        best_spans = kwargs["span"]
+        span_logits = kwargs["score"]
+        if self.eval == "triviaqa":
+            scores = trivia_span_scores(data, best_spans)
+        elif self.eval == "squad":
+            scores = squad_span_scores(data, best_spans)
+        else:
+            raise RuntimeError()
+
+        has_answer = np.array([len(x.answer.answer_spans) > 0 for x in data])
+
+        selected_paragraphs = {}
+        for i, point in enumerate(data):
+            key = (point.question_id, point.doc_id)
+            if key not in selected_paragraphs:
+                selected_paragraphs[key] = i
+            elif span_logits[i] > span_logits[selected_paragraphs[key]]:
+                selected_paragraphs[key] = i
+        selected_paragraphs = list(selected_paragraphs.values())
+
+        out = {
+            "question-text-em": scores[selected_paragraphs, 2].mean(),
+            "question-text-f1": scores[selected_paragraphs, 3].mean(),
+        }
+
+        if self.k_tau:
+            out["text-em-k-tau"] = kendalltau(span_logits, scores[:, 2])[0]
+            out["text-f1-k-tau"] = kendalltau(span_logits, scores[:, 3])[0]
+
+        if self.paragraph_level:
+            out["paragraph-text-em"] = scores[has_answer, 2].mean()
+            out["paragraph-text-f1"] = scores[has_answer, 3].mean()
+
+        prefix = "b%d/" % self.bound
+        return Evaluation({prefix+k: v for k,v in out.items()})
 
 
 class ConfidenceSpanEvaluator(Evaluator):
-    def __init__(self, bound: List[int]):
+    """
+    Measure error + try to record some statistics on the model's confidence scores
+    """
+
+    def __init__(self, bound: List[int], rank_metric="k-tau", text_eval="triviaqa"):
+        if text_eval not in ["squad", "triviaqa"]:
+            raise ValueError()
+        self.text_eval = text_eval
         self.bound = bound
+        self.rank_metric = rank_metric
 
     def tensors_needed(self, prediction):
-        out = {}
-        for b in self.bound:
-            span, score = prediction.get_best_span(b)
-            prefix = "%d-" % b
-            out[prefix + "span"] = span
-            out[prefix + "span_logit"] = score
-        out["non_logit"] = prediction.none_prob
-        out["non_prob"] = prediction.none_logit
-        return out
+        spans, conf = prediction.get_best_span(self.bound)
+        needed = dict(spans=spans, conf=conf)
+        if hasattr(prediction, "none_prob"):
+            needed["none_prob"] = prediction.none_prob
+        return needed
 
-    def evaluate(self, data: List[ContextAndQuestion], true_len, **kwargs):
-        ev = Evaluation({})
-        non_logit = kwargs["non_logit"]
-        non_prob = kwargs["non_prob"]
+    def evaluate(self, data: List[ContextAndQuestion], true_len, **kargs):
+        if self.text_eval == "triviaqa":
+            scores = trivia_span_scores(data, kargs["spans"])
+        elif self.text_eval == "squad":
+            scores = squad_span_scores(data, kargs["spans"])
+        else:
+            raise RuntimeError()
 
-        for b in self.bound:
-            prefix = "%d-" % b
-            best_spans = kwargs[prefix + "span"]
-            span_logits = kwargs[prefix + "span_logit"]
-            scores = span_scores(data, best_spans)
-            has_answer = np.array([len(x.answer.answer_spans) > 0 for x in data])
+        has_answer = [len(x.answer.answer_spans) > 0 for x in data]
+        aggregated_scores = scores[has_answer].mean(axis=0)
+        prefix ="b%d/" % self.bound
+        scalars = {
+            prefix + "accuracy": aggregated_scores[0],
+            prefix + "f1": aggregated_scores[1],
+            prefix + "text-accuracy": aggregated_scores[2],
+            prefix + "text-f1": aggregated_scores[3]
+        }
 
-            em = scores[:, 0]
-            f1 = scores[:, 1]
+        if self.rank_metric == "spr":
+            metric = spearmanr
+        elif self.rank_metric == "k-tau":
+            metric = kendalltau
+        else:
+            raise ValueError()
 
-            prefix = "b%d/" % b
-            bound_eval = Evaluation({
-                prefix + "accuracy": em[has_answer].mean(),
-                prefix + "f1": f1[has_answer].mean(),
-                prefix + "conf-tau": kendalltau(span_logits, has_answer)[0],
-                prefix + "non-tau": kendalltau(non_logit, has_answer)[0],
-                prefix + "non-prob-tau": kendalltau(non_prob, has_answer)[0],
-            })
-            ev.add(bound_eval)
-        return ev
+        if "none_prob" in kargs:
+            none_conf = kargs["none_prob"]
+            scalars[prefix + "none-text-f1-" + self.rank_metric] = metric(none_conf, scores[:, 3])[0]
+            scalars[prefix + "none-span-accuracy-" + self.rank_metric] = metric(none_conf, scores[:, 0])[0]
+
+        conf = kargs["conf"]
+        scalars[prefix + "score-text-f1-" + self.rank_metric] = metric(conf, scores[:, 3])[0]
+        scalars[prefix + "score-span-accuracy-" + self.rank_metric] = metric(conf, scores[:, 0])[0]
+        return Evaluation(scalars)
 
 
 class EvaluatorRunner(object):
+    """ Knows how to run a list of evluators """
+
     def __init__(self, evaluators: List[Evaluator], model: Model):
         self.evaluators = evaluators
         self.tensors_needed = None
@@ -263,6 +428,8 @@ class EvaluatorRunner(object):
 
 
 class AysncEvaluatorRunner(object):
+    """ Knows how to run a list of evluators use a tf.Queue to feed in the data """
+
     def __init__(self, evaluators: List[Evaluator], model: Model, queue_size: int):
         placeholders = model.get_placeholders()
         self.eval_queue = tf.FIFOQueue(queue_size, [x.dtype for x in placeholders],
@@ -315,7 +482,7 @@ class AysncEvaluatorRunner(object):
         th.join()
 
         if sess.run(self.queue_size) != 0:
-            raise RuntimeError()
+            raise RuntimeError("All batches should be been consumed")
 
         # flatten the input
         for k in all_tensors_needed:

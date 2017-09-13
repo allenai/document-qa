@@ -1,7 +1,7 @@
 import tensorflow as tf
 import numpy as np
 
-VERY_NEGATIVE_NUMBER = -1e30
+VERY_NEGATIVE_NUMBER = -1e29
 
 
 def dropout(x, keep_prob, is_train, noise_shape=None, seed=None):
@@ -60,6 +60,7 @@ def mask_entries(val, mask):
 
 
 def exp_mask(val, mask):
-    return val + (1 - tf.cast(tf.sequence_mask(mask, tf.shape(val)[1]), 'float')) * VERY_NEGATIVE_NUMBER
+    mask = tf.cast(tf.sequence_mask(mask, tf.shape(val)[1]), 'float')
+    return val * mask + (1 - mask) * VERY_NEGATIVE_NUMBER
 
 

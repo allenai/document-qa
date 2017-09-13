@@ -48,7 +48,13 @@ class Paragraph(ParagraphWithInverse):
         self.paragraph_num = paragraph_num
 
     def __repr__(self) -> str:
-        return "Paragraph%d(%s...)" % (self.paragraph_num, self.context[0][:40])
+        return "Paragraph%d(%s...)" % (self.paragraph_num, self.text[0][:40])
+
+    def __setstate__(self, state):
+        if "context" in state and "text" not in state:
+            state["text"] = state["context"]
+            del state["context"]
+        self.__dict__ = state
 
 
 class Document(object):
@@ -74,11 +80,11 @@ class DocParagraphAndQuestion(ContextAndQuestion):
         return self.paragraph.get_original_text(para_start, para_end)
 
     def get_context(self):
-        return flatten_iterable(self.paragraph.context)
+        return flatten_iterable(self.paragraph.text)
 
     @property
     def n_context_words(self) -> int:
-        return sum(len(s) for s in self.paragraph.context)
+        return sum(len(s) for s in self.paragraph.text)
 
     @property
     def paragraph_num(self):
@@ -142,7 +148,7 @@ class SquadCorpus(Configurable):
             for fn in [self.get_train, self.get_dev, self.get_test]:
                 for doc in fn():
                     for para in doc.paragraphs:
-                        for sent in para.context:
+                        for sent in para.text:
                             voc.update(x.lower() for x in sent)
                         for question in para.questions:
                             voc.update(x.lower() for x in question.words)
@@ -205,7 +211,7 @@ def compute_document_voc(data: List[Document]):
     voc = set()
     for doc in data:
         for para in doc.paragraphs:
-            for sent in para.context:
+            for sent in para.text:
                 voc.update(sent)
             for question in para.questions:
                 voc.update(question.words)
@@ -222,10 +228,10 @@ def get_doc_input_spec(batch_size, data: List[List[Document]]) -> ParagraphAndQu
     for docs in data:
         for doc in docs:
             for para in doc.paragraphs:
-                max_num_sents = max(max_num_sents, len(para.context))
-                max_sent_size = max(max_sent_size, max(len(s) for s in para.context))
-                max_word_size = max(max_word_size, max(len(word) for sent in para.context for word in sent))
-                max_para_size = max(max_para_size, sum(len(sent) for sent in para.context))
+                max_num_sents = max(max_num_sents, len(para.text))
+                max_sent_size = max(max_sent_size, max(len(s) for s in para.text))
+                max_word_size = max(max_word_size, max(len(word) for sent in para.text for word in sent))
+                max_para_size = max(max_para_size, sum(len(sent) for sent in para.text))
                 for question in para.questions:
                     max_ques_size = max(max_ques_size, len(question.words))
                     max_word_size = max(max_word_size, max(len(word) for word in question.words))

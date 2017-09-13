@@ -91,6 +91,7 @@ class CarefulAnswerDetector(object):
     There are some common false negatives in the above answer detection, in particular plurals of answers are
     often not found (nor are counted correct by the official script). This detector makes a stronger effort to
     find them, although its unclear if training with these additional answers would hurt/help our overall score
+    since I never got around to trying it.
     """
     def __init__(self):
         self.skip = {"a", "an", "the", "&", "and", "-", "\u2019", "\u2018", "\"", ";", "'",
@@ -232,27 +233,9 @@ def compute_answer_spans_par(questions, corpus, tokenizer, detector, n_processes
         compute_answer_spans(questions, corpus, word_tokenize, detector)
         return questions
     from multiprocessing import Pool
-    p = Pool(n_processes)
-    chunks = split(questions, n_processes)
-    questions = flatten_iterable(p.starmap(_compute_answer_spans_chunk, [[c, corpus, tokenizer, detector] for c in chunks]))
-    return questions
-
-
-def get_sample():
-    cache = "/tmp/sample.pkl"
-    if exists(cache):
-        print("Loading from cache")
-        with open(cache, "rb") as f:
-            questions, file_map = pickle.load(f)
-            return questions, file_map
-
-    file_map = {}
-    questions = list(iter_trivia_question("/Users/chrisc/Programming/data/trivia-qa/qa/web-train.json", file_map, True))
-
-    np.random.shuffle(questions)
-    questions = questions[:6000]
-    with open(cache, "wb") as f:
-        pickle.dump((list(questions), file_map), f)
-    return questions, file_map
+    with Pool(n_processes) as p:
+        chunks = split(questions, n_processes)
+        questions = flatten_iterable(p.starmap(_compute_answer_spans_chunk, [[c, corpus, tokenizer, detector] for c in chunks]))
+        return questions
 
 

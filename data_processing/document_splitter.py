@@ -7,6 +7,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics import pairwise_distances
 
 from configurable import Configurable
+from data_processing.multi_paragraph_qa import ParagraphWithAnswers
 from data_processing.qa_training_data import ParagraphWithInverse
 from data_processing.text_utils import NltkPlusStopWords
 from trivia_qa.evidence_corpus import TriviaQaEvidenceCorpusTxt
@@ -14,13 +15,12 @@ from utils import flatten_iterable
 
 
 class ExtractedParagraph(object):
-    __slots__ = ["text", "start", "end", "features"]
+    __slots__ = ["text", "start", "end"]
 
-    def __init__(self, text: List[List[str]], start: int, end: int, features=None):
+    def __init__(self, text: List[List[str]], start: int, end: int):
         self.text = text
         self.start = start
         self.end = end
-        self.features = features
 
     @property
     def n_context_words(self):
@@ -30,9 +30,24 @@ class ExtractedParagraph(object):
 class ExtractedParagraphWithAnswers(ExtractedParagraph):
     __slots__ = ["answer_spans"]
 
-    def __init__(self, text: List[List[str]], start: int, end: int, answer_spans: np.ndarray, features=None):
-        super().__init__(text, start, end, features)
+    def __init__(self, text: List[List[str]], start: int, end: int, answer_spans: np.ndarray):
+        super().__init__(text, start, end)
         self.answer_spans = answer_spans
+
+    def with_tokens(self, ixs, tokens, remove_cross_answer=False):
+        text = flatten_iterable(self.text)
+        spans = np.copy(self.answer_spans)
+
+        for ix, token in zip(ixs, tokens):
+            if remove_cross_answer:
+                remove = np.logical_and(spans[:, 0] < ix, spans[:, 1] >= ix)
+                spans = spans[np.logical_not(remove)]
+
+            spans[spans[:, 0] >= ix, 0] += 1
+            spans[spans[:, 1] >= ix, 1] += 1
+            text.insert(ix, token)
+
+        return ParagraphWithAnswers(text, spans)
 
 
 class DocParagraphWithAnswers(ExtractedParagraphWithAnswers):
@@ -106,6 +121,25 @@ class TopTfIdf(ParagraphFilter):
             return [paragraphs[i] for i in sorted_ix[:self.n_to_select] if dists[i] < 1.0]
         else:
             return [paragraphs[i] for i in sorted_ix[:self.n_to_select]]
+
+    def dists(self, question, paragraphs: List[ExtractedParagraph]):
+        tfidf = self._tfidf
+        text = []
+        for para in paragraphs:
+            text.append(" ".join(" ".join(s) for s in para.text))
+        try:
+            para_features = tfidf.fit_transform(text)
+            q_features = tfidf.transform([" ".join(question)])
+        except ValueError:
+            return []
+
+        dists = pairwise_distances(q_features, para_features, "cosine").ravel()
+        sorted_ix = np.lexsort(([x.start for x in paragraphs], dists))  # in case of ties, use the earlier paragraph
+
+        if self.filter_dist_one:
+            return [(paragraphs[i], dists[i]) for i in sorted_ix[:self.n_to_select] if dists[i] < 1.0]
+        else:
+            return [(paragraphs[i], dists[i]) for i in sorted_ix[:self.n_to_select]]
 
 
 class ShallowOpenWebRanker(ParagraphFilter):

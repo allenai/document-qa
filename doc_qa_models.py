@@ -79,7 +79,7 @@ class DocumentQuestionModel(Model):
                 q, c = self.char_embed.embed(is_train,
                                              (input_tensors[enc.question_chars], input_tensors[enc.question_word_len]),
                                              (input_tensors[enc.context_chars], input_tensors[enc.context_word_len]))
-                q_embed.append(q)
+            q_embed.append(q)
             c_embed.append(c)
 
         if enc.question_words in input_tensors:
@@ -118,8 +118,9 @@ class DocumentQuestionModel(Model):
         return data
 
     def __setstate__(self, state):
-        if "preprocessor" not in state["state"]:
-            state["state"]["preprocessor"] = None
+        if "state" in state:
+            if "preprocessor" not in state["state"]:
+                state["state"]["preprocessor"] = None
         super().__setstate__(state)
 
 
@@ -186,6 +187,7 @@ class Attention(DocumentQuestionModel):
         if self.context_mapper is not None:
             with tf.variable_scope("map_context"):
                 context_rep = self.context_mapper.apply(is_train, context_rep, context_mask)
+
 
         with tf.variable_scope("buid_memories"):
             keys, memories = self.memory_builder.apply(is_train, question_rep, question_mask)

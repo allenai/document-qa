@@ -6,7 +6,6 @@ from os.path import expanduser, join, exists
 from typing import List
 
 import numpy as np
-from tqdm import tqdm
 
 import config
 from squad.squad_data import Question, Document, Paragraph, SquadCorpus
@@ -24,11 +23,16 @@ def clean_title(title):
     return urllib.parse.unquote(title).replace("_", " ")
 
 
-def parse_squad_data(source, name, tokenizer) -> List[Document]:
+def parse_squad_data(source, name, tokenizer, pbar=True) -> List[Document]:
     with open(source, 'r') as f:
         source_data = json.load(f)
 
-    for article_ix, article in enumerate(tqdm(source_data['data'])):
+    it = source_data['data']
+    if pbar:
+        # Optional in case the client wants to run w/o installing tqdm (i.e. for codalab scripts)
+        from tqdm import tqdm
+        it = tqdm(it)
+    for article_ix, article in enumerate(it):
         article_ix = "%s-%d" % (name, article_ix)
 
         paragraphs = []
@@ -38,11 +42,12 @@ def parse_squad_data(source, name, tokenizer) -> List[Document]:
             context = para['context']
 
             # list of sentences, each of which is a list of words
-            text, text_spans = tokenizer.tokenize_with_inverse(context)
+            tokenized = tokenizer.tokenize_with_inverse(context)
+            text, text_spans = tokenized.text, tokenized.spans
+            flat_text = flatten_iterable(text)
 
             n_words = sum(len(sentence) for sentence in text)
 
-            flat_text = [word for sent in text for word in sent]
             sent_lens = [len(sent) for sent in text]
 
             for question_ix, question in enumerate(para['qas']):
@@ -57,12 +62,10 @@ def parse_squad_data(source, name, tokenizer) -> List[Document]:
 
                     word_ixs = get_word_span(text_spans, answer_start, answer_stop)
 
-                    sent_start, word_start = word_ixs[0]
-                    sent_end, word_end = word_ixs[-1]
-                    first_word = text[sent_start][word_start]
-                    first_word_span = text_spans[sent_start][word_start]
-                    last_word = text[sent_end][word_end]
-                    last_word_span = text_spans[sent_end][word_end]
+                    first_word = flat_text[word_ixs[0]]
+                    first_word_span = text_spans[word_ixs[0]]
+                    last_word = flat_text[word_ixs[-1]]
+                    last_word_span = text_spans[word_ixs[-1]]
 
                     char_start = answer_start - first_word_span[0]
                     char_end = answer_stop - last_word_span[0]
@@ -76,23 +79,34 @@ def parse_squad_data(source, name, tokenizer) -> List[Document]:
                     else:
                         rebuild = first_word[char_start:]
                         for word_ix in word_ixs[1:-1]:
-                            rebuild += text[word_ix[0]][word_ix[1]]
+                            rebuild += flat_text[word_ix]
                         rebuild += last_word[:char_end]
                         if rebuild != space_re.sub("", tokenizer.clean_text(answer_raw)):
                             raise ValueError(rebuild + " " + answer_raw)
 
-                    para_word_start = word_start + sum(sent_lens[:sent_start])
-                    para_word_end = word_end + sum(sent_lens[:sent_end])
-                    if text[sent_start][word_start] != flat_text[para_word_start]:
+                    # Find the sentence with in-sentence offset
+                    sent_start, sent_end, word_start, word_end = None, None, None, None
+                    on_word = 0
+                    for sent_ix, sent in enumerate(text):
+                        next_word = on_word + len(sent)
+                        if on_word <= word_ixs[0] < next_word:
+                            sent_start = sent_ix
+                            word_start = word_ixs[0] - on_word
+                        if on_word <= word_ixs[-1] < next_word:
+                            sent_end = sent_ix
+                            word_end = word_ixs[-1] - on_word
+                            break
+                        on_word = next_word
+
+                    if text[sent_start][word_start] != flat_text[word_ixs[0]]:
                         raise RuntimeError()
-                    if text[sent_end][word_end] != flat_text[para_word_end]:
+                    if text[sent_end][word_end] != flat_text[word_ixs[-1]]:
                         raise RuntimeError()
 
                     span = ParagraphSpan(
                         sent_start, word_start, char_start,
                         sent_end, word_end, char_end,
-                        word_start + sum(sent_lens[:sent_start]),
-                        word_end + sum(sent_lens[:sent_end]),
+                        word_ixs[0], word_ixs[-1],
                         answer_raw)
                     if span.para_word_end >= n_words or \
                                     span.para_word_start >= n_words:
@@ -101,9 +115,7 @@ def parse_squad_data(source, name, tokenizer) -> List[Document]:
 
                 questions.append(Question(question['id'], question_text, ParagraphSpans(answer_spans)))
 
-            span_ar = np.array(list(((int(x[0]), int(x[1])) for x in flatten_iterable(text_spans))), dtype=np.int32)
-
-            paragraphs.append(Paragraph(text, questions, article_ix, para_ix, context, span_ar))
+            paragraphs.append(Paragraph(text, questions, article_ix, para_ix, context, text_spans))
 
         yield Document(article_ix, article["title"], paragraphs)
 

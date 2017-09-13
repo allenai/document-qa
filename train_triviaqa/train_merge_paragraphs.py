@@ -1,9 +1,10 @@
 from tensorflow.contrib.keras.python.keras.initializers import TruncatedNormal
 
+import model_dir
 import trainer
 from data_processing.document_splitter import MergeParagraphs, TopTfIdf, ShallowOpenWebRanker
 
-from data_processing.multi_paragraph_qa import RandomParagraphDatasetBuilder, ConcatParagraphDatasetBuilder
+from data_processing.multi_paragraph_qa import RandomParagraphsBuilder, ConcatParagraphDatasetBuilder
 from data_processing.preprocessed_corpus import PreprocessedData
 from data_processing.qa_training_data import ContextLenBucketedKey, ContextLenKey
 from data_processing.text_utils import NltkPlusStopWords
@@ -22,7 +23,7 @@ from nn.similarity_layers import TriLinear
 from nn.span_prediction import ConfidencePredictor, BoundsPredictor, WithFixedContextPredictionLayer
 from trainer import SerializableOptimizer, TrainParams
 from trivia_qa.build_span_corpus import TriviaQaWebDataset
-from trivia_qa.lazy_data import LazyRandomParagraphBuilder
+from experimental.lazy_data import LazyRandomParagraphBuilder
 from trivia_qa.training_data import ExtractMultiParagraphsPerQuestion, ExtractMultiParagraphs
 from trivia_qa.triviaqa_evaluators import ConfidenceEvaluator, BoundedSpanEvaluator
 from utils import get_output_name_from_cli
@@ -95,7 +96,7 @@ def main():
     # data.preprocess(6, 100)
     # data.cache_preprocess("tmp.pkl.gz")
     data.load_preprocess("tfidf-top4-in-mem.pkl.gz")
-    trainer.start_training(data, model, train_params, eval, trainer.ModelDir(out), notes, None)
+    trainer.start_training(data, model, train_params, eval, model_dir.ModelDir(out), notes, None)
 
 
 if __name__ == "__main__":

@@ -16,11 +16,12 @@ from nn.span_prediction_ops import best_span_from_bounds, to_unpacked_coordinate
 class BoundaryPrediction(Prediction):
     """ Individual logits for the span start/end """
     def __init__(self, start_prob, end_prob,
-                 start_logits, end_logits):
+                 start_logits, end_logits, mask):
         self.start_probs = start_prob
         self.end_probs = end_prob
         self.start_logits = start_logits
         self.end_logits = end_logits
+        self.mask = mask
         self._bound_predictions = {}
 
     def get_best_span(self, bound: int):
@@ -33,6 +34,12 @@ class BoundaryPrediction(Prediction):
 
     def get_span_scores(self):
         return tf.exp(tf.expand_dims(self.start_logits, 2) + tf.expand_dims(self.end_logits, 1))
+
+    def get_mean_logit(self):
+        logits = (self.start_logits + self.end_logits) / 2.0
+        bol_mask = tf.sequence_mask(self.mask, tf.shape(self.start_logits)[1])
+        bol_mask = tf.cast(bol_mask, tf.float32)
+        return tf.reduce_sum(logits*bol_mask, axis=[1]) / tf.reduce_sum(bol_mask, axis=[1])
 
 
 class PackedSpanPrediction(Prediction):
@@ -63,7 +70,8 @@ class ConfidencePrediction(Prediction):
     """ boundary logits with an additional confidence logit """
     def __init__(self, span_probs,
                  start_logits, end_logits,
-                 none_prob, non_op_logit):
+                 none_prob, non_op_logit,
+                 mask):
         self.span_probs = span_probs
         self.none_prob = none_prob
         self.start_logits = start_logits
@@ -71,12 +79,19 @@ class ConfidencePrediction(Prediction):
         self.none_logit = non_op_logit
         self.start_probs = tf.nn.softmax(start_logits)
         self.end_probs = tf.nn.softmax(end_logits)
+        self.mask = mask
 
     def get_best_span(self, bound: int):
         return best_span_from_bounds(self.start_logits, self.end_logits, bound)
 
     def get_span_scores(self):
         return tf.exp(tf.expand_dims(self.start_logits, 2) + tf.expand_dims(self.end_logits, 1))
+
+    def get_mean_logit(self):
+        logits = self.start_logits + self.end_logits
+        bol_mask = tf.sequence_mask(self.mask, tf.shape(self.start_logits)[1])
+        bol_mask = tf.cast(bol_mask, tf.float32)
+        return tf.reduce_sum(logits*bol_mask, axis=[1]) / tf.reduce_sum(bol_mask, axis=[1])
 
 
 class SpanFromBoundsPredictor(Configurable):
@@ -122,7 +137,7 @@ class IndependentBounds(SpanFromBoundsPredictor):
         tf.add_to_collection(tf.GraphKeys.LOSSES, loss)
         return BoundaryPrediction(tf.nn.softmax(masked_start_logits),
                                   tf.nn.softmax(masked_end_logits),
-                                  masked_start_logits, masked_end_logits)
+                                  masked_start_logits, masked_end_logits, mask)
 
 
 class IndependentBoundsNoAnswerOption(SpanFromBoundsPredictor):
@@ -192,7 +207,7 @@ class IndependentBoundsGrouped(SpanFromBoundsPredictor):
         tf.add_to_collection(tf.GraphKeys.LOSSES, loss)
         return BoundaryPrediction(tf.nn.softmax(masked_start_logits),
                                   tf.nn.softmax(masked_end_logits),
-                                  masked_start_logits, masked_end_logits)
+                                  masked_start_logits, masked_end_logits, mask)
 
 
 class IndependentBoundsSigmoidLoss(SpanFromBoundsPredictor):
@@ -210,17 +225,19 @@ class IndependentBoundsSigmoidLoss(SpanFromBoundsPredictor):
             # In this case there might be multiple answer spans, so we need an aggregation strategy
             losses = []
             for answer_mask, logits in zip(answer, [masked_start_logits, masked_end_logits]):
-                losses.append(tf.nn.sigmoid_cross_entropy_with_logits(
+                answer_mask = tf.cast(answer_mask, tf.float32)
+                loss = tf.nn.sigmoid_cross_entropy_with_logits(
                     labels=tf.cast(answer_mask, tf.float32),
                     logits=logits
-                ))
+                )
+                losses.append(loss)
             loss = tf.add_n(losses)
         else:
             raise NotImplemented()
-        tf.add_to_collection(tf.GraphKeys.LOSSES, tf.reduce_mean(loss))
+        tf.add_to_collection(tf.GraphKeys.LOSSES, tf.reduce_mean(loss, name="sigmoid-loss"))
         return BoundaryPrediction(tf.nn.sigmoid(masked_start_logits),
                                   tf.nn.sigmoid(masked_end_logits),
-                                  masked_start_logits, masked_end_logits)
+                                  masked_start_logits, masked_end_logits, mask)
 
 
 class IndependentBoundsJointLoss(SpanFromBoundsPredictor):
@@ -239,7 +256,7 @@ class IndependentBoundsJointLoss(SpanFromBoundsPredictor):
         tf.add_to_collection(tf.GraphKeys.LOSSES, loss)
         return BoundaryPrediction(tf.nn.softmax(masked_start_logits),
                                   tf.nn.softmax(masked_end_logits),
-                                  masked_start_logits, masked_end_logits)
+                                  masked_start_logits, masked_end_logits, mask)
 
 
 class BoundedSpanPredictor(SpanFromBoundsPredictor):
@@ -415,10 +432,11 @@ class BoundsPredictor(SequencePredictionLayer):
             return self.span_predictor.predict(answer, logits1, logits2, context_mask)
 
     def __setstate__(self, state):
-        if "aggregate" in state["state"]:
-            state["state"]["bound_predictor"] = IndependentBounds(state["state"]["aggregate"])
-        elif "bound_predictor" not in state:
-            state["state"]["bound_predictor"] = IndependentBounds()
+        if "state" in state:
+            if "aggregate" in state["state"]:
+                state["state"]["bound_predictor"] = IndependentBounds(state["state"]["aggregate"])
+            elif "bound_predictor" not in state:
+                state["state"]["bound_predictor"] = IndependentBounds()
         super().__setstate__(state)
 
 
@@ -455,21 +473,8 @@ class WithFixedContextPredictionLayer(AttentionPredictionLayer):
         with tf.variable_scope("predict_span"):
             return self.span_predictor.predict(answer, l1, l2, x_mask)
 
-    def __setstate__(self, state):
-        if "aggregate" in state["state"]:
-            state["state"]["span_predictor"] = IndependentBounds(state["state"]["aggregate"])
-        elif "span_predictor" not in state["state"]:
-            state["state"]["span_predictor"] = IndependentBounds()
-        super().__setstate__(state)
-
 
 class ConfidencePredictor(SequencePredictionLayer):
-    """
-    Optimize log probabilty of picking the correct span, or selecting a no-op, where
-    the probability is P(op)P(start)P(end) if a span exists otherwise 1 - P(nop)
-    This reduces op_logit + start_logit + end_logit (where an answer exists) -
-        1 - op_logit (where answer exists)
-    """
     def __init__(self,
                  predictor: SequenceBiMapper,
                  encoder: Union[SequenceEncoder, SequenceMultiEncoder],
@@ -527,7 +532,6 @@ class ConfidencePredictor(SequencePredictionLayer):
         batch_dim = tf.shape(start_logits)[0]
 
         # (batch, (l * l)) logits for each (start, end) pair
-
         all_logits = tf.reshape(tf.expand_dims(masked_start_logits, 1) +
                                 tf.expand_dims(masked_end_logits, 2),
                                 (batch_dim, -1))
@@ -546,6 +550,6 @@ class ConfidencePredictor(SequencePredictionLayer):
         probs = tf.nn.softmax(all_logits)
         tf.add_to_collection(tf.GraphKeys.LOSSES, loss)
         return ConfidencePrediction(probs[:, :-1], masked_start_logits, masked_end_logits,
-                                    probs[:, -1], none_logit)
+                                    probs[:, -1], none_logit, context_mask)
 
 

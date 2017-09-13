@@ -22,13 +22,14 @@ class Model(Configurable):
     2) a tensorflow function that maps those kinds of tensors to a set of (also unspecified) output tensors
 
     For convenience, models maintain a of set of input placeholders that clients can make use of to
-    feed the model (or reference to construct their own tensor inputs).
+    feed the tensorflow function (or reference to construct their own tensor inputs).
 
     Models have two stages of initialization. First it needs
     to be initialized with the training data using `init` (typically this does things like deciding what
     words/chars to train embeddings for). This should only be done once for this object's lifetime.
 
-    Afterwards use `set_inputs` to specify the input format
+    Afterwards use `set_inputs` to specify the input format, this does things like determine the batch size
+    or the vocabulary that will be used
 
     After initialiation, `encode` will produce map of placeholder -> numpy array
     which can be used directly as a feed dict for the output of `get_predictions`

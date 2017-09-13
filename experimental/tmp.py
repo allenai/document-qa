@@ -1,41 +1,33 @@
-import json
-from collections import Counter
 import re
-import numpy as np
+from collections import Counter
 from os.path import join
 
+import numpy as np
 from tqdm import tqdm
 
 import config
 from data_processing.document_splitter import MergeParagraphs, TopTfIdf
-from data_processing.multi_paragraph_qa import RandomParagraphSetDatasetBuilder
 from data_processing.preprocessed_corpus import PreprocessedData
-from data_processing.qa_training_data import ContextLenBucketedKey, ContextLenKey, ParagraphAndQuestionDatasetBuilder
+from data_processing.qa_training_data import ContextLenBucketedKey, ContextLenKey, ParagraphAndQuestionsBuilder
 from data_processing.text_utils import NltkPlusStopWords
 from dataset import ClusteredBatcher
-from encoder import DocumentAndQuestionEncoder, DenseMultiSpanAnswerEncoder
 from evaluator import LossEvaluator
 from experimental.WithTfIdfFeatures import ExtractSingleParagraphFeaturized
-from nn.embedder import FixedWordEmbedder, LearnedCharEmbedder
 from squad.squad_data import SquadCorpus
 from text_preprocessor import WithIndicators
-from trivia_qa.build_span_corpus import TriviaQaOpenDataset, TriviaQaWebDataset
+from trivia_qa.build_span_corpus import TriviaQaWebDataset
 from trivia_qa.training_data import ExtractMultiParagraphs, ExtractSingleParagraph
-from trivia_qa.triviaqa_evaluators import BoundedSpanEvaluator
-
-import tensorflow as tf
-
-from utils import flatten_iterable, ResourceLoader
+from utils import flatten_iterable
 
 
 def main1():
     data = SquadCorpus()
-    data.dir = join(config.CORPUS_DIR, "squad-v3")
+    data.dir = join(config.CORPUS_DIR, "squad-v4")
     data2 = SquadCorpus()
     data2.dir = join(config.CORPUS_DIR, "squad-v2")
 
-    train = data.get_train()
-    train2 = data2.get_train()
+    train = data.get_dev()
+    train2 = data2.get_dev()
     if len(train) != len(train2):
         raise ValueError()
 
@@ -45,7 +37,7 @@ def main1():
         if len(d1.paragraphs) != len(d2.paragraphs):
             raise ValueError()
         for p1, p2 in zip(d1.paragraphs, d2.paragraphs):
-            if p1.context != p2.context or p1.paragraph_num != p2.paragraph_num or p1.original_text != p2.original_text:
+            if p1.text != p2.text or p1.paragraph_num != p2.paragraph_num or p1.original_text != p2.original_text:
                 raise ValueError()
             if not np.all(p1.spans == p2.spans):
                 raise ValueError()
@@ -87,7 +79,7 @@ def show():
                                   WithIndicators(True, True), intern=True)
     train_batching = ClusteredBatcher(60, ContextLenBucketedKey(3), True, False)
     eval_batching = ClusteredBatcher(60, ContextLenKey(), False, False)
-    builder = ParagraphAndQuestionDatasetBuilder(train_batching, eval_batching)
+    builder = ParagraphAndQuestionsBuilder(train_batching, eval_batching)
     data = PreprocessedData(TriviaQaWebDataset(), prep, builder, eval_on_verified=False,
                             sample_dev=20, sample=100)
     data.preprocess(1)
@@ -110,7 +102,7 @@ def main3():
 
     data = PreprocessedData(TriviaQaWebDataset(),
                             ExtractSingleParagraphFeaturized(MergeParagraphs(400), True, True),
-                            ParagraphAndQuestionDatasetBuilder(train_batching, eval_batching),
+                            ParagraphAndQuestionsBuilder(train_batching, eval_batching),
                             sample_dev=10, sample=10,
                             eval_on_verified=False
                             )
@@ -204,4 +196,4 @@ def check():
 
 
 if __name__ == "__main__":
-    show()
+    main1()

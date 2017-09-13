@@ -12,7 +12,7 @@ from evaluator import RecordQuestionId, RecordSpanPrediction, LossEvaluator, Spa
     Evaluation, span_scores
 from experimental.niket_qa.build_niket_dataset import NiketCorpus
 from squad.squad_official_evaluation import f1_score
-from trainer import ModelDir
+from model_dir import ModelDir
 from utils import flatten_iterable, transpose_lists, print_table
 
 """

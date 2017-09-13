@@ -1,3 +1,4 @@
+import model_dir
 import trainer
 from data_processing.document_splitter import MergeParagraphs
 from data_processing.preprocessed_corpus import PreprocessedData
@@ -63,7 +64,7 @@ def main():
     data.load_preprocess("occurance-data.pkl")
 
     eval = [LossEvaluator(), AnyTopNEvaluator([1, 2, 3, 4])]
-    trainer.start_training(data, model, train_params, eval, trainer.ModelDir(out), notes, False)
+    trainer.start_training(data, model, train_params, eval, model_dir.ModelDir(out), notes, False)
 
 
 if __name__ == "__main__":

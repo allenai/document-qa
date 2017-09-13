@@ -1,3 +1,4 @@
+import model_dir
 import trainer
 from data_processing.paragraph_qa import ContextLenKey, ContextLenBucketedKey
 from data_processing.preprocessed_corpus import PreprocessedData
@@ -88,7 +89,7 @@ def main():
     data.preprocess()
 
     eval = [LossEvaluator(), BoundedSquadSpanEvaluator(bound=[17])]
-    trainer.start_training(data, model, train_params, eval, trainer.ModelDir(out), notes, False)
+    trainer.start_training(data, model, train_params, eval, model_dir.ModelDir(out), notes, False)
 
 
 if __name__ == "__main__":
