@@ -19,7 +19,7 @@ from utils import flatten_iterable
 
 
 """
-Preprocessors to build a document-level question and answer dataset from SQuAD data
+Preprocessors for document-level question answering with SQuAD data
 """
 
 

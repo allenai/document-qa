@@ -1,12 +1,11 @@
 from collections import Counter
-from typing import List, Iterable, Optional
+from typing import List, Iterable
 
 import numpy as np
 import tensorflow as tf
-from nltk.corpus import stopwords
 
 from configurable import Configurable
-from nn.layers import SqueezeLayer, Updater, Encoder
+from nn.layers import Encoder
 from utils import ResourceLoader
 
 """
@@ -26,16 +25,16 @@ class WordEmbedder(Configurable):
     def is_vocab_set(self):
         raise NotImplementedError()
 
-    def question_word_to_ix(self, word, is_train):
+    def question_word_to_ix(self, word, is_train) -> int:
         raise NotImplementedError()
 
-    def context_word_to_ix(self, word, is_train):
+    def context_word_to_ix(self, word, is_train) -> int:
         raise NotImplementedError()
 
-    def query_once(self):
+    def query_once(self) -> bool:
         """
         Should the embedder be queried once for each unique word in the input, or once for each word.
-        Can be used to support placeholders
+        Intended to support placeholders, although I ended up not experimenting much w/that route
         """
         return False
 
@@ -310,3 +309,149 @@ class FixedWordEmbedder(WordEmbedder):
             if "_special_tokens" not in state["state"]:
                 state["state"]["_special_tokens"] = []
         super().__setstate__(state)
+
+
+class FixedWordEmbedderPlaceholders(WordEmbedder):
+
+    def __init__(self,
+                 vec_name: str,
+                 word_vec_init_scale: float = 0.05,
+                 keep_probs: float = 1,
+                 keep_word: float= 1,
+                 n_placeholders: int=1000,
+                 placeholder_stddev: float=0.5,
+                 placeholder_flag: bool=False,
+                 cpu=False):
+        self.placeholder_stddev = placeholder_stddev
+        self.placeholder_flag = placeholder_flag
+        self.keep_word = keep_word
+        self.keep_probs = keep_probs
+        self.word_vec_init_scale = word_vec_init_scale
+        self.vec_name = vec_name
+        self.cpu = cpu
+        self.n_placeholders = n_placeholders
+        self._on_placeholder = 0
+        self._placeholder_start = None
+
+        # Built in `init`
+        self._word_to_ix = None
+        self._word_emb_mat = None
+        self._special_tokens = None
+
+    def set_vocab(self, _, loader: ResourceLoader, special_tokens: List[str]):
+        if special_tokens is not None:
+            self._special_tokens = sorted(special_tokens)
+
+    def is_vocab_set(self):
+        return True
+
+    def query_once(self) -> bool:
+        return True
+
+    def question_word_to_ix(self, word, is_train):
+        ix = self._word_to_ix.get(word)
+        if ix is None:
+            ix = self._word_to_ix.get(word.lower())
+            if ix is None:
+                self._on_placeholder = (self._on_placeholder + 1) % self.n_placeholders
+                ix = self._placeholder_start + self._on_placeholder
+        return ix
+
+    def context_word_to_ix(self, word, is_train):
+        # print(word)
+        ix = self._word_to_ix.get(word)
+        if ix is None:
+            ix = self._word_to_ix.get(word.lower())
+            if ix is None:
+                self._on_placeholder = (self._on_placeholder + 1) % self.n_placeholders
+                ix = self._placeholder_start + self._on_placeholder
+        return ix
+
+    @property
+    def version(self):
+        # added `cpu`
+        return 1
+
+    def init(self, loader: ResourceLoader, voc: Iterable[str]):
+        if self.cpu:
+            with tf.device("/cpu:0"):
+                self._init(loader, voc)
+        else:
+            self._init(loader, voc)
+
+    def _init(self, loader: ResourceLoader, voc: Iterable[str]):
+        # TODO we should not be building variables here
+        if voc is not None:
+            word_to_vec = loader.load_word_vec(self.vec_name, voc)
+        else:
+            word_to_vec = loader.load_word_vec(self.vec_name)
+            voc = set(word_to_vec.keys())
+
+        self._word_to_ix = {}
+
+        dim = next(iter(word_to_vec.values())).shape[0]
+        if self.placeholder_flag:
+            dim += 1
+
+        null_embed = tf.zeros((1, dim), dtype=tf.float32)
+        ix = 1
+        matrix_list = [null_embed]
+
+        if self._special_tokens is not None and len(self._special_tokens) > 0:
+            print("Building embeddings for %d special_tokens" % (len(self._special_tokens)))
+            tok_embed = tf.get_variable(shape=(len(self._special_tokens), dim), name="token_embed",
+                                        dtype=np.float32, trainable=True,
+                                        initializer=tf.random_uniform_initializer(-self.word_vec_init_scale,
+                                                                                  self.word_vec_init_scale))
+            matrix_list.append(tok_embed)
+            for token in self._special_tokens:
+                self._word_to_ix[token] = ix
+                ix += 1
+
+        mat = []
+        for word in voc:
+            if word in self._word_to_ix:
+                continue  # in case we already added due after seeing a capitalized version of `word`
+            if word in word_to_vec:
+                mat.append(word_to_vec[word])
+                self._word_to_ix[word] = ix
+                ix += 1
+            else:
+                lower = word.lower()  # Full back to the lower-case version
+                if lower in word_to_vec and lower not in self._word_to_ix:
+                    mat.append(word_to_vec[lower])
+                    self._word_to_ix[lower] = ix
+                    ix += 1
+
+        print("Had pre-trained word embeddings for %d of %d words" % (len(mat), len(voc)))
+
+        mat = np.vstack(mat)
+        if self.placeholder_flag:
+            mat = np.concatenate([mat, np.zeros((len(mat), 1), dtype=np.float32)], axis=1)
+        matrix_list.append(tf.constant(value=mat))
+
+        self._placeholder_start = ix
+
+        def init(shape, dtype=None, partition_info=None):
+            out = tf.random_normal((self.n_placeholders, dim-1), stddev=self.placeholder_stddev)
+            return tf.concat([out, tf.ones((self.n_placeholders, 1))], axis=1)
+
+        if self.placeholder_flag:
+            init_fn = init
+        else:
+            init_fn = tf.random_normal_initializer(stddev=self.placeholder_stddev)
+
+        matrix_list.append(tf.get_variable("placeholders", (self.n_placeholders, mat.shape[1]),
+                                           tf.float32, trainable=False,
+                                           initializer=init_fn))
+
+        self._word_emb_mat = tf.concat(matrix_list, axis=0)
+
+    def embed(self, is_train, *word_ix):
+        if any(len(x) != 2 for x in word_ix):
+            raise ValueError()
+        if self.cpu:
+            with tf.device("/cpu:0"):
+                return [tf.nn.embedding_lookup(self._word_emb_mat, x[0]) for x in word_ix]
+        else:
+            return [tf.nn.embedding_lookup(self._word_emb_mat, x[0]) for x in word_ix]

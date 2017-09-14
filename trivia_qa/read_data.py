@@ -1,14 +1,7 @@
-import string
 import ujson as json
-# import json
-import re
-import pickle
-from os import walk, makedirs
-from os.path import join, exists, relpath
-from typing import List, Generator
-import numpy as np
 import unicodedata
-from tqdm import tqdm
+from os.path import join
+from typing import List
 
 from trivia_qa.trivia_qa_eval import normalize_answer as triviaqa_normalize_answer
 

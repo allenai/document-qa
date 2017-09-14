@@ -194,6 +194,14 @@ def check():
     #         raise ValueError()
     #     # n_entity = sum("Filename" in x for x in point["Entity"])
 
+def std():
+    vecs = SquadCorpus().get_resource_loader().load_word_vec("glove.840B.300d")
+    mat = np.vstack(list(vecs.values()))
+    print(mat.shape)
+    print(mat.mean(axis=0))
+    print(mat.std(axis=0))
+    print(mat.mean())
+    print(mat.std())
 
 if __name__ == "__main__":
-    main1()
+    std()

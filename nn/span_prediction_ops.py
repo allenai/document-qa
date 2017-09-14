@@ -1,6 +1,10 @@
 import tensorflow as tf
 import numpy as np
-from nn.ops import exp_mask
+
+
+"""
+Some utility functions for dealing with span prediction in tensorflow
+"""
 
 
 def best_span_from_bounds(start_logits, end_logits, bound=None):
@@ -83,8 +87,8 @@ def to_packed_coordinates(spans, l, bound=None):
 
 def to_packed_coordinates_np(spans, l, bound=None):
     """ Converts the spans to vector of packed coordiantes, in the packed format
-    spans are indexed first by length, then by start position. If bound is given
-     spans are truncated to be of `bound` length """
+    spans are indexed first by length, then by start position in a flattened array.
+    If bound is given spans are truncated to be of `bound` length """
     lens = spans[:, 1] - spans[:, 0]
     if bound is not None:
         lens = np.minimum(lens, bound-1)

@@ -1,10 +1,13 @@
 import gzip
 from os.path import join, exists
-from typing import Union, Iterable, Optional
+from typing import Iterable, Optional
 
 import numpy as np
 
 from config import VEC_DIR
+
+
+""" Loading words vectors """
 
 
 def _vec_path(vec_name):
@@ -19,9 +22,8 @@ def load_word_vectors(vec_name: str, vocab: Optional[Iterable[str]]=None):
 def load_word_vector_file(vec_path: str, vocab: Optional[Iterable[str]] = None):
     if vocab is not None:
         vocab = set(x.lower() for x in vocab)
-    pruned_dict = {}
 
-    # some of the large vec files produce utf-8 errors for some words, just skip them
+    # notes some of the large vec files produce utf-8 errors for some words, just skip them
     if not exists(vec_path):
         vec_path += ".gz"
         if not exists(vec_path):
@@ -30,6 +32,7 @@ def load_word_vector_file(vec_path: str, vocab: Optional[Iterable[str]] = None):
     else:
         handle = lambda x: open(x, 'r', encoding='utf-8', errors='ignore')
 
+    pruned_dict = {}
     with handle(vec_path) as fh:
         for line in fh:
             word_ix = line.find(" ")

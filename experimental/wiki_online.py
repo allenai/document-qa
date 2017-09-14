@@ -57,8 +57,8 @@ def show_complete_alignment(para1, para2, r, c):
 
     return HtmlDiff(tabsize=4, wrapcolumn=120).make_file(lines1, lines2)
 
-#
-# class WikiApiCorpus(Configurable):
+
+# class TimestampedWikiCorpus(Configurable):
 #     DOC_DIR_NAME = "docs"
 #     TOKENIZED_DIR_NAME = "tokenized"
 #
@@ -162,6 +162,7 @@ def show_complete_alignment(para1, para2, r, c):
 #         with open(raw_file, "w") as f:
 #             json.dump(data, f)
 #         return data
+
 
 
 class SquadWikiArticles(WikiApiCorpus):

@@ -1,7 +1,5 @@
 import unicodedata
 
-import sys
-
 from data_processing.text_utils import NltkAndPunctTokenizer
 from utils import ResourceLoader
 
@@ -11,7 +9,6 @@ except ImportError:
   import json
 
 import pickle
-import re
 from os import mkdir
 
 from os.path import join, exists
@@ -22,7 +19,7 @@ from typing import List, Optional
 from config import CORPUS_DIR, TRIVIA_QA, TRIVIA_QA_UNFILTERED
 from configurable import Configurable
 from trivia_qa.answer_detection import compute_answer_spans_par, FastNormalizedAnswerDetector
-from trivia_qa.evidence_corpus import build_tokenized_corpus, TriviaQaEvidenceCorpusTxt
+from trivia_qa.evidence_corpus import TriviaQaEvidenceCorpusTxt
 from trivia_qa.read_data import iter_trivia_question, TriviaQaQuestion
 
 

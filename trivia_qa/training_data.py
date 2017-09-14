@@ -13,7 +13,8 @@ from utils import flatten_iterable, ResourceLoader, split, group
 
 
 """
-Tools to convert the span corpus into training data we can feed into our model
+Tools to convert pre-procossed TriviaQa questions and pre-tokenized docuemnts
+into (question, paragraph) data we can train our model on. 
 """
 
 
@@ -27,6 +28,9 @@ class DocumentParagraphQuestion(ParagraphAndQuestion):
 
 
 class ExtractSingleParagraph(Preprocessor):
+    """ Grab a single paragraph for each (document, question) pair, builds a list of
+     (filtered) `DocumentParagraphQuestion` objects """
+
     def __init__(self, splitter: DocumentSplitter,
                  para_filter: Optional[ParagraphFilter],
                  text_preprocess: Optional[TextPreprocessor],
@@ -103,6 +107,10 @@ def intern_mutli_question(questions):
 
 
 class ExtractMultiParagraphs(Preprocessor):
+    """
+    Grab multiple paragraphs per (document, question) pair, return a list of (filtered) `MultiParagraphQuestion`
+    """
+
     def __init__(self, splitter: DocumentSplitter, ranker: Optional[ParagraphFilter],
                  text_process: Optional[TextPreprocessor], intern: bool=False, require_an_answer=True):
         self.intern = intern
@@ -111,7 +119,7 @@ class ExtractMultiParagraphs(Preprocessor):
         self.text_process = text_process
         self.require_an_answer = require_an_answer
 
-    def preprocess(self, questions: List[TriviaQaQuestion], evidence) -> object:
+    def preprocess(self, questions: List[TriviaQaQuestion], evidence):
         true_len = 0
         splitter = self.splitter
         para_filter = self.ranker
@@ -156,6 +164,11 @@ class ExtractMultiParagraphs(Preprocessor):
 
 
 class ExtractMultiParagraphsPerQuestion(Preprocessor):
+    """
+    Get multiple paragraph per question, using all document. Returns a filtered list of
+    `MultiParagraphQuestion`
+    """
+
     def __init__(self, splitter: DocumentSplitter, ranker: ParagraphFilter,
                  text_preprocess: Optional[TextPreprocessor],
                  intern: bool=False, require_an_answer=True):

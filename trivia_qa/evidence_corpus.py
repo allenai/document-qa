@@ -226,6 +226,7 @@ def main():
     parse = argparse.ArgumentParser()
     parse.add_argument("-o", "--output_dir", type=str, default=join(config.CORPUS_DIR, "triviaqa"))
     parse.add_argument("-s", "--source", type=str, default=join(config.TRIVIA_QA, "evidence"))
+    # This is slow, using more processes is recommended
     parse.add_argument("-n", "--n_processes", type=int, default=1)
     args = parse.parse_args()
     build_tokenized_corpus(args.source, NltkAndPunctTokenizer(), args.output_dir, n_processes=args.n_processes)

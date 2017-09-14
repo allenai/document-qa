@@ -1,7 +1,6 @@
 from typing import List
 
 import tensorflow as tf
-from tensorflow.contrib.keras.python.keras import initializers, activations
 
 from configurable import Configurable
 from nn.layers import get_keras_initialization, get_keras_activation
@@ -28,10 +27,6 @@ class SimilarityFunction(Configurable):
     def get_scores(self, tensor_1, tensor_2):
         raise NotImplementedError
 
-    """
-    Computes a score between elements in the left sequence
-    [batch, dim1], (batch, time2, dim2) -> (batch, time2)
-    """
     def get_one_sided_scores(self, tensor_1, tensor_2):
         return tf.squeeze(self.get_scores(tf.expand_dims(tensor_1, 1), tensor_2), squeeze_dims=[1])
 
@@ -46,6 +41,7 @@ class SimilaritySum(SimilarityFunction):
 
 class _WithBias(SimilarityFunction):
     def __init__(self, bias: bool):
+        # Note since we typically do softmax on the result, having a bias is usually redundant
         self.bias = bias
 
     def get_scores(self, tensor_1, tensor_2):

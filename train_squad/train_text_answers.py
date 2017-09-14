@@ -1,25 +1,25 @@
+from data_processing.paragraph_qa import ContextLenKey, ContextLenBucketedKey
+from data_processing.qa_data import ParagraphAndQuestionDatasetBuilder
+from squad.build_dataset import SquadCorpus
+from squad.squad_eval import BoundedSquadSpanEvaluator
+
 import model_dir
 import trainer
-from data_processing.paragraph_qa import ContextLenKey, ContextLenBucketedKey
 from data_processing.preprocessed_corpus import PreprocessedData
-from data_processing.qa_data import ParagraphAndQuestionDatasetBuilder
 from dataset import ClusteredBatcher
 from doc_qa_models import Attention
-from encoder import DocumentAndQuestionEncoder, SingleSpanAnswerEncoder, DenseMultiSpanAnswerEncoder
+from encoder import DocumentAndQuestionEncoder, DenseMultiSpanAnswerEncoder
 from evaluator import LossEvaluator
+from experimental.squad_text_labels import TagTextAnswers
 from nn.attention import StaticAttention, StaticAttentionSelf, AttentionEncoder
 from nn.embedder import FixedWordEmbedder, CharWordEmbedder, LearnedCharEmbedder
-from nn.layers import NullBiMapper, NullMapper, SequenceMapperSeq, DropoutLayer, FullyConnected, ChainBiMapper, \
+from nn.layers import NullBiMapper, SequenceMapperSeq, DropoutLayer, FullyConnected, ChainBiMapper, \
     ConcatWithProduct, WithProjectedProduct, \
-    MapperSeq, ResidualLayer, MergeWith
+    MapperSeq, ResidualLayer
 from nn.recurrent_layers import BiRecurrentMapper, RecurrentEncoder, EncodeOverTime, GruCellSpec
 from nn.similarity_layers import TriLinear
 from nn.span_prediction import WithFixedContextPredictionLayer
-from squad.squad_text_labels import TagTextAnswers
 from trainer import SerializableOptimizer, TrainParams
-from squad.build_dataset import SquadCorpus
-
-from squad.squad_eval import BoundedSquadSpanEvaluator
 from utils import get_output_name_from_cli
 
 

@@ -1,13 +1,12 @@
-import numpy as np
-from typing import List, Optional, Tuple
 from collections import Counter
+from typing import List, Optional, Tuple
 
+import numpy as np
 from tqdm import tqdm
 
 from configurable import Configurable
 from data_processing.document_splitter import ExtractedParagraphWithAnswers, MergeParagraphs
 from data_processing.multi_paragraph_qa import ParagraphWithAnswers
-from data_processing.qa_training_data import ParagraphAndQuestion
 from squad.squad_data import SquadCorpus
 from trivia_qa.build_span_corpus import TriviaQaWebDataset
 from utils import flatten_iterable
@@ -93,6 +92,13 @@ class WithIndicators(TextPreprocessor):
             on_ix += len(sent)
 
         return out, spans, None if inv_out is None else np.concatenate(inv_out)
+
+    def __setstate__(self, state):
+        if "doc_start_token" not in state:
+            state["doc_start_token"] = True
+        if "para_tokens" not in state:
+            state["para_tokens"] = True
+        super().__setstate__(state)
 
 
 def check_preprocess():

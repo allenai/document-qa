@@ -52,7 +52,7 @@ class SerializableOptimizer(Configurable):
 
 
 def init(out: ModelDir, model: Model, override=False):
-    """ Save our initialization into `out` """
+    """ Save our intial setup into `out` """
 
     for dir in [out.save_dir, out.log_dir]:
         if os.path.exists(dir):
@@ -66,7 +66,7 @@ def init(out: ModelDir, model: Model, override=False):
         else:
             os.makedirs(dir)
 
-    # JSON config just so we have a human-readable dump of what we are working with
+    # JSON config just so we always have a human-readable dump of what we are working with
     with open(join(out.dir, "model.json"), "w") as f:
         f.write(configurable.config_to_json(model, indent=2))
 

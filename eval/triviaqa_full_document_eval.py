@@ -52,7 +52,6 @@ class RecordParagraphSpanPrediction(Evaluator):
 
         pred_f1s = np.zeros(len(data))
         pred_em = np.zeros(len(data))
-        oracle_f1s = np.zeros(len(data))
         text_answers = []
 
         print("Scoring...")
@@ -79,13 +78,6 @@ class RecordParagraphSpanPrediction(Evaluator):
             pred_f1s[i] = f1
             pred_em[i] = em
 
-            oracle_f1 = 0
-            for s,e in point.answer.answer_spans:
-                pred_text = " ".join(text[s:e+1])
-                for answer in point.answer.answer_text:
-                    oracle_f1 = max(oracle_f1, trivia_f1_score(pred_text, answer))
-            oracle_f1s[i] = oracle_f1
-
         results = {}
         results["n_answers"] = [0 if x.answer is None else len(x.answer.answer_spans) for x in data]
         if self.record_text_ans:
@@ -96,7 +88,6 @@ class RecordParagraphSpanPrediction(Evaluator):
         results["text_f1"] = pred_f1s
         results["rank"] = [x.rank for x in data]
         results["text_em"] = pred_em
-        results["oracle_f1"] = oracle_f1s
         results["para_start"] = [x.para_range[0] for x in data]
         results["para_end"] = [x.para_range[1] for x in data]
         results["question_id"] = [x.question_id for x in data]

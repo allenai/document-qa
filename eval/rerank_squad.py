@@ -53,8 +53,9 @@ def main():
     for f, answer_df in zip(args.answers, answer_dfs):
         answer_df.sort_values(["rank"], inplace=True)
         model_scores = compute_model_scores(answer_df, "predicted_score", "text_f1", ["question_id"])
-
-        out[f] = model_scores
+        out["f1-" + f] = model_scores
+        model_scores = compute_model_scores(answer_df, "predicted_score", "text_em", ["question_id"])
+        out["em-" + f] = model_scores
 
     print(pd.DataFrame(out))
 

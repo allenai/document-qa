@@ -1,11 +1,11 @@
 from typing import List
 
 import numpy as np
-
 from data_processing.paragraph_qa import Document, Paragraph
 from data_processing.qa_data import Answer
-from data_processing.wiki_online import WikiParagraph, WikiApiCorpus, align_paragraphs, SquadWikiArticles
 from squad.squad import SquadCorpus
+
+from experimental.wiki_online import WikiParagraph, WikiApiCorpus, align_paragraphs, SquadWikiArticles
 from utils import flatten_iterable
 
 """

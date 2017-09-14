@@ -2,15 +2,15 @@ import re
 from collections import Counter, defaultdict
 
 import numpy as np
-from squad.squad import SquadCorpus
 
 from data_processing.text_features import BasicWordFeatures
+from squad.squad_data import SquadCorpus
 
 
 def show_unk(corpus: SquadCorpus, vec_name: str,
              context: bool=True, question: bool=True):
     vecs = corpus.get_pruned_word_vecs(vec_name)
-    docs = corpus.get_train_docs()
+    docs = corpus.get_train()
 
     lower_unk = Counter()
     unk = Counter()
@@ -18,7 +18,7 @@ def show_unk(corpus: SquadCorpus, vec_name: str,
     for doc in docs:
         for para in doc.paragraphs:
             if context:
-                for sent in para.context:
+                for sent in para.text:
                     for word in sent:
                         if word not in vecs:
                             unk[word] += 1
@@ -39,7 +39,7 @@ def show_unk(corpus: SquadCorpus, vec_name: str,
 
 def show_features(corpus: SquadCorpus, vec_name):
     print("Loading train docs")
-    data = corpus.get_train_docs()
+    data = corpus.get_train()
     np.random.shuffle(data)
     data = data[:100]
 
@@ -55,7 +55,7 @@ def show_features(corpus: SquadCorpus, vec_name):
         paragraphs = list(doc.paragraphs)
         np.random.shuffle(paragraphs)
         for para in paragraphs:
-            sentences = list(para.context) + [x.words for x in para.questions]
+            sentences = list(para.text) + [x.words for x in para.questions]
             np.random.shuffle(sentences)
             for words in sentences:
                 for i, word in enumerate(words):
@@ -79,7 +79,7 @@ def show_features(corpus: SquadCorpus, vec_name):
 
 def show_nums(corpus: SquadCorpus):
     n_regex = re.compile(".*[0-9].*")
-    data = corpus.get_train_docs()
+    data = corpus.get_train()
     np.random.shuffle(data)
 
     for doc in data:
@@ -94,8 +94,8 @@ def show_nums(corpus: SquadCorpus):
                         print(word)
 
 
-def show_in_context(corpus: SquadCorpus, vec_name):
-    data = corpus.get_train_docs()
+def show_in_context_unks(corpus: SquadCorpus, vec_name):
+    data = corpus.get_train()
     np.random.shuffle(data)
     vecs = corpus.get_pruned_word_vecs(vec_name)
 
@@ -103,7 +103,7 @@ def show_in_context(corpus: SquadCorpus, vec_name):
         paragraphs = list(doc.paragraphs)
         np.random.shuffle(paragraphs)
         for para in paragraphs:
-            sentences = list(para.context) + [x.words for x in para.questions]
+            sentences = list(para.text) + [x.words for x in para.questions]
             np.random.shuffle(sentences)
             for words in sentences:
                 for i, word in enumerate(words):
@@ -114,8 +114,8 @@ def show_in_context(corpus: SquadCorpus, vec_name):
 
 
 def main():
+    show_unk(SquadCorpus(), "glove.840B.300d")
     # show_unk(SpanCorpus("squad"), "glove.6B.100d")
-    show_features(SquadCorpus(), "glove.6B.100d")
     # show_nums(SpanCorpus("squad"))
 
 

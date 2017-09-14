@@ -221,7 +221,6 @@ class ParagraphSpans(Answer):
 class TokenSpans(Answer):
     __slots__ = ["answer_text", "answer_spans"]
 
-    # TODO I think it would be preferable to just swich everything to using this class
     def __init__(self, answer_text: List[str], answer_spans: np.ndarray):
         """
         :param answer_text: list of text answers

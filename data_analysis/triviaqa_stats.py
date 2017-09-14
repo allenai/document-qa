@@ -5,11 +5,7 @@ from tqdm import tqdm
 
 from data_processing.document_splitter import MergeParagraphs, ContainsQuestionWord, DocumentSplitter, \
     ExtractedParagraphWithAnswers
-from data_processing.preprocessed_corpus import PreprocessedData
-from data_processing.qa_data import Batcher
 from data_processing.text_utils import NltkPlusStopWords, WordNormalizer
-from paragraph_selection.paragraph_selection_featurizer import NGramMatchingFeaturizer, ParagraphOrderFeatures, \
-    ParagraphFeatures
 from experimental.paragraph_selection.paragraph_selection_model import SelectionDatasetBuilder, ParagraphSelectionFeaturizer
 from trivia_qa.build_span_corpus import TriviaQaOpenDataset, TriviaQaWebDataset, TriviaQaSampleWebDataset
 from trivia_qa.read_data import SearchDoc, TriviaQaQuestion
@@ -27,10 +23,6 @@ def basic_stats(corpus):
 def paragraph_stats(corpus, splitter: DocumentSplitter, sample):
     stop = NltkPlusStopWords(punctuation=True).words
 
-    if "," not in stop:
-        raise ValueError()
-
-    norm = WordNormalizer()
     data = corpus.get_dev()
     pairs = flatten_iterable([(q, doc) for doc in q.all_docs] for q in data)
     data = [pairs[i] for i in np.random.choice(np.arange(0, len(pairs)), sample, replace=False)]
@@ -66,8 +58,6 @@ def paragraph_stats(corpus, splitter: DocumentSplitter, sample):
                 input()
             word_matches.update(match_set)
             n_question_words.append(n_matches)
-        # n_question_words += [sum(norm.normalize(w) in q_words for w in flatten_iterable(x.text)) for x in para]
-        # n_question_words += [sum(w.lower() in q_words for w in flatten_iterable(x.text)) for x in para]
 
     n_answers = np.array(n_answers)
     n_question_words = np.array(n_question_words)
@@ -147,30 +137,5 @@ def contains_question_word():
     print(has_token/total)
 
 
-def show_questions():
-    corpus = TriviaQaWebDataset()
-    questions = corpus.get_train()
-    np.random.shuffle(questions)
-    for q in questions[:500]:
-        print(" ".join(q.question))
-
-
-def prep():
-    corpus = TriviaQaWebDataset()
-    dev = corpus.get_dev()
-    norm = WordNormalizer(stemmer="wordnet")
-    fe = ParagraphSelectionFeaturizer(MergeParagraphs(400), None,
-                                                [
-                                                    NGramMatchingFeaturizer(None, norm, (1, 1)),
-                                                    # NGramFineGrained(stop, norm, [(1, (True, True, True)),
-                                                    #                               (2, (True, True, True))]),
-                                                 ],
-                                                [ParagraphOrderFeatures(), ParagraphFeatures()],
-                                                filter_initial_zeros=False,
-                                                prune_no_answer=True)
-    fe.preprocess(dev, corpus.evidence)
-
 if __name__ == "__main__":
-    show_questions()
-    # contains_question_word()
-    # paragraph_stats(TriviaQaWebDataset(), MergeParagraphs(400), 500)
+    paragraph_stats(TriviaQaWebDataset(), MergeParagraphs(400), 1000)

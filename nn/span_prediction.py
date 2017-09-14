@@ -13,8 +13,14 @@ from nn.span_prediction_ops import best_span_from_bounds, to_unpacked_coordinate
     to_packed_coordinates, packed_span_f1_mask
 
 
+"""
+Classes to take a sequence of vectors and build a loss function and predict a span
+"""
+
+
 class BoundaryPrediction(Prediction):
     """ Individual logits for the span start/end """
+
     def __init__(self, start_prob, end_prob,
                  start_logits, end_logits, mask):
         self.start_probs = start_prob
@@ -95,6 +101,12 @@ class ConfidencePrediction(Prediction):
 
 
 class SpanFromBoundsPredictor(Configurable):
+    """
+    Adds a loss function and returns a prediction given start/end span bounds logits.
+    There a few loss function we could consider at this point so this class provides an abstraction
+    over those options
+    """
+
     def predict(self, answer, start_logits, end_logits, mask) -> Prediction:
         raise NotImplementedError()
 
@@ -141,6 +153,12 @@ class IndependentBounds(SpanFromBoundsPredictor):
 
 
 class IndependentBoundsNoAnswerOption(SpanFromBoundsPredictor):
+    """
+    Return start_logits and end_logit, and also learn a scalar no-answer option. I have generally used
+    `ConfidencePredictor` over this class, although possibly forcing the no-answer option to be scalar
+    will help ensure the score for the remaining spans are well calibrated
+    """
+
     def __init__(self, aggregate="sum", non_init=-1.0):
         self.aggregate = aggregate
         self.non_init = non_init
@@ -240,25 +258,6 @@ class IndependentBoundsSigmoidLoss(SpanFromBoundsPredictor):
                                   masked_start_logits, masked_end_logits, mask)
 
 
-class IndependentBoundsJointLoss(SpanFromBoundsPredictor):
-    def predict(self, answer, start_logits, end_logits, mask) -> Prediction:
-        if len(answer) != 1:
-            raise NotImplementedError()
-        masked_start_logits = exp_mask(start_logits, mask)
-        masked_end_logits = exp_mask(end_logits, mask)
-        answer_spans = answer[0]
-        losses1 = tf.nn.sparse_softmax_cross_entropy_with_logits(
-            logits=masked_start_logits, labels=answer_spans[:, 0])
-        losses2 = tf.nn.sparse_softmax_cross_entropy_with_logits(
-            logits=masked_end_logits, labels=answer_spans[:, 1])
-        joint_loss = tf.reduce_logsumexp(tf.stack([losses1, losses2], axis=1), axis=1)
-        loss = tf.reduce_mean(joint_loss)
-        tf.add_to_collection(tf.GraphKeys.LOSSES, loss)
-        return BoundaryPrediction(tf.nn.softmax(masked_start_logits),
-                                  tf.nn.softmax(masked_end_logits),
-                                  masked_start_logits, masked_end_logits, mask)
-
-
 class BoundedSpanPredictor(SpanFromBoundsPredictor):
     def __init__(self, bound: int, f1_weight=0, aggregate:str=None):
         self.bound = bound
@@ -317,6 +316,11 @@ class BoundedSpanPredictor(SpanFromBoundsPredictor):
 
 
 class SpanFromVectorBound(SequencePredictionLayer):
+    """
+    RaSoR style prediction, combing a vector the start/end
+    of each span. In practice I have struggled to make this work well on TriviaQA
+    """
+
     def __init__(self,
                  mapper: SequenceBiMapper,
                  pre_process: Optional[SequenceMapper],
@@ -408,6 +412,8 @@ class SpanFromVectorBound(SequencePredictionLayer):
 
 
 class BoundsPredictor(SequencePredictionLayer):
+    """ Standard start/end bound prediction """
+
     def __init__(self, predictor: SequenceBiMapper, init: str="glorot_uniform",
                  span_predictor: SpanFromBoundsPredictor = IndependentBounds()):
         self.predictor = predictor
@@ -441,6 +447,8 @@ class BoundsPredictor(SequencePredictionLayer):
 
 
 class WithFixedContextPredictionLayer(AttentionPredictionLayer):
+    """ Bound prediction integrating a fixed length represention of the question """
+
     def __init__(self, context_mapper: SequenceMapper, context_encoder: SequenceEncoder,
                  merge: FixedMergeLayer, bounds_predictor: SequenceBiMapper,
                  init="glorot_uniform",
@@ -475,6 +483,11 @@ class WithFixedContextPredictionLayer(AttentionPredictionLayer):
 
 
 class ConfidencePredictor(SequencePredictionLayer):
+    """
+    Bound prediction where we compute a non-answer logit/option using soft attention over
+    the start/end logit + a `SequenceEncoder`.
+    """
+
     def __init__(self,
                  predictor: SequenceBiMapper,
                  encoder: Union[SequenceEncoder, SequenceMultiEncoder],
@@ -544,6 +557,13 @@ class ConfidencePredictor(SequencePredictionLayer):
         correct_mask = tf.logical_and(tf.expand_dims(answer[0], 1), tf.expand_dims(answer[1], 2))
         correct_mask = tf.reshape(correct_mask, (batch_dim, -1))
         correct_mask = tf.concat([correct_mask, tf.logical_not(tf.reduce_any(answer[0], axis=1, keep_dims=True))], axis=1)
+
+        # Note we are happily allowing the model to place weights on "backwards" spans, and also giving
+        # it points for predicting spans that start and end at different answer spans. It would be easy
+        # to fix this here by masking out some of the `all_logit` matrix, but we have generally left it
+        # this way to be consistent with the independent bound models that do the same.
+        # Some early tests found properly masking things to not make much difference, but it could be an avenue
+        # for improvement
 
         log_correct = tf.reduce_logsumexp(all_logits + VERY_NEGATIVE_NUMBER * (1 - tf.cast(correct_mask, tf.float32)), axis=1)
         loss = tf.reduce_mean(-(log_correct - log_norms))

@@ -3,31 +3,18 @@ from datetime import datetime
 
 import model_dir
 import trainer
-from configurable import Configurable
 from data_processing.multi_paragraph_qa import StratifyParagraphSetsBuilder, StratifyParagraphsBuilder, \
-    RandomParagraphsBuilder, RandomParagraphSetDatasetBuilder
+    RandomParagraphSetDatasetBuilder
 from data_processing.preprocessed_corpus import PreprocessedData
 from data_processing.qa_training_data import ContextLenBucketedKey, ContextLenKey
 from data_processing.text_utils import NltkPlusStopWords
 from dataset import ClusteredBatcher
-from doc_qa_models import Attention, ContextOnly
-from encoder import DocumentAndQuestionEncoder, SingleSpanAnswerEncoder, DenseMultiSpanAnswerEncoder
-from evaluator import LossEvaluator, MultiParagraphSpanEvaluator
-from nn.attention import BiAttention, StaticAttentionSelf, AttentionEncoder, NullAttention
-from nn.embedder import FixedWordEmbedder, CharWordEmbedder, LearnedCharEmbedder
-from nn.layers import SequenceMapperSeq, VariationalDropoutLayer, NullBiMapper, FullyConnected, ResidualLayer, \
-    ConcatWithProduct, ChainBiMapper, MaxPool, Conv1d, NullMapper, IndependentBiMapper, SequencePredictionLayer, \
-    get_keras_initialization, SequenceMapper
-from nn.recurrent_layers import CudnnGru, EncodeOverTime, FusedRecurrentEncoder, CudnnLstm
-from nn.similarity_layers import TriLinear
-from nn.span_prediction import BoundsPredictor, ConfidencePredictor, IndependentBounds, BoundaryPrediction
+from evaluator import LossEvaluator, MultiParagraphSpanEvaluator, SpanEvaluator
 from squad.squad_data import SquadCorpus, DocumentQaTrainingData
 from squad.squad_document_qa import SquadTfIdfRanker
-from squad.squad_evaluators import BoundedSquadSpanEvaluator, SquadConfidenceEvaluator
 from text_preprocessor import WithIndicators
 from train_triviaqa.train_ours import get_model
 from trainer import TrainParams, SerializableOptimizer
-from utils import get_output_name_from_cli
 
 
 def train_params(n_epochs):
@@ -37,7 +24,7 @@ def train_params(n_epochs):
                        eval_samples=dict(dev=None, train=8000))
 
 
-def main(mode="paragraph"):
+def main():
     parser = argparse.ArgumentParser(description='')
     parser.add_argument('mode', choices=["paragraph", "confidence", "shared-norm", "merge", "sigmoid"])
     parser.add_argument("name")
@@ -61,7 +48,7 @@ def main(mode="paragraph"):
         train_batching = ClusteredBatcher(45, ContextLenBucketedKey(3), True, False)
         eval_batching = ClusteredBatcher(45, ContextLenKey(), False, False)
         data = DocumentQaTrainingData(corpus, None, train_batching, eval_batching)
-        eval = [LossEvaluator(), BoundedSquadSpanEvaluator(bound=[17])]
+        eval = [LossEvaluator(), SpanEvaluator(bound=[17], text_eval="squad")]
     else:
         eval_set_mode = {
             "confidence": "flatten",
@@ -71,7 +58,11 @@ def main(mode="paragraph"):
         eval_dataset = RandomParagraphSetDatasetBuilder(100, eval_set_mode, True, 0)
 
         if mode == "confidence" or mode == "sigmoid":
-            n_epochs = 50  # lmore epochs since we only "see" the label point very other epoch-osh
+            if mode == "sigmoid":
+                # needs to be trained for a really long time for reasons unknown, even this might be too small
+                n_epochs = 100
+            else:
+                n_epochs = 50  # more epochs since we only "see" the label very other epoch-osh
             train_batching = ClusteredBatcher(45, ContextLenBucketedKey(3), True, False)
             data = PreprocessedData(
                 SquadCorpus(),

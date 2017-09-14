@@ -3,7 +3,6 @@ from collections import Counter
 from typing import List
 
 import numpy as np
-from data_processing.batching import get_clustered_batches
 from data_processing.document_splitter import DocumentSplitter, ParagraphFilter, MergeParagraphs, \
     TopTfIdf
 from data_processing.preprocessed_corpus import DatasetBuilder, Preprocessor, PreprocessedData

@@ -1,19 +1,14 @@
 import json
-from typing import List, Dict, Optional
+import unicodedata
+from os import mkdir
+from os.path import join, exists
+from typing import List, Optional
 
 import requests
-from os.path import join, exists
-
-from os import mkdir
-
-import unicodedata
 from bs4 import BeautifulSoup
 
-from config import CORPUS_DIR
 from configurable import Configurable
 from data_processing.text_utils import NltkAndPunctTokenizer, ParagraphWithInverse
-from utils import flatten_iterable
-import numpy as np
 
 WIKI_API = "https://en.wikipedia.org/w/api.php"
 
@@ -76,113 +71,10 @@ class WikiArticle(object):
         return "https://en.wikipedia.org/?curid=" + str(self.page_id)
 
 
-# class TimestampedWikiCorpus(Configurable):
-#     DOC_DIR_NAME = "docs"
-#     TOKENIZED_DIR_NAME = "tokenized"
-#
-#     def __init__(self, timestamp, tokenizer="NLTK_AND_CLEAN"):
-#         self.timestamp = timestamp
-#         self.tokenizer = tokenizer
-#         name = join(CORPUS_DIR, "wiki-" + str(self.timestamp))
-#         if not exists(name):
-#             mkdir(name)
-#         self.doc_cache = join(name, self.DOC_DIR_NAME)
-#         self.tokenized_cache = join(name, self.TOKENIZED_DIR_NAME + "-" + self.tokenizer)
-#         if not exists(self.doc_cache):
-#             mkdir(self.doc_cache)
-#             mkdir(self.tokenized_cache)
-#
-#     def _get_tokenized_filename(self, title):
-#         return join(self.tokenized_cache, title.replace(" ", "_") + ".json")
-#
-#     def _get_raw_filename(self, title):
-#         return join(self.doc_cache, title.replace(" ", "_") + ".json")
-#
-#     def get_wiki_article(self, wiki_title) -> WikiArticle:
-#         tokenized_file = self._get_tokenized_filename(wiki_title)
-#         if exists(tokenized_file):
-#             with open(tokenized_file, "r") as f:
-#                 data = json.load(f)
-#                 return WikiArticle(data["title"], [WikiParagraph(**x) for x in data["paragraphs"]])
-#
-#         print("Parsing and Tokenizing " + wiki_title)
-#         raw_data = self._get_raw_article(wiki_title)["parse"]
-#
-#         sent_tokenize, word_tokenize = get_paragraph_tokenizer(self.tokenizer)
-#
-#         soup = BeautifulSoup(raw_data["text"]["*"], "lxml")
-#         paragraphs = []
-#         sections = []
-#         for x in soup.findAll(["p", "h2", "h3", "h4", "h5", "h6"]):
-#             if x.name[0] == "h":
-#                 if x.get_text() == "Contents":
-#                     continue
-#                 sect_name = x.find(attrs={"class": "mw-headline"}).get_text()
-#                 level = int(x.name[1:]) - 1
-#                 if len(sections) < level - 1:
-#                     print("Warning, mismatch sections")
-#                     while len(sections) < level - 1:
-#                         sections.append("")
-#                 sections = sections[:level]
-#                 sections.append(sect_name)
-#             else:
-#                 for citation in x.findAll("sup", {"class": "reference"}):
-#                     citation.extract()
-#                 for sub in x.findAll("sup"):
-#                     citations = sub.findAll("a", href=True)
-#                     if len(citations) == 1:
-#                         citation = citations[0]
-#                         href = citation["href"]
-#                         if href.startswith("#cite") or href == "/wiki/Wikipedia:Citation_needed":
-#                             sub.extract()
-#                 txt = x.get_text()
-#
-#                 text = [word_tokenize(sent) for sent in sent_tokenize(txt)]
-#
-#                 para = WikiParagraph(len(paragraphs), sections, text)
-#                 paragraphs.append(para)
-#
-#         article = WikiArticle(wiki_title, paragraphs)
-#         with open(tokenized_file, "w") as f:
-#             json.dump(article, f, default=lambda x: x.__dict__)
-#         return article
-#
-#     def _get_raw_article(self, wiki_title) -> Dict:
-#         raw_file = self._get_raw_filename(wiki_title)
-#         if exists(raw_file):
-#             with open(raw_file, "r") as f:
-#                 return json.load(f)
-#
-#         print("Fetching " + wiki_title)
-#         r = requests.get(WIKI_API,
-#                          params=dict(action="query", prop="revisions",
-#                                      rvstart=self.timestamp,
-#                                      rvlimit=1, format="json",
-#                                      redirects=True, titles=wiki_title))
-#         data = r.json()
-#         query = data["query"]
-#         if "redirects" in query:
-#             re = query["redirects"]
-#             if len(re) != 1:
-#                 raise RuntimeError()
-#             print("Title <%s> redirected to: <%s>" % (re[0]["from"], re[0]["to"]))
-#
-#         pages = query["pages"]
-#         if len(pages) != 1:
-#             raise RuntimeError()
-#         page = next(iter(pages.values()))
-#
-#         revid = page["revisions"][0]["parentid"]
-#
-#         r = requests.get(WIKI_API, params=dict(action="parse", oldid=revid, format="json"))
-#         data = r.json()
-#
-#         with open(raw_file, "w") as f:
-#             json.dump(data, f)
-#         return data
-
-
 class WikiCorpus(Configurable):
+    """
+    Class the can download wiki-articles and return them as tokenized text
+    """
 
     def __init__(self, cache_dir=None, follow_redirects: bool=True,
                  keep_inverse_mapping: bool=False,
@@ -233,6 +125,7 @@ class WikiCorpus(Configurable):
             raise ValueError()
         raw_data = r.json()["parse"]
 
+        # Wiki html is pretty structured, so this seems to work reasonable well
         soup = BeautifulSoup(raw_data["text"]["*"], "lxml")
         paragraphs = []
         to_find = ["p", "h2", "h3", "h4", "h5", "h6"]
@@ -256,8 +149,11 @@ class WikiCorpus(Configurable):
                 if para.n_tokens > 0:
                     paragraphs.append(para)
             else:
+                # remove citations
                 for citation in element.findAll("sup", {"class": "reference"}):
                     citation.extract()
+
+                # remove citation needed
                 for sub in element.findAll("sup"):
                     citations = sub.findAll("a", href=True)
                     if len(citations) == 1:

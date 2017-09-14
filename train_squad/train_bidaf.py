@@ -1,20 +1,20 @@
+from data_processing.paragraph_qa import ContextLenKey, ContextLenBucketedKey, DocumentQaTrainingData
+from squad.squad_eval import SentenceSpanEvaluator, SquadSpanEvaluator, BoundedSquadSpanEvaluator
+
 import model_dir
 import trainer
-from data_processing.paragraph_qa import ContextLenKey, ContextLenBucketedKey, DocumentQaTrainingData
-from dataset import ShuffledBatcher, ClusteredBatcher
+from dataset import ClusteredBatcher
 from doc_qa_models import Attention
 from encoder import DocumentAndQuestionEncoder, SingleSpanAnswerEncoder
-from evaluator import LossEvaluator, SpanEvaluator
+from evaluator import LossEvaluator
 from nn.attention import BiAttention
 from nn.embedder import FixedWordEmbedder, CharWordEmbedder, LearnedCharEmbedder
 from nn.layers import NullBiMapper, NullMapper, SequenceMapperSeq, ReduceLayer, Conv1d, HighwayLayer, ChainConcat, \
     DropoutLayer
-from nn.prediction_layers import ChainConcatPredictor
-from nn.recurrent_layers import BiRecurrentMapper, LstmCellSpec, CudnnLstm
+from nn.recurrent_layers import CudnnLstm
 from nn.similarity_layers import TriLinear
 from nn.span_prediction import BoundsPredictor
 from squad.build_squad_dataset import SquadCorpus
-from squad.squad_eval import SentenceSpanEvaluator, SquadSpanEvaluator, BoundedSquadSpanEvaluator
 from trainer import SerializableOptimizer, TrainParams
 from utils import get_output_name_from_cli
 

@@ -2,75 +2,14 @@ from typing import Optional
 
 import tensorflow as tf
 
-from configurable import Configurable
 from nn.layers import AttentionMapper, MergeLayer, SequenceEncoder, get_keras_initialization, SequenceMapper, \
-    SqueezeLayer, get_keras_activation, Mapper, SequenceMultiEncoder
+    Mapper, SequenceMultiEncoder
 from nn.ops import VERY_NEGATIVE_NUMBER, exp_mask
 from nn.similarity_layers import SimilarityFunction, compute_attention_mask
-import numpy as np
 
 """
 Module for non-recurrent attention layeres
 """
-
-
-class PaddedStaticAttention(AttentionMapper):
-
-    def __init__(self, attention: SimilarityFunction,
-                 n_extra_keys: int, learn_extra_mem: int,
-                 bias: bool, merge: Optional[MergeLayer]=None):
-        self.attention = attention
-        self.merge = merge
-        self.n_extra_keys = n_extra_keys
-        self.learn_extra_mem = learn_extra_mem
-        self.bias = bias
-
-    def apply(self, is_train, x, keys, memories, x_mask=None, mem_mask=None):
-        n_batch = tf.shape(x)[0]
-
-        if self.n_extra_keys > 0:
-            extra_keys = tf.get_variable("learned-keys",
-                                         initializer=tf.zeros_initializer(),
-                                         dtype=tf.float32, shape=(self.n_extra_keys, keys.shape.as_list()[-1]))
-            keys = tf.concat([tf.tile(tf.expand_dims(extra_keys, 0), [n_batch, 1, 1]), keys], axis=1)
-            if self.learn_extra_mem:
-                extra_mems = tf.get_variable("learned-mems", shape=(self.n_extra_keys, memories.shape.as_list()[-1]),
-                                             initializer=tf.zeros_initializer(), dtype=tf.float32)
-            else:
-                extra_mems = tf.constant(np.zeros((self.n_extra_keys, memories.shape.as_list()[-1]), dtype=np.float32))
-            memories = tf.concat([tf.tile(tf.expand_dims(extra_mems, 0), [n_batch, 1, 1]), memories], axis=1)
-
-        x_word_dim = tf.shape(x)[1]
-        key_word_dim = tf.shape(keys)[1]
-
-        # (batch, x_word, key_word)
-        dist_matrix = self.attention.get_scores(x, keys)
-
-        # joint_mask = compute_attention_mask(x_mask+self.n_extra_keys, mem_mask+self.n_extra_keys,
-        #                                     x_word_dim+self.n_extra_keys, key_word_dim+self.n_extra_keys)
-        joint_mask = compute_attention_mask(x_mask, mem_mask+self.n_extra_keys,
-                                            x_word_dim, key_word_dim)
-        dist_matrix += VERY_NEGATIVE_NUMBER * (1 - tf.cast(joint_mask, dist_matrix.dtype))
-
-        if self.bias:
-            # TODO its not clear if it better to do this or to just compute the softmax ourselves...
-            atten_bas = tf.get_variable("atten-bias", (1, 1, 1), tf.float32,
-                                        initializer=tf.zeros_initializer())
-            atten_bas = tf.tile(atten_bas, [n_batch, tf.shape(x)[1], 1])
-            dist_matrix = tf.concat([atten_bas, dist_matrix], axis=2)
-            select_probs = tf.nn.softmax(dist_matrix)[:, :, 1:]
-        else:
-            select_probs = tf.nn.softmax(dist_matrix)
-
-        #  Too (batch, x_word, memory_dim)
-        response = tf.matmul(select_probs, memories)
-
-        if self.merge is not None:
-            with tf.variable_scope("merge"):
-                response = self.merge.apply(response, x)
-            return response
-        else:
-            return response
 
 
 class StaticAttention(AttentionMapper):
@@ -147,57 +86,6 @@ class StaticAttentionWithEncoder(AttentionMapper):
             encoded = self.encoder_layer.apply(is_train, keys, mem_mask)
 
         return tf.concat([x, response, x * response, x * tf.expand_dims(encoded, 1)], axis=2)
-
-
-class StaticAttentionLearnedMemories(AttentionMapper):
-
-    def __init__(self, attention: SimilarityFunction,
-                 encoder_layer: SequenceEncoder,
-                 n_learned: int,
-                 same_key_and_memory: bool,
-                 bi_attention: bool):
-        self.bi_attention = bi_attention
-        self.attention = attention
-        self.n_learned = n_learned
-        self.encoder_layer = encoder_layer
-        self.same_key_and_memory = same_key_and_memory
-
-    def apply(self, is_train, x, keys, memories, x_mask=None, mem_mask=None):
-        x_word_dim = tf.shape(x)[1]
-        key_word_dim = tf.shape(keys)[1]
-        batch_dim = tf.shape(keys)[0]
-
-        if self.n_learned > 0:
-            if not self.same_key_and_memory:
-                raise NotImplementedError()
-            key_size = keys.shape.as_list()[-1]
-            learned_keys = tf.get_variable("learned_key", (self.n_learned, key_size))
-            tiled = tf.tile(tf.expand_dims(learned_keys, 0), [batch_dim, 1, 1])
-            keys = tf.concat([tiled, keys], axis=1)
-            memories = tf.concat([tiled, memories], axis=1)
-            mem_mask += self.n_learned
-
-        # (batch, x_word, key_word)
-        dist_matrix = self.attention.get_scores(x, keys)
-
-        joint_mask = compute_attention_mask(x_mask, mem_mask, x_word_dim, key_word_dim)
-        dist_matrix += VERY_NEGATIVE_NUMBER * (1 - tf.cast(joint_mask, dist_matrix.dtype))
-
-        select_probs = tf.nn.softmax(dist_matrix)
-
-        response = tf.matmul(select_probs, memories)
-
-        out = [x, response, x * response]
-
-        if self.bi_attention:
-            context_dist = tf.reduce_max(dist_matrix, axis=2)  # (batch, x_word``s)
-            context_probs = tf.nn.softmax(context_dist)  # (batch, x_words)
-
-            # batch mult (1, x_words) matrice by (x_words, x_dim) to get (1, x_dim)
-            select_context = tf.matmul(tf.expand_dims(context_probs, 1), memories)  # (batch, 1, x_dim)
-            out.append(x * tf.expand_dims(select_context, 1))
-
-        return tf.concat(out, axis=2)
 
 
 class StaticAttentionSelf(SequenceMapper):

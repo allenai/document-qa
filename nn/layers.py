@@ -8,7 +8,7 @@ from tensorflow.contrib.keras import initializers
 from tensorflow.python.layers.core import fully_connected
 
 from model import Prediction
-from nn.ops import dropout, mixed_dropout, VERY_NEGATIVE_NUMBER, exp_mask
+from nn.ops import dropout, exp_mask
 import numpy as np
 
 
@@ -368,15 +368,6 @@ class ApplyThenConcat(MergeLayer):
         return tf.concat([tensor1, tensor2], axis=rank-1)
 
 
-class FillInLayer(SequenceMapper):
-    def __init__(self, mapper: SequenceMapper):
-        self.mapper = mapper
-
-    def apply(self, is_train, x, mask=None):
-        out = self.mapper.apply(is_train, x, mask)
-        return x + (out * (x == 0))
-
-
 class WhitenLayer(SequenceMapper):
     def __init__(self, center=None, objective="l2",
                  keep_probs=1, drop_whiten=False):
@@ -443,90 +434,6 @@ class WhitenLayer(SequenceMapper):
             raise ValueError()
 
 
-class LearnedDropoutIndependentLayer(Updater):
-    def __init__(self, keep_probs, layer: Optional[Updater] = None, metric="l2", n_drop=None):
-        self.layer = layer
-        self.n_drop = n_drop
-        self.keep_probs = keep_probs
-        self.metric = metric
-
-    @property
-    def version(self):
-        # v2: correctly stop gradients from norm to `drop_x`
-        # v3: only penalize the correction to the drop-in entries
-        return 3
-
-    def apply(self, is_train, x, mask=None):
-        if self.keep_probs >= 1:
-            return x
-
-        random_tensor = self.keep_probs + tf.random_uniform(tf.shape(x), minval=0, maxval=1, dtype=x.dtype)
-        if self.n_drop is not None:
-            n_keep = x.shape.as_list()[-1] - self.n_drop
-            to_add = tf.concat([tf.zeros([1, 1, self.n_drop]), tf.ones([1, 1, n_keep])], axis=2)
-            random_tensor += to_add
-
-        binary_tensor = tf.floor(random_tensor)  # 1 if keep, 0 if dropped
-        entries_dropped = (1 - binary_tensor)  # 0 if keep, 1 if dropped
-        drop_x = x * binary_tensor
-
-        if self.layer is None:
-            fill_in = tf.get_variable("dropout_fill_values", x.shape.as_list()[-1],
-                                      initializer=tf.zeros_initializer())
-            for i in range(len(x.shape) - 1):
-                fill_in = tf.expand_dims(fill_in, 0)
-        else:
-            fill_in = self.layer.apply(is_train, tf.stop_gradient(drop_x), mask)
-            if self.n_drop is not None:
-                keep_shape = tf.shape(x)
-                keep_shape = [keep_shape[0], keep_shape[1], keep_shape[2] - self.n_drop]
-                fill_in = tf.concat([fill_in, tf.zeros(keep_shape)], axis=2)
-
-        if mask is not None:
-            # the masked entries are counted as 'keep'
-            entries_dropped *= tf.expand_dims(tf.cast(tf.sequence_mask(mask, tf.shape(x)[1]), tf.float32), 2)
-
-        if self.metric == "l2" or self.metric is None:
-            reg = tf.reduce_mean(tf.pow((tf.stop_gradient(x) - fill_in)*entries_dropped, 2))
-        elif self.metric == "l1":
-            reg = tf.reduce_mean(tf.abs((tf.stop_gradient(x) - fill_in)*entries_dropped))
-        else:
-            raise ValueError()
-
-        tf.add_to_collection("auxillary_losses", reg)
-
-        return tf.cond(is_train, lambda: drop_x + tf.stop_gradient(fill_in) * entries_dropped, lambda: x)
-
-
-class LearnedDropoutLayer(Updater):
-    def __init__(self, keep_probs, layer: Optional[Updater]=None):
-        self.layer = layer
-        self.keep_probs = keep_probs
-
-    def apply(self, is_train, x, mask=None):
-        if self.keep_probs >= 1:
-            return x
-        return tf.cond(is_train, lambda : self._dropout(x, is_train, mask), lambda : x)
-
-    def _dropout(self, x, is_train, mask):
-        random_tensor = self.keep_probs + tf.random_uniform(tf.shape(x), minval=0, maxval=1, dtype=x.dtype)
-        binary_tensor = tf.floor(random_tensor)
-        drop_x = x * binary_tensor
-
-        if self.layer is None:
-            fill_in = tf.get_variable("dropout_fill_values", x.shape.as_list()[-1],
-                                       initializer=tf.zeros_initializer())
-            for i in range(len(x.shape)-1):
-                fill_in = tf.expand_dims(fill_in, 0)
-        else:
-            fill_in = self.layer.apply(is_train, drop_x, mask)
-
-        if mask is not None:
-            fill_in *= tf.expand_dims(tf.cast(tf.sequence_mask(mask, tf.shape(x)[1]), tf.float32), 2)
-
-        return drop_x + fill_in * (1 - binary_tensor)
-
-
 class FullyConnected(Mapper):
     def __init__(self, n_out,
                  w_init="glorot_uniform",
@@ -588,6 +495,7 @@ class FullyConnectedUpdate(Updater):
         if self.residual:
             out += x
         return out
+
 
 class ActivationLayer(Updater):
     def __init__(self, activation="relu", bias=True):
@@ -806,7 +714,6 @@ class LinearMerge(SequenceMapperWithContext):
         return get_keras_activation(self.activation)(total)
 
 
-# TODO move our crazy dropout experimets out of this file
 class DropoutLayer(Updater):
     def __init__(self, keep_probs: float):
         self.keep_prob = keep_probs
@@ -827,89 +734,6 @@ class VariationalDropoutLayer(SequenceMapper):
     def apply(self, is_train, x, mask=None):
         shape = tf.shape(x)
         return dropout(x, self.keep_prob, is_train, [shape[0], 1, shape[2]])
-
-
-class BiDropoutLayer(Updater):
-    def __init__(self, drop_by: float=0, percent_lower: float=0.5):
-        self.drop_by = drop_by
-        self.percent_lower = percent_lower
-
-    def apply(self, is_train, x, mask=None):
-        return tf.cond(is_train, lambda: self._drop(x), lambda: x)
-
-    def _drop(self, x):
-        split = tf.cast(tf.random_uniform(tf.shape(x), 0, 1) < self.percent_lower, tf.float32)
-        return (x * split) * self.drop_by + \
-               (x*(1-split)) * (1 - self.drop_by * self.percent_lower) / (1 - self.percent_lower)
-
-
-class NormalDropoutLayer(Updater):
-    def __init__(self, var: float=0):
-        self.var = var
-
-    def apply(self, is_train, x, mask=None):
-        return tf.cond(is_train, lambda: x * tf.random_normal(tf.shape(x), 1, tf.sqrt(self.var)), lambda: x)
-
-
-class SoftDropoutLayer(Updater):
-    def __init__(self, keep_probs: float):
-        self.keep_prob = keep_probs
-
-    def apply(self, is_train, x, mask=None):
-        return tf.cond(is_train, lambda: x * tf.random_uniform(tf.shape(x), 1.0-self.keep_prob, 1.0+self.keep_prob), lambda: x)
-
-
-class PartialDropoutLayer(Updater):
-    def __init__(self, keep_probs: float, n_keep):
-        self.keep_probs = keep_probs
-        self.n_keep = n_keep
-
-    def apply(self, is_train, x, mask=None):
-        last_dim = x.shape.as_list()[-1]
-        weights = tf.concat([
-            tf.constant(self.keep_probs, tf.float32, (last_dim-self.n_keep,)),
-            tf.constant(1, tf.float32, (self.n_keep,))
-        ], axis=0)
-        return mixed_dropout(is_train, x, weights)
-
-
-class BottleneckDropoutLayer(Updater):
-    def __init__(self, keep_probs: float, n_units: int, share_weights: bool=False, init="glorot_uniform"):
-        self.keep_probs = keep_probs
-        self.init = init
-        self.n_units = n_units
-        self.share_weights = share_weights
-
-    def apply(self, is_train, x, mask=None):
-        rank = len(x.shape) - 1
-        init = get_keras_initialization(self.init)
-        input_dim = x.shape.as_list()[-1]
-        encode_w = tf.get_variable("encode_weights", shape=(input_dim, self.n_units),
-                                   dtype=tf.float32, initializer=init)
-        if self.share_weights:
-            decode_w = tf.transpose(encode_w)
-        else:
-            decode_w = tf.get_variable("decode_weights", shape=(self.n_units, input_dim),
-                                       dtype=tf.float32, initializer=init)
-        encoded = tf.tensordot(x, encode_w, [[rank], [0]])
-        decoded = tf.tensordot(encoded, decode_w, [[rank], [0]])
-        return dropout(x, self.keep_probs, is_train) + decoded
-
-
-class BottleneckDropoutConcatLayer(Updater):
-    def __init__(self, keep_probs: float, n_units: int, init="glorot_uniform"):
-        self.keep_prob = keep_probs
-        self.init = init
-        self.n_units = n_units
-
-    def apply(self, is_train, x, mask=None):
-        rank = len(x.shape) - 1
-        init = get_keras_initialization(self.init)
-        input_dim = x.shape.as_list()[-1]
-        encode_w = tf.get_variable("encode_weights", shape=(input_dim, self.n_units),
-                                   dtype=tf.float32, initializer=init)
-        encoded = tf.tensordot(x, encode_w, [[rank], [0]])
-        return tf.concat([dropout(x, self.keep_prob, is_train), encoded], axis=rank)
 
 
 class ReweightingMapper(SequenceMapper):
@@ -972,38 +796,6 @@ class ReduceSequenceLayer(SequenceEncoder):
             return tf.reduce_sum(x, axis=1)
         else:
             raise ValueError()
-
-
-class MultiAggregateLayer(SequenceEncoder):
-    def __init__(self, reduce: List[str], apply_mask=True):
-        self.reduce = reduce
-        self.apply_mask = apply_mask
-
-    def apply(self, is_train, x, mask=None):
-        if mask is not None:
-            answer_mask = tf.expand_dims(tf.cast(tf.sequence_mask(mask, tf.shape(x)[1]), tf.float32), 2)
-            if self.apply_mask:
-                x *= answer_mask
-        else:
-            answer_mask = None
-
-        out = []
-        for r in self.reduce:
-            if r == "max":
-                if mask is not None:
-                    out.append(tf.reduce_max(x+((tf.reduce_min(x)-1) * (1 - answer_mask)), axis=1))
-                else:
-                    out.append(tf.reduce_max(x, axis=1))
-            elif r == "sum":
-                return tf.reduce_sum(x, axis=1)
-            elif r == "mean":
-                if mask is not None:
-                    out.append((tf.reduce_sum(x, axis=1) / tf.expand_dims(mask, 1)))
-                else:
-                    out.append(tf.reduce_mean(x, axis=1))
-            else:
-                raise ValueError()
-        return tf.concat(out, axis=1)
 
 
 class MaxPool(Encoder):

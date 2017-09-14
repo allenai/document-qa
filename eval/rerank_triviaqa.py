@@ -1,14 +1,10 @@
 import argparse
-import pandas as pd
-import numpy as np
-from tqdm import tqdm
 
-from data_processing.document_splitter import TopTfIdf, MergeParagraphs, ShallowOpenWebRanker
-from data_processing.preprocessed_corpus import preprocess_par
-from data_processing.text_utils import NltkPlusStopWords
+import numpy as np
+import pandas as pd
+
 from trivia_qa.build_span_corpus import TriviaQaWebDataset, TriviaQaOpenDataset
-from trivia_qa.training_data import ExtractMultiParagraphs, ExtractMultiParagraphsPerQuestion
-from utils import flatten_iterable, print_table
+from utils import print_table
 
 
 def compute_model_scores(df, max_over, target_score, group_cols):
@@ -60,30 +56,9 @@ def main():
         quids.update(df.question_id)
     questions = [q for q in questions if q.question_id in quids]
 
-    print("Computing ranks..")
-    # if args.open:
-    #     pre = ExtractMultiParagraphsPerQuestion(MergeParagraphs(400), ShallowOpenWebRanker(50), None, require_an_answer=False)
-    # else:
-    #     pre = ExtractMultiParagraphs(MergeParagraphs(400), TopTfIdf(NltkPlusStopWords(), 1000), None, require_an_answer=False)
-    #
-    # mcs = preprocess_par(questions, corpus.evidence, pre, 6, 10000).data
-    #
-    # ranks = {}
-    # for mc in mcs:
-    #     for i, para in enumerate(mc.paragraphs):
-    #         ranks[(mc.question_id, para.doc_id, para.start, para.end)] = i
-
     data = {}
     for i, answer_df in enumerate(answer_dfs):
-        # ranks_col = []
-        # for t in answer_df[["question_id", "doc_id", "para_start", "para_end"]].itertuples(index=False):
-        #     ranks_col.append(ranks[t])
-        # answer_df["rank"] = answer_dfs["rank"]
-        #
-        # print("Scoring...")
-        # answer_df.sort_values(["ranks"], inplace=True)
-        answer_df.sort_values(["rank"], inplace=True)
-        # answer_df["none_prob"] = -answer_df["none_prob"]
+        answer_df.sort_values(["question_id", "rank"], inplace=True)
         model_scores = compute_model_scores(answer_df, "predicted_score", "text_f1",
                                             ["question_id"] if args.open else ["question_id", "doc_id"])
         data["answers_%d_f1" % i] = model_scores

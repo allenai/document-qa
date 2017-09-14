@@ -125,14 +125,15 @@ class GroupedSpanAnswerEncoder(AnswerEncoder):
         answer_ends = np.zeros((batch_size, context_word_dim), dtype=np.bool)
         group_id = np.zeros(batch_size, dtype=np.int32)
         for doc_ix, doc in enumerate(batch):
+            if has_group:
+                group_id[doc_ix] = doc.answer.group_id
             if doc.answer is None:
                 continue
             answer_spans = doc.answer.answer_spans
             answer_spans = answer_spans[answer_spans[:, 1] < context_word_dim]
+
             answer_starts[doc_ix, answer_spans[:, 0]] = True
             answer_ends[doc_ix, answer_spans[:, 1]] = True
-            if has_group:
-                group_id[doc_ix] = doc.answer.group_id
         if not has_group:
             group_id = np.arange(0, len(batch))
         return {self.answer_starts: answer_starts, self.answer_ends: answer_ends,
@@ -269,6 +270,13 @@ class DocumentAndQuestionEncoder(Configurable):
                 if x is not None] + self.answer_encoder.get_placeholders()
 
     def encode(self, batch: List[ContextAndQuestion], is_train: bool):
+        for x in batch:
+            if len(x.answer.answer_spans.shape) != 2:
+                print("***")
+                print(x.answer.answer_spans)
+                print("***")
+                raise ValueError()
+
         batch_size = len(batch)
         if self.batch_size is not None:
             if self.batch_size < batch_size:

@@ -32,12 +32,12 @@ class CachingResourceLoader(ResourceLoader):
 
 
 def print_table(table: List[List[str]]):
+    # print while padding each column to the max column length
     col_lens = [0] * len(table[0])
     for row in table:
         for i,cell in enumerate(row):
             col_lens[i] = max(len(cell), col_lens[i])
 
-    # pads string to the requested length
     formats = ["{0:<%d}" % x for x in col_lens]
     for row in table:
         print(" ".join(formats[i].format(row[i]) for i in range(len(row))))
@@ -60,7 +60,7 @@ def flatten_iterable(listoflists: Iterable[Iterable[T]]) -> List[T]:
     return [item for sublist in listoflists for item in sublist]
 
 
-def split(lst, n_groups):
+def split(lst: List, n_groups) -> List[List]:
     """ partition `lst` into `n_groups` that are as evenly sized as possible  """
     per_group = len(lst) // n_groups
     remainder = len(lst) % n_groups

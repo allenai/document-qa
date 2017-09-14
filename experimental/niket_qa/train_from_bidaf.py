@@ -5,16 +5,11 @@ import trainer
 from data_processing.qa_training_data import ContextLenKey, ContextLenBucketedKey
 from dataset import ClusteredBatcher
 from encoder import DenseMultiSpanAnswerEncoder
-from evaluator import SpanProbability, LossEvaluator, SpanEvaluator, ConfidenceSpanEvaluator
+from evaluator import LossEvaluator, ConfidenceSpanEvaluator
 from experimental.niket_qa.build_niket_dataset import NiketTrainingData
-from nn.attention import AttentionEncoder
-from nn.layers import FullyConnected, ChainConcat, SequenceMapperSeq, DropoutLayer
-from nn.prediction_layers import ChainConcatConfidenceHack
-from nn.recurrent_layers import BiRecurrentMapper, LstmCellSpec
-from nn.span_prediction import ConfidencePredictor
-from squad.squad_evaluators import SquadConfidenceEvaluator
-from trainer import TrainParams, SerializableOptimizer
+from experimental.prediction_layers import ChainConcatConfidenceHack
 from model_dir import ModelDir
+from trainer import TrainParams, SerializableOptimizer
 
 
 def main():

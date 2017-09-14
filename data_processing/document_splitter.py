@@ -1,6 +1,3 @@
-"""
-Script to split a document into paragraphs
-"""
 from typing import List, Tuple, Optional
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -12,6 +9,11 @@ from data_processing.qa_training_data import ParagraphWithInverse
 from data_processing.text_utils import NltkPlusStopWords
 from trivia_qa.evidence_corpus import TriviaQaEvidenceCorpusTxt
 from utils import flatten_iterable
+
+
+"""
+Splits a document into paragraphs
+"""
 
 
 class ExtractedParagraph(object):
@@ -34,32 +36,18 @@ class ExtractedParagraphWithAnswers(ExtractedParagraph):
         super().__init__(text, start, end)
         self.answer_spans = answer_spans
 
-    def with_tokens(self, ixs, tokens, remove_cross_answer=False):
-        text = flatten_iterable(self.text)
-        spans = np.copy(self.answer_spans)
-
-        for ix, token in zip(ixs, tokens):
-            if remove_cross_answer:
-                remove = np.logical_and(spans[:, 0] < ix, spans[:, 1] >= ix)
-                spans = spans[np.logical_not(remove)]
-
-            spans[spans[:, 0] >= ix, 0] += 1
-            spans[spans[:, 1] >= ix, 1] += 1
-            text.insert(ix, token)
-
-        return ParagraphWithAnswers(text, spans)
-
 
 class DocParagraphWithAnswers(ExtractedParagraphWithAnswers):
     __slots__ = ["doc_id"]
 
     def __init__(self, text: List[List[str]], start: int, end: int, answer_spans: np.ndarray,
-                 doc_id, features=None):
-        super().__init__(text, start, end, answer_spans, features)
+                 doc_id):
+        super().__init__(text, start, end, answer_spans)
         self.doc_id = doc_id
 
 
 class ParagraphFilter(Configurable):
+    """ Selects and ranks paragraphs """
 
     def n_features(self) -> Optional[int]:
         return None
@@ -143,6 +131,7 @@ class TopTfIdf(ParagraphFilter):
 
 
 class ShallowOpenWebRanker(ParagraphFilter):
+    # Hard coded weight learned from a logistic regression classifier
     TFIDF_W = 5.13365065
     LOG_WORD_START_W = 0.46022765
     FIRST_W = -0.08611607
@@ -163,7 +152,6 @@ class ShallowOpenWebRanker(ParagraphFilter):
         return ["Score"]
 
     def score_paragraphs(self, question, paragraphs: List[ExtractedParagraphWithAnswers]):
-        # return np.zeros(len(paragraphs))
         tfidf = self._tfidf
         text = []
         for para in paragraphs:
@@ -195,8 +183,6 @@ class ShallowOpenWebRanker(ParagraphFilter):
         first = starts == 0
         scores = tfidf * self.TFIDF_W + self.LOG_WORD_START_W * log_word_start + self.FIRST_W * first +\
                  self.LOWER_WORD_W * word_matches_features[:, 1] + self.WORD_W * word_matches_features[:, 0]
-        # return np.stack([tfidf, log_word_start, first, word_matches_features[:, 0],
-        #                  word_matches_features[:, 1], scores], axis=1)
         return scores
 
     def prune(self, question, paragraphs: List[ExtractedParagraphWithAnswers]):
@@ -211,12 +197,6 @@ class ShallowOpenWebRanker(ParagraphFilter):
     def __setstate__(self, state):
         return self.__init__(state['n_to_select'])
 
-
-# any_2_word_match: 0.0471
-# any_2_word_lower_match: -0.0634
-# first: 0.1001
-# log_word_start: -0.4644
-# all-tfidf: -7.0414
 
 class First(ParagraphFilter):
     def __init__(self, n_to_select: int):
@@ -264,10 +244,6 @@ class DocumentSplitter(Configurable):
         return out
 
 
-# first: 0.0247
-# log_word_start: -0.4654
-# all-tfidf: -7.7801
-
 class Truncate(DocumentSplitter):
     """ map a document to a single paragraph of the first `max_tokens` tokens """
 
@@ -293,75 +269,6 @@ class Truncate(DocumentSplitter):
                     cur_tokens += len(sent)
                     output.append(sent)
         return [ExtractedParagraph(output, 0, cur_tokens)]
-
-
-class MergeParagraphsOld(DocumentSplitter):
-    """
-    Build paragraphs that always start with document-paragraph, but might
-    include other paragraphs. Paragraphs are always smaller then `max_tokens`
-    (so paragraphs > `max_tokens` will always be truncated).
-     """
-
-    def __init__(self, max_tokens: int, top_n: int=None, pad=0):
-        self.max_tokens = max_tokens
-        self.top_n = top_n
-        self.pad = pad
-
-    @property
-    def reads_first_n(self):
-        return self.top_n
-
-    def max_tokens(self):
-        return self.max_tokens
-
-    def split(self, doc: List[List[List[str]]]):
-        all_paragraphs = []
-
-        on_doc_token = 0  # the word in the document the current paragraph starts at
-        on_paragraph = []  # text we have collect for the current paragraph
-        cur_tokens = 0   # number of tokens in the current paragraph
-
-        word_ix = 0
-        for para in doc:
-            n_words = sum(len(s) for s in para)
-            if self.top_n is not None and (word_ix+self.top_n)>self.top_n:
-                if word_ix == self.top_n:
-                    break
-                para = extract_tokens(para, self.top_n - word_ix)
-                n_words = self.top_n - word_ix
-
-            start_token = word_ix
-            end_token = start_token + n_words
-            word_ix = end_token
-
-            if cur_tokens + n_words > self.max_tokens:
-                if cur_tokens != 0:  # end the current paragraph
-                    if self.pad > 0:
-                        pad_with = min(self.max_tokens - cur_tokens, self.pad)
-                        on_paragraph += extract_tokens(para, self.max_tokens - cur_tokens)
-                        all_paragraphs.append(ExtractedParagraph(on_paragraph, on_doc_token, start_token + pad_with))
-                    else:
-                        all_paragraphs.append(ExtractedParagraph(on_paragraph, on_doc_token, start_token))
-                    on_paragraph = []
-                    cur_tokens = 0
-
-                if n_words >= self.max_tokens:  # either truncate the given paragraph, or begin a new paragraph
-                    text = extract_tokens(para, self.max_tokens)
-                    all_paragraphs.append(ExtractedParagraph(text, start_token,
-                                                             start_token + self.max_tokens))
-                    on_doc_token = end_token
-                else:
-                    on_doc_token = start_token
-                    on_paragraph += para
-                    cur_tokens = n_words
-            else:
-                on_paragraph += para
-                cur_tokens += n_words
-
-        if len(on_paragraph) > 0:
-            all_paragraphs.append(ExtractedParagraph(on_paragraph, on_doc_token, word_ix))
-
-        return all_paragraphs
 
 
 class MergeParagraphs(DocumentSplitter):
@@ -487,13 +394,10 @@ def show_paragraph_lengths():
     para_lens = np.array(para_lens)
     for i in [400, 500, 600, 700, 800]:
         print("Over %s: %.4f" % (i, (para_lens > i).sum()/len(para_lens)))
-    # n, bins, patches = plt.hist(para_lens[para_lens < 1000], bins=100)
-    # l = plt.plot(bins, n, 'r--', linewidth=1)
-    # plt.show()
 
 
 if __name__ == "__main__":
-    test_splitter(MergeParagraphsGroupSentences(200), 1000, 20, seed=0)
+    test_splitter(MergeParagraphs(200), 1000, 20, seed=0)
     # show_paragraph_lengths()
 
 

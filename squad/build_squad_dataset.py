@@ -14,7 +14,7 @@ from data_processing.text_utils import get_word_span, space_re, NltkAndPunctToke
 from utils import flatten_iterable
 
 """
-Script to build a corpus from SQUAD training data with `DocumentSpans` answers 
+Script to build a corpus from SQUAD training data 
 """
 
 

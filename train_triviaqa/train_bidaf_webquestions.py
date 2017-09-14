@@ -31,8 +31,8 @@ def main():
                                SerializableOptimizer("Adam", dict(learning_rate=0.001)),
                                num_epochs=15, ema=0.999, max_checkpoints_to_keep=2,
                                async_encoding=10,
-                               log_period=30, eval_period=30, save_period=1800,
-                               eval_samples=dict(dev=None, train=None))
+                               log_period=30, eval_period=1800, save_period=1800,
+                               eval_samples=dict(dev=21000, train=12000))
 
     recurrent_layer = SequenceMapperSeq(DropoutLayer(0.8), CudnnLstm(100))
     model = Attention(

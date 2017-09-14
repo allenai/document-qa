@@ -16,7 +16,6 @@ def main():
         name = name[:name.rfind(".")]
         dfs[name] = pd.read_csv(x)
 
-
     for k, df in dfs.items():
         df = df[df["n_answers"] > 0]
         plt.hist(df["predicted_score"] - df["predicted_score"].mean(), 50, label=k, alpha=0.5)
