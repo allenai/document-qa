@@ -1,41 +1,20 @@
 import argparse
-from typing import Optional
-
-from tensorflow.contrib.keras.python.keras.initializers import TruncatedNormal
+from datetime import datetime
 
 import model_dir
 import trainer
-from data_processing.document_splitter import MergeParagraphs, TopTfIdf, ShallowOpenWebRanker
-from datetime import datetime
-
-from data_processing.multi_paragraph_qa import RandomParagraphsBuilder, StratifyParagraphsBuilder, \
-    StratifiedParagraphSetDataset, StratifyParagraphSetsBuilder, RandomParagraphSetDatasetBuilder
+from data_processing.document_splitter import MergeParagraphs, ShallowOpenWebRanker
+from data_processing.multi_paragraph_qa import StratifyParagraphsBuilder, \
+    StratifyParagraphSetsBuilder, RandomParagraphSetDatasetBuilder
 from data_processing.preprocessed_corpus import PreprocessedData
-from data_processing.qa_training_data import ParagraphAndQuestionsBuilder, ContextLenKey, ContextLenBucketedKey
-from data_processing.text_utils import NltkPlusStopWords
-from dataset import ListBatcher, ClusteredBatcher
-from doc_qa_models import Attention
-from encoder import DocumentAndQuestionEncoder, DenseMultiSpanAnswerEncoder, SingleSpanAnswerEncoder, \
-    GroupedSpanAnswerEncoder
+from data_processing.qa_training_data import ContextLenBucketedKey
+from dataset import ClusteredBatcher
 from evaluator import LossEvaluator, MultiParagraphSpanEvaluator
-from nn.attention import BiAttention, AttentionEncoder, StaticAttentionSelf
-from nn.embedder import FixedWordEmbedder, CharWordEmbedder, LearnedCharEmbedder
-from nn.layers import NullBiMapper, NullMapper, SequenceMapperSeq, ReduceLayer, Conv1d, HighwayLayer, FullyConnected, \
-    ChainBiMapper, DropoutLayer, ConcatWithProduct, ResidualLayer, WithProjectedProduct, MapperSeq, ChainConcat, \
-    VariationalDropoutLayer, MaxPool
-from nn.recurrent_layers import BiRecurrentMapper, LstmCellSpec, BiDirectionalFusedLstm, RecurrentEncoder, \
-    EncodeOverTime, FusedRecurrentEncoder, CudnnGru, CudnnLstm
-from nn.similarity_layers import TriLinear
-from nn.span_prediction import ConfidencePredictor, BoundsPredictor, WithFixedContextPredictionLayer, \
-    IndependentBoundsGrouped, IndependentBoundsSigmoidLoss
-from text_preprocessor import WithIndicators, TextPreprocessor
-from train_triviaqa.train_ours import get_model
+from scripts.ablate_triviaqa import get_model
+from text_preprocessor import WithIndicators
 from trainer import SerializableOptimizer, TrainParams
-from trivia_qa.build_span_corpus import TriviaQaWebDataset, TriviaQaOpenDataset
-from experimental.lazy_data import LazyRandomParagraphBuilder
-from trivia_qa.training_data import ExtractMultiParagraphsPerQuestion, ExtractSingleParagraph, ExtractMultiParagraphs
-from trivia_qa.triviaqa_evaluators import ConfidenceEvaluator, BoundedSpanEvaluator
-from utils import get_output_name_from_cli
+from trivia_qa.build_span_corpus import TriviaQaWebDataset
+from trivia_qa.training_data import ExtractMultiParagraphsPerQuestion
 
 
 def main():

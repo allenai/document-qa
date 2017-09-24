@@ -10,10 +10,10 @@ from data_processing.qa_training_data import ContextLenBucketedKey, ContextLenKe
 from data_processing.text_utils import NltkPlusStopWords
 from dataset import ClusteredBatcher
 from evaluator import LossEvaluator, MultiParagraphSpanEvaluator, SpanEvaluator
+from scripts.ablate_trivia import get_model
 from squad.squad_data import SquadCorpus, DocumentQaTrainingData
 from squad.squad_document_qa import SquadTfIdfRanker
 from text_preprocessor import WithIndicators
-from train_triviaqa.train_ours import get_model
 from trainer import TrainParams, SerializableOptimizer
 
 
