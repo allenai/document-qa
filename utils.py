@@ -3,7 +3,7 @@ from datetime import datetime
 from os.path import join
 from typing import List, TypeVar, Iterable
 
-from data_processing.word_vectors import load_word_vectors
+from data_processing.word_vectors import load_word_vectors, load_word_vector_file
 
 
 class ResourceLoader(object):
@@ -17,6 +17,14 @@ class ResourceLoader(object):
 
     def load_word_vec(self, vec_name, voc=None):
         return self.load_vec_fn(vec_name, voc)
+
+
+class LoadFromPath(object):
+    def __init__(self, path):
+        self.path = path
+
+    def load_word_vec(self, vec_name, voc=None):
+        return load_word_vectors(join(self.path, vec_name), voc, True)
 
 
 class CachingResourceLoader(ResourceLoader):

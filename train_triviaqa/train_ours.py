@@ -56,7 +56,7 @@ def get_model(char_th: int, dim: int, mode: str, preprocess: Optional[TextPrepro
     # specify the stddev to avoid https://github.com/tensorflow/tensorflow/issues/12973
     recurrent_layer = CudnnGru(dim, w_init=TruncatedNormal(stddev=0.05))
 
-    if mode == "shared-norm":
+    if mode.startswith("shared-norm"):
         answer_encoder = GroupedSpanAnswerEncoder()
         predictor = BoundsPredictor(
             ChainBiMapper(
@@ -128,7 +128,8 @@ def get_model(char_th: int, dim: int, mode: str, preprocess: Optional[TextPrepro
 
 def main():
     parser = argparse.ArgumentParser(description='')
-    parser.add_argument('mode', choices=["paragraph-level", "confidence", "merge", "shared-norm", "sigmoid"])
+    parser.add_argument('mode', choices=["paragraph-level", "confidence", "merge",
+                                         "shared-norm", "sigmoid", "shared-norm-600"])
     parser.add_argument("name")
     parser.add_argument('-n', '--n_processes', type=int, default=2)
     args = parser.parse_args()
@@ -142,6 +143,8 @@ def main():
 
     if mode == "paragraph-level":
         extract = ExtractSingleParagraph(MergeParagraphs(400), TopTfIdf(stop, 1), model.preprocessor, intern=True)
+    elif mode == "shared-norm-600":
+        extract = ExtractMultiParagraphs(MergeParagraphs(600), TopTfIdf(stop, 4), model.preprocessor, intern=True)
     else:
         extract = ExtractMultiParagraphs(MergeParagraphs(400), TopTfIdf(stop, 4), model.preprocessor, intern=True)
 
@@ -157,11 +160,15 @@ def main():
         n_dev, n_train = 15000, 8000
 
         if mode == "confidence" or mode == "sigmoid":
-            n_epochs = 24  # only see one paragraph an epoch, so train for more epochs
+            if mode == "sigmoid":
+                # Trains very slowly, might even be worth training it longer this already took over 5 days
+                n_epochs = 56
+            else:
+                n_epochs = 28
             test = RandomParagraphSetDatasetBuilder(120, "flatten", True, 1)
             train = StratifyParagraphsBuilder(ClusteredBatcher(60, ContextLenBucketedKey(3), True), 0, 1)
         else:
-            n_epochs = 16
+            n_epochs = 14
             test = RandomParagraphSetDatasetBuilder(120, "merge" if mode == "merge" else "group", True, 1)
             train = StratifyParagraphSetsBuilder(35, mode == "merge", True, 1)
 
@@ -175,7 +182,7 @@ def main():
 
     with open(__file__, "r") as f:
         notes = f.read()
-    notes = "Mode: " + args.mode + "\n" + "Dataset: " + args.dataset + "\n" + notes
+    notes = "*" * 10 + "\nMode: " + args.mode + "\n" + "*"*10 + "\n" + notes
 
     trainer.start_training(data, model, params, eval, model_dir.ModelDir(out), notes)
 

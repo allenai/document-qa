@@ -82,7 +82,10 @@ class WithIndicators(TextPreprocessor):
 
                 out.append(self.PARAGRAPH_TOKEN)
                 if inv_out is not None:
-                    inv_out.append(np.full((1, 2), inv_out[-1][-1][1]))
+                    if len(inv_out) == 0 or len(inv_out[-1]) == 0:
+                        inv_out.append(np.zeros((1, 2), dtype=np.int32))
+                    else:
+                        inv_out.append(np.full((1, 2), inv_out[-1][-1][1], dtype=np.int32))
                 offset += 1
 
             out += sent
@@ -94,10 +97,14 @@ class WithIndicators(TextPreprocessor):
         return out, spans, None if inv_out is None else np.concatenate(inv_out)
 
     def __setstate__(self, state):
-        if "doc_start_token" not in state:
-            state["doc_start_token"] = True
-        if "para_tokens" not in state:
-            state["para_tokens"] = True
+        if "state" in state:
+            state["state"]["doc_start_token"] = True
+            state["state"]["para_tokens"] = True
+        else:
+            if "doc_start_token" not in state:
+                state["doc_start_token"] = True
+            if "para_tokens" not in state:
+                state["para_tokens"] = True
         super().__setstate__(state)
 
 

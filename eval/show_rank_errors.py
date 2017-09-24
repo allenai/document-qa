@@ -2,6 +2,7 @@ import argparse
 from typing import List
 
 import pandas as pd
+import sys
 
 from data_processing.document_splitter import ExtractedParagraph, ExtractedParagraphWithAnswers
 from data_processing.text_utils import NltkPlusStopWords
@@ -207,6 +208,6 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    show_squad_errors(sys.argv[1])
 
 

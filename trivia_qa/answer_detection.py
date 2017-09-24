@@ -1,27 +1,18 @@
-import json
 import re
 import string
-import pickle
-import time
-
-from os.path import exists
-
-from data_processing.text_utils import NltkAndPunctTokenizer
-from trivia_qa.read_data import iter_trivia_question
-from trivia_qa.trivia_qa_eval import normalize_answer, f1_score
-from utils import flatten_iterable, group, split
 
 import numpy as np
+from tqdm import tqdm
 
+from trivia_qa.trivia_qa_eval import normalize_answer, f1_score
+from utils import flatten_iterable, split
 
 """
 Tools for turning the aliases and answer strings from TriviaQa into labelled spans
 """
 
 
-class NormalizedAnswerDetector(object):
-    """ Try to labels tokens sequences, such that the extracted sequence would be evaluated as 100% correct
-    by the official trivia-qa evaluation script"""
+class ExactMatchDetector(object):
     def __init__(self):
         self.answer_tokens = None
 
@@ -29,7 +20,37 @@ class NormalizedAnswerDetector(object):
         self.answer_tokens = normalized_aliases
 
     def any_found(self, para):
-        words = [normalize_answer(w) for w in flatten_iterable(para)]
+        words = [x.lower() for x in flatten_iterable(para)]
+        occurances = []
+        for answer_ix, answer in enumerate(self.answer_tokens):
+            word_starts = [i for i, w in enumerate(words) if answer[0] == w]
+            n_tokens = len(answer)
+            for start in word_starts:
+                end = start + 1
+                ans_token = 1
+                while ans_token < n_tokens and end < len(words):
+                    next = words[end]
+                    if answer[ans_token] == next:
+                        ans_token += 1
+                        end += 1
+                    else:
+                        break
+                if n_tokens == ans_token:
+                    occurances.append((start, end))
+        return list(set(occurances))
+
+
+class NormalizedAnswerDetector(object):
+    """ Try to labels tokens sequences, such that the extracted sequence would be evaluated as 100% correct
+    by the official trivia-qa evaluation script """
+    def __init__(self):
+        self.answer_tokens = None
+
+    def set_question(self, normalized_aliases):
+        self.answer_tokens = normalized_aliases
+
+    def any_found(self, para):
+        words = [Ø for w in flatten_iterable(para)]
         occurances = []
         for answer_ix, answer in enumerate(self.answer_tokens):
             word_starts = [i for i, w in enumerate(words) if answer[0] == w]
@@ -144,8 +165,7 @@ def evaluate_question_detector(questions, corpus, word_tokenize, detector, refer
     answer_per_doc = []
     answer_f1s = []
 
-    for question_ix, q in enumerate(questions):
-        q.question = word_tokenize(q.question)
+    for question_ix, q in enumerate(tqdm(questions)):
         tokenized_aliases = [word_tokenize(x) for x in q.answer.normalized_aliases]
         detector.set_question(tokenized_aliases)
 
@@ -192,18 +212,21 @@ def evaluate_question_detector(questions, corpus, word_tokenize, detector, refer
     n_answers = sum(len(x) for x in answer_per_doc)
     print("Found %d answers (av %.4f)" % (n_answers, n_answers/len(answer_per_doc)))
     print("%.4f docs have answers" % np.mean([len(x) > 0 for x in answer_per_doc]))
-    print("Average f1 is %.4f" % np.mean(flatten_iterable(answer_f1s)))
+    if len(answer_f1s) > 0:
+        print("Average f1 is %.4f" % np.mean(flatten_iterable(answer_f1s)))
 
 
 def compute_answer_spans(questions, corpus, word_tokenize, detector):
     for i, q in enumerate(questions):
         if i % 500 == 0:
             print("Completed question %d of %d (%.3f)" % (i, len(questions), i/len(questions)))
+        q.question = word_tokenize(q.question)
+        if q.answer is None:
+            continue
         tokenized_aliases = [word_tokenize(x) for x in q.answer.all_answers]
         if len(tokenized_aliases) == 0:
             raise ValueError()
         detector.set_question(tokenized_aliases)
-        q.question = word_tokenize(q.question)
         for doc in q.all_docs:
             text = corpus.get_document(doc.doc_id)
             if text is None:
@@ -222,14 +245,16 @@ def compute_answer_spans(questions, corpus, word_tokenize, detector):
 
 
 def _compute_answer_spans_chunk(questions, corpus, tokenizer, detector):
-    word_tokenize = tokenizer.tokenize_sentence
+    # We use tokenize_paragraph since some questions can have multiple sentences,
+    # but we still store the results as a flat list of tokens
+    word_tokenize = tokenizer.tokenize_paragraph_flat
     compute_answer_spans(questions, corpus, word_tokenize, detector)
     return questions
 
 
 def compute_answer_spans_par(questions, corpus, tokenizer, detector, n_processes):
     if n_processes == 1:
-        word_tokenize = tokenizer.tokenize_sentence
+        word_tokenize = tokenizer.tokenize_paragraph_flat
         compute_answer_spans(questions, corpus, word_tokenize, detector)
         return questions
     from multiprocessing import Pool
@@ -239,3 +264,16 @@ def compute_answer_spans_par(questions, corpus, tokenizer, detector, n_processes
         return questions
 
 
+def main():
+    from trivia_qa.build_span_corpus import TriviaQaWebDataset
+    from data_processing.text_utils import NltkAndPunctTokenizer
+
+    dataset = TriviaQaWebDataset()
+    qs = dataset.get_train()
+    qs = np.random.RandomState(0).choice(qs, 1000, replace=False)
+    evaluate_question_detector(qs, dataset.evidence, NltkAndPunctTokenizer().tokenize_paragraph_flat,
+                               FastNormalizedAnswerDetector())
+
+
+if __name__ == "__main__":
+    main()

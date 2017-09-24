@@ -38,6 +38,7 @@ class WikipediaEntity(object):
         if self.human_answers is None:
             return self.normalized_aliases
         else:
+            # normalize to be consistent with the other normallized aliases
             human_answers = [triviaqa_normalize_answer(x) for x in self.human_answers]
             return self.normalized_aliases + [x for x in human_answers if len(x) > 0]
 

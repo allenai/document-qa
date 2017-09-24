@@ -71,20 +71,6 @@ class ParagraphAndQuestion(ContextAndQuestion):
         return self.context
 
 
-class ParagraphWithInvAndQuestion(ContextAndQuestion):
-    def __init__(self, para: ParagraphWithInverse, question: List[str],
-                 answer: Optional[Answer], question_id: object, doc_id=None):
-        super().__init__(question, answer, question_id, doc_id)
-        self.para = para
-
-    @property
-    def n_context_words(self):
-        return self.para.n_tokens
-
-    def get_context(self):
-        return self.para.get_context()
-
-
 class ContextLenKey(Configurable):
     def __call__(self, q: ContextAndQuestion):
         return q.n_context_words
@@ -274,8 +260,12 @@ class ParagraphAndQuestionDataset(ListDataset):
 
 class ParagraphAndQuestionsBuilder(DatasetBuilder):
     """ For use with the preprocesed_corpus framework """
-    def __init__(self, batching: ListBatcher):
+    def __init__(self, batching: ListBatcher, sample=None, sample_seed=None):
+        if sample_seed is not None and sample is None:
+            raise ValueError("Seed set, but sampling not requested")
         self.batching = batching
+        self.sample_seed = sample_seed
+        self.sample = sample
 
     def build_stats(self, data):
         if isinstance(data, FilteredData):
@@ -285,9 +275,20 @@ class ParagraphAndQuestionsBuilder(DatasetBuilder):
 
     def build_dataset(self, data, evidence) -> Dataset:
         if isinstance(data, FilteredData):
-            return ParagraphAndQuestionDataset(data.data, self.batching, data.true_len)
+            data, l = data.data, data.true_len
         else:
-            return ParagraphAndQuestionDataset(data, self.batching)
+            data, l = data, None
+        if self.sample is not None:
+            cur_len = len(data)
+            data = np.random.RandomState(self.sample_seed).choice(data, self.sample, replace=False)
+            if l is not None:
+                l *= len(data) / cur_len
+
+        if l is None:
+            l = len(data)
+        print("Building dataset")
+        print(len(data), l)
+        return ParagraphAndQuestionDataset(data, self.batching, l)
 
 
 class ParagraphQaTrainingData(TrainingData):

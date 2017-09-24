@@ -105,10 +105,9 @@ def split_docs(docs: List[Document]) -> List[DocParagraphAndQuestion]:
 
 
 class SquadCorpus(Configurable):
-    # Pickle seems faster the json for loading
     TRAIN_FILE = "train.pkl"
     DEV_FILE = "dev.pkl"
-    NAME = "squad-v2"
+    NAME = "squad-db"
 
     VOCAB_FILE = "vocab.txt"
     WORD_VEC_SUFFIX = "_pruned"

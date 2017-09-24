@@ -1,4 +1,4 @@
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, TypeVar
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics import pairwise_distances
@@ -56,10 +56,19 @@ class ParagraphFilter(Configurable):
         raise NotImplementedError()
 
 
+class FirstN(ParagraphFilter):
+    def __init__(self, n):
+        self.n = n
+
+    def prune(self, question, paragraphs: List[ExtractedParagraphWithAnswers]):
+        return sorted(paragraphs, key=lambda x: x.start)[:self.n]
+
+
 class ContainsQuestionWord(ParagraphFilter):
-    def __init__(self, stop, allow_first=True):
+    def __init__(self, stop, allow_first=True, n_paragraphs: int=None):
         self.stop = stop
         self.allow_first = allow_first
+        self.n_paragraphs = n_paragraphs
 
     def prune(self, question, paragraphs: List[ExtractedParagraphWithAnswers]):
         q_words = {x.lower() for x in question}
@@ -77,6 +86,8 @@ class ContainsQuestionWord(ParagraphFilter):
                     break
             if keep:
                 output.append(para)
+        if self.n_paragraphs is not None:
+            output = output[:self.n_paragraphs]
         return output
 
 
@@ -234,6 +245,11 @@ class DocumentSplitter(Configurable):
 
         split_docs = self.split([x.text for x in paras])
 
+        max_len = len(full_para.get_context())
+        for para in split_docs:
+            if para.end > max_len:
+                raise RuntimeError()
+
         out = []
         for para in split_docs:
             # Grad the correct inverses and convert back to the paragraph level
@@ -352,7 +368,6 @@ def test_splitter(splitter: DocumentSplitter, n_sample, n_answer_spans, seed=Non
     max_tokens = splitter.max_tokens
     read_n = splitter.reads_first_n
     for doc in docs[:n_sample]:
-        print(doc)
         text = corpus.get_document(doc, read_n)
         fake_answers = []
         offset = 0

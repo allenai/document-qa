@@ -66,7 +66,7 @@ def main():
                                             ["question_id"] if args.open else ["question_id", "doc_id"])
         data["answers_%d_em" % i] = model_scores
 
-    show_scores_table(pd.DataFrame(data), 30 if args.open else 12, list(data.keys()))
+    show_scores_table(pd.DataFrame(data), 30 if args.open else 15, list(data.keys()))
 
 
 if __name__ == "__main__":

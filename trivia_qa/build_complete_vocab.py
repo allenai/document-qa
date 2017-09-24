@@ -1,13 +1,14 @@
-"""
-Build vocab of all words in the triviaqa dataset, including
-all documents and all train questions.
-"""
 import argparse
 
 from os.path import exists
 
 from trivia_qa.build_span_corpus import TriviaQaOpenDataset
 from trivia_qa.evidence_corpus import get_evidence_voc
+
+"""
+Build vocab of all words in the triviaqa dataset, including
+all documents and all train questions.
+"""
 
 
 def main():

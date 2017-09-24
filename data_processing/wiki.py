@@ -1,16 +1,32 @@
 import json
+
+import logging
+import numpy as np
 import unicodedata
 from os import mkdir
 from os.path import join, exists
 from typing import List, Optional
 
 import requests
+import ujson
 from bs4 import BeautifulSoup
 
 from configurable import Configurable
 from data_processing.text_utils import NltkAndPunctTokenizer, ParagraphWithInverse
+from utils import flatten_iterable
 
 WIKI_API = "https://en.wikipedia.org/w/api.php"
+
+
+log = logging.getLogger('wiki')
+# TODO figure out how to set this by default
+log.propagate = False
+if not log.handlers:
+    formatter = logging.Formatter("%(asctime)s: %(levelname)s: %(message)s")
+    handler = logging.StreamHandler()
+    handler.setFormatter(formatter)
+    log.addHandler(handler)
+    log.setLevel(logging.INFO)
 
 
 def get_wiki_page_ids(article_titles, per_query=25):
@@ -59,6 +75,49 @@ class WikiParagraph(ParagraphWithInverse):
         self.paragraph_num = paragraph_num
         self.kind = kind
 
+    def to_json(self):
+        if self.spans is not None:
+            word_ix = 0
+            compact = []
+            for sent in self.text:
+                tokens = []
+                for word in sent:
+                    s, e = self.spans[word_ix]
+                    s, e = int(s), int(e)  # ujson doesn't play nice with numpy
+                    if word == self.original_text[s:e]:
+                        tokens.append((s, e))
+                    else:
+                        tokens.append((word,  s, e))
+                    word_ix += 1
+                compact.append(tokens)
+            return dict(paragraph_num=self.paragraph_num,
+                        kind=self.kind,
+                        original_text=self.original_text,
+                        spans=compact)
+        else:
+            return self.__dict__
+
+    @staticmethod
+    def from_json(data):
+        if data["spans"] is not None:
+            original_text = data["original_text"]
+            spans = []
+            text = []
+            for sent in data["spans"]:
+                sent_tokens = []
+                for tup in sent:
+                    if len(tup) == 2:
+                        spans.append(tup)
+                        sent_tokens.append(original_text[tup[0]:tup[1]])
+                    else:
+                        spans.append(tup[1:])
+                        sent_tokens.append(tup[0])
+                text.append(sent_tokens)
+            return WikiParagraph(data["paragraph_num"], data["kind"], text, original_text,
+                                 np.array(spans, dtype=np.int32))
+        else:
+            return WikiParagraph(**data)
+
 
 class WikiArticle(object):
     def __init__(self, title: str, page_id: int, paragraphs: List[WikiParagraph]):
@@ -94,6 +153,7 @@ class WikiCorpus(Configurable):
                     .replace("/", "-") + ".json")
 
     def _text_to_paragraph(self, ix, kind: str, text: str):
+        text = text.strip()
         if not self.keep_inverse_mapping:
             text = self.tokenizer.tokenize_paragraph(text)
             return WikiParagraph(ix, kind, text)
@@ -103,21 +163,25 @@ class WikiCorpus(Configurable):
 
     def _sent_to_paragraph(self, ix, kind: str, text: List[str]):
         if not self.keep_inverse_mapping:
-            tokenized = [self.tokenizer.tokenize_sentence(s) for s in text]
+            tokenized = [self.tokenizer.tokenize_sentence(s.strip()) for s in text]
             return WikiParagraph(ix, kind, tokenized)
         else:
             para = ParagraphWithInverse.concat(
-                [self.tokenizer.tokenize_with_inverse(x, True) for x in text], " ")
+                [self.tokenizer.tokenize_with_inverse(x.strip(), True) for x in text], " ")
             return WikiParagraph(ix, kind, para.text, para.original_text, para.spans)
 
     def get_wiki_article(self, wiki_title) -> WikiArticle:
+        # Note client is responsible for rate limiting as needed
         if self.cache_dir is not None:
             tokenized_file = self._get_tokenized_filename(wiki_title)
             if exists(tokenized_file):
+                log.info("Load wiki article for \"%s\" from cache", wiki_title)
                 with open(tokenized_file, "r") as f:
                     data = json.load(f)
-                    return WikiArticle(data["title"], data["url"], [WikiParagraph(**x) for x in data["paragraphs"]])
+                    return WikiArticle(data["title"], data["url"], [WikiParagraph.from_json(x) for
+                                                                    x in data["paragraphs"]])
 
+        log.info("Load wiki article for \"%s\"", wiki_title)
         r = requests.get(WIKI_API, dict(action="parse", page=wiki_title,
                                         redirects=self.follow_redirects, format="json"))
 
@@ -167,9 +231,11 @@ class WikiCorpus(Configurable):
                     paragraphs.append(para)
 
         article = WikiArticle(wiki_title, raw_data["pageid"], paragraphs)
+
         if self.cache_dir is not None:
             with open(tokenized_file, "w") as f:
-                json.dump(article, f, default=lambda x: x.__dict__)
+                ujson.dump(dict(title=article.title, url=article.url,
+                                paragraphs=[x.to_json() for x in article.paragraphs]), f)
         return article
 
 

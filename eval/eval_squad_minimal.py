@@ -1,6 +1,7 @@
 import json
 import sys
 import tensorflow as tf
+import nltk
 
 from data_processing.qa_training_data import ParagraphAndQuestionDataset, ContextLenKey
 from data_processing.text_utils import NltkAndPunctTokenizer
@@ -16,25 +17,32 @@ def run():
     input_data = sys.argv[1]
     output_path = sys.argv[2]
     model_dir = ModelDir("model")
-
-    nltk.data.path
+    nltk.data.path.append("nltk_data")
 
     print("Loading data")
     docs = parse_squad_data(input_data, "", NltkAndPunctTokenizer(), False)
     pairs = split_docs(docs)
-    dataset = ParagraphAndQuestionDataset(pairs, ClusteredBatcher(100, ContextLenKey(), False, False))
+    dataset = ParagraphAndQuestionDataset(pairs, ClusteredBatcher(100, ContextLenKey(), False, True))
 
     print("Done, init model")
     model = model_dir.get_model()
     # small hack, just load the vector file at its expected location rather then using the config location
-    loader = ResourceLoader(lambda a, b: load_word_vector_file("glove.840B.300d.txt.gz", b))
+    loader = ResourceLoader(lambda a, b: load_word_vector_file("glove.840B.300d.txt", b))
     model.set_inputs([dataset], loader)
 
-    print("Done, build graph")
+    print("Done, building graph")
     sess = tf.Session()
     with sess.as_default():
         pred = model.get_prediction()
     best_span = pred.get_best_span(17)[0]
+
+    print("Done, loading weights")
+    checkpoint = model_dir.get_latest_checkpoint()
+    saver = tf.train.Saver()
+    saver.restore(sess, checkpoint)
+    ema = tf.train.ExponentialMovingAverage(0)
+    saver = tf.train.Saver({ema.average_name(x): x for x in tf.trainable_variables()})
+    saver.restore(sess, checkpoint)
 
     print("Done, starting evaluation")
     out = {}

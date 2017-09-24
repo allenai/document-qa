@@ -358,7 +358,6 @@ class FixedWordEmbedderPlaceholders(WordEmbedder):
         return ix
 
     def context_word_to_ix(self, word, is_train):
-        # print(word)
         ix = self._word_to_ix.get(word)
         if ix is None:
             ix = self._word_to_ix.get(word.lower())
@@ -366,11 +365,6 @@ class FixedWordEmbedderPlaceholders(WordEmbedder):
                 self._on_placeholder = (self._on_placeholder + 1) % self.n_placeholders
                 ix = self._placeholder_start + self._on_placeholder
         return ix
-
-    @property
-    def version(self):
-        # added `cpu`
-        return 1
 
     def init(self, loader: ResourceLoader, voc: Iterable[str]):
         if self.cpu:
@@ -432,11 +426,10 @@ class FixedWordEmbedderPlaceholders(WordEmbedder):
 
         self._placeholder_start = ix
 
-        def init(shape, dtype=None, partition_info=None):
-            out = tf.random_normal((self.n_placeholders, dim-1), stddev=self.placeholder_stddev)
-            return tf.concat([out, tf.ones((self.n_placeholders, 1))], axis=1)
-
         if self.placeholder_flag:
+            def init(shape, dtype=None, partition_info=None):
+                out = tf.random_normal((self.n_placeholders, dim - 1), stddev=self.placeholder_stddev)
+                return tf.concat([out, tf.ones((self.n_placeholders, 1))], axis=1)
             init_fn = init
         else:
             init_fn = tf.random_normal_initializer(stddev=self.placeholder_stddev)

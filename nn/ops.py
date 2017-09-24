@@ -11,7 +11,7 @@ def dropout(x, keep_prob, is_train, noise_shape=None, seed=None):
 
 def segment_logsumexp(xs, segments):
     """ Similar tf.segment_sum but compute logsumexp rather then sum """
-    # Stop gradients follows the implementation of tf.reduce_logsumexp
+    # Stop gradients following the implementation of tf.reduce_logsumexp
     maxs = tf.stop_gradient(tf.reduce_max(xs, axis=1))
     segment_maxes = tf.segment_max(maxs, segments)
     xs -= tf.expand_dims(tf.gather(segment_maxes, segments), 1)
@@ -20,7 +20,7 @@ def segment_logsumexp(xs, segments):
 
 
 def exp_mask(val, mask):
-    mask = tf.cast(tf.sequence_mask(mask, tf.shape(val)[1]), 'float')
+    mask = tf.cast(tf.sequence_mask(mask, tf.shape(val)[1]), tf.float32)
     return val * mask + (1 - mask) * VERY_NEGATIVE_NUMBER
 
 

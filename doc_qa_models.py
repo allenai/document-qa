@@ -15,7 +15,7 @@ from utils import ResourceLoader
 
 class DocumentQuestionModel(Model):
     """
-    Base class for models that take document/questions as input and handles embedding the
+    Base class for models that take document/questions as input, handles embedding the
     text in a modular way
     """
 
@@ -46,6 +46,8 @@ class DocumentQuestionModel(Model):
         for dataset in datasets:
             voc.update(dataset.get_vocab())
 
+        if len(datasets) == 0:
+            sepc = Para
         input_spec = datasets[0].get_spec()
         for dataset in datasets[1:]:
             input_spec += dataset.get_spec()
@@ -117,6 +119,11 @@ class DocumentQuestionModel(Model):
         data[self._is_train_placeholder] = is_train
         return data
 
+    def __getstate__(self):
+        state = super().__getstate__()
+        state["_is_train_placeholder"] = None
+        return state
+
     def __setstate__(self, state):
         if "state" in state:
             if "preprocessor" not in state["state"]:
@@ -187,7 +194,6 @@ class Attention(DocumentQuestionModel):
         if self.context_mapper is not None:
             with tf.variable_scope("map_context"):
                 context_rep = self.context_mapper.apply(is_train, context_rep, context_mask)
-
 
         with tf.variable_scope("buid_memories"):
             keys, memories = self.memory_builder.apply(is_train, question_rep, question_mask)
@@ -274,4 +280,3 @@ class AttentionAndEncode(DocumentQuestionModel):
 
         with tf.variable_scope("predict"):
             return self.predictor.apply(is_train, context_rep, answer, context_mask)
-

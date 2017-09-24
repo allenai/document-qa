@@ -1,24 +1,17 @@
 import argparse
-import json
-from os import walk, mkdir, makedirs, remove
-from os.path import relpath, join, exists
 import pickle
-from typing import Set
+import re
 from collections import Counter
+from os import walk, mkdir
+from os.path import relpath, join, exists
+from typing import Set
 
-import numpy as np
-import resource
-
-import sys
-
-import unicodedata
+from tqdm import tqdm
 
 import config
-from utils import group, split, flatten_iterable
-from tqdm import tqdm
-import re
 from config import CORPUS_DIR
-from data_processing.text_utils import NltkPlusStopWords, NltkAndPunctTokenizer
+from data_processing.text_utils import NltkAndPunctTokenizer
+from utils import group, split, flatten_iterable
 
 """
 Build a cache a tokenized version of the evidence corpus
@@ -182,7 +175,7 @@ class TriviaQaEvidenceCorpusTxt(object):
 
         file_id = join(self.directory, file_id + ".txt")
         if not exists(file_id):
-            print(file_id)
+            raise ValueError(file_id)
             return None
 
         with open(file_id, "r") as f:

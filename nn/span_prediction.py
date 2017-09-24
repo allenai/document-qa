@@ -14,7 +14,7 @@ from nn.span_prediction_ops import best_span_from_bounds, to_unpacked_coordinate
 
 
 """
-Classes to take a sequence of vectors and build a loss function and predict a span
+Classes to take a sequence of vectors and build a loss function + predict a span
 """
 
 
@@ -152,6 +152,49 @@ class IndependentBounds(SpanFromBoundsPredictor):
                                   masked_start_logits, masked_end_logits, mask)
 
 
+class ForwardSpansOnly(SpanFromBoundsPredictor):
+    """
+    Explicitly compute the per-span score, the mask out the spans the negative spans, surprisingly I
+    found this to hurt performance on SQuAD (similar f1, worse em)
+    """
+
+    def __init__(self, aggregate="sum", bound: int=-1):
+        self.aggregate = aggregate
+        self.bound = bound
+
+    def predict(self, answer, start_logits, end_logits, mask) -> Prediction:
+        l = tf.shape(start_logits)[1]
+        masked_start_logits = exp_mask(start_logits, mask)
+        masked_end_logits = exp_mask(end_logits, mask)
+
+        # Explicit score for each span
+        span_scores = tf.expand_dims(start_logits, 2) + tf.expand_dims(end_logits, 1)
+
+        # Mask for in-bound spans, now (batch, start, end) matrix
+        mask = tf.sequence_mask(mask, l)
+        mask = tf.logical_and(tf.expand_dims(mask, 2), tf.expand_dims(mask, 1))
+
+        # Also mask out spans that are negative/inverse by taking only the upper triangle
+        mask = tf.matrix_band_part(mask, 0, self.bound)
+
+        # Apply the mask
+        mask = tf.cast(mask, tf.float32)
+        span_scores = span_scores * mask + (1 - mask) * VERY_NEGATIVE_NUMBER
+
+        if len(answer) == 1:
+            answer = answer[0]
+            span_scores = tf.reshape(span_scores, (tf.shape(start_logits)[0], -1))
+            answer = answer[:, 0] * l + answer[:, 1]
+            losses = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=span_scores, labels=answer)
+            loss = tf.reduce_mean(losses)
+        else:
+            raise NotImplemented()
+        tf.add_to_collection(tf.GraphKeys.LOSSES, loss)
+        return BoundaryPrediction(tf.nn.softmax(masked_start_logits),
+                                  tf.nn.softmax(masked_end_logits),
+                                  masked_start_logits, masked_end_logits, mask)
+
+
 class IndependentBoundsNoAnswerOption(SpanFromBoundsPredictor):
     """
     Return start_logits and end_logit, and also learn a scalar no-answer option. I have generally used
@@ -198,6 +241,8 @@ class IndependentBoundsNoAnswerOption(SpanFromBoundsPredictor):
 
 
 class IndependentBoundsGrouped(SpanFromBoundsPredictor):
+    """ The shared norm loss, where the normalizer is shared between paragraph with the same group id """
+
     def __init__(self, aggregate="sum"):
         self.aggregate = aggregate
 
@@ -229,6 +274,8 @@ class IndependentBoundsGrouped(SpanFromBoundsPredictor):
 
 
 class IndependentBoundsSigmoidLoss(SpanFromBoundsPredictor):
+    """ Independent sigmoid loss for each start/end span """
+
     def __init__(self, aggregate="sum"):
         self.aggregate = aggregate
 
@@ -239,8 +286,6 @@ class IndependentBoundsSigmoidLoss(SpanFromBoundsPredictor):
         if len(answer) == 1:
             raise NotImplementedError()
         elif len(answer) == 2 and all(x.dtype == tf.bool for x in answer):
-            # all correct start/end bounds are marked in a dense bool array
-            # In this case there might be multiple answer spans, so we need an aggregation strategy
             losses = []
             for answer_mask, logits in zip(answer, [masked_start_logits, masked_end_logits]):
                 answer_mask = tf.cast(answer_mask, tf.float32)
@@ -259,6 +304,8 @@ class IndependentBoundsSigmoidLoss(SpanFromBoundsPredictor):
 
 
 class BoundedSpanPredictor(SpanFromBoundsPredictor):
+    """ Loss based on only using span that are up to a fixed bound in length """
+
     def __init__(self, bound: int, f1_weight=0, aggregate:str=None):
         self.bound = bound
         self.f1_weight = f1_weight
@@ -288,7 +335,6 @@ class BoundedSpanPredictor(SpanFromBoundsPredictor):
                     loss = tf.reduce_mean(
                         tf.nn.sparse_softmax_cross_entropy_with_logits(logits=span_logits, labels=answer_ix))
                 else:
-                    print("F1 mask!")
                     f1_mask = packed_span_f1_mask(answer, l, bound)
                     if f1_weight < 1:
                         f1_mask *= f1_weight
@@ -317,7 +363,7 @@ class BoundedSpanPredictor(SpanFromBoundsPredictor):
 
 class SpanFromVectorBound(SequencePredictionLayer):
     """
-    RaSoR style prediction, combing a vector the start/end
+    RaSoR style prediction, combing a vector at the start/end
     of each span. In practice I have struggled to make this work well on TriviaQA
     """
 
@@ -485,7 +531,7 @@ class WithFixedContextPredictionLayer(AttentionPredictionLayer):
 class ConfidencePredictor(SequencePredictionLayer):
     """
     Bound prediction where we compute a non-answer logit/option using soft attention over
-    the start/end logit + a `SequenceEncoder`.
+    the start/end logit and a `SequenceEncoder`.
     """
 
     def __init__(self,
@@ -502,7 +548,7 @@ class ConfidencePredictor(SequencePredictionLayer):
 
     @property
     def version(self):
-        return 1  # Fix maxing
+        return 1  # Fix masking
 
     def apply(self, is_train, context_embed, answer, context_mask=None):
         init_fn = get_keras_initialization(self.init)
@@ -559,11 +605,11 @@ class ConfidencePredictor(SequencePredictionLayer):
         correct_mask = tf.concat([correct_mask, tf.logical_not(tf.reduce_any(answer[0], axis=1, keep_dims=True))], axis=1)
 
         # Note we are happily allowing the model to place weights on "backwards" spans, and also giving
-        # it points for predicting spans that start and end at different answer spans. It would be easy
-        # to fix this here by masking out some of the `all_logit` matrix, but we have generally left it
-        # this way to be consistent with the independent bound models that do the same.
-        # Some early tests found properly masking things to not make much difference, but it could be an avenue
-        # for improvement
+        # it points for predicting spans that start and end at different answer spans. It would be easy to
+        # fix by masking out some of the `all_logit` matrix and specify a more accuracy correct_mask, but I
+        # in general left it this way to be consistent with the independent bound models that do the same.
+        # Some early tests found properly masking things to not make much difference (or even to hurt), but it
+        # still could be an avenue for improvement
 
         log_correct = tf.reduce_logsumexp(all_logits + VERY_NEGATIVE_NUMBER * (1 - tf.cast(correct_mask, tf.float32)), axis=1)
         loss = tf.reduce_mean(-(log_correct - log_norms))

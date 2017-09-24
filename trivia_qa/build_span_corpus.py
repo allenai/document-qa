@@ -24,9 +24,10 @@ from trivia_qa.read_data import iter_trivia_question, TriviaQaQuestion
 
 
 """
-Build span-level training data from the raw trivia-qa inputs, in particular annotates each question/doc
-with the places the question answer's occur within the document and saves the resulting dataset.
-Assumes the evidence corpus has already been preprocessed 
+Build span-level training data from the raw trivia-qa inputs, in particular load the questions
+from the json file and annotates each question/doc with the places the question answer's occur 
+within the document, and save the results in our format. Assumes the evidence corpus has 
+already been preprocessed 
 """
 
 
@@ -61,6 +62,8 @@ def build_dataset(name, tokenizer, train_files,
         corpus = TriviaQaEvidenceCorpusTxt(file_map)
         questions = compute_answer_spans_par(questions, corpus, tokenizer, answer_detector, n_process)
         for q in questions:  # Sanity check, we should have answers for everything (even if of size 0)
+            if q.answer is None:
+                continue
             for doc in q.all_docs:
                 if doc.doc_id in file_map:
                     if doc.answer_spans is None:
@@ -95,6 +98,10 @@ class TriviaQaSpanCorpus(Configurable):
 
     def get_dev(self) -> List[TriviaQaQuestion]:
         with open(join(self.dir, "dev.pkl"), "rb") as f:
+            return pickle.load(f)
+
+    def get_test(self) -> List[TriviaQaQuestion]:
+        with open(join(self.dir, "test.pkl"), "rb") as f:
             return pickle.load(f)
 
     def get_verified(self) -> Optional[List[TriviaQaQuestion]]:
@@ -138,13 +145,14 @@ def build_wiki_corpus():
 
 
 def build_web_corpus():
-    build_dataset("web", NltkAndPunctTokenizer(),
+    build_dataset("web-debug", NltkAndPunctTokenizer(),
                   dict(
-                      verified=join(TRIVIA_QA, "qa", "verified-web-dev.json"),
-                      dev=join(TRIVIA_QA, "qa", "web-dev.json"),
-                      train=join(TRIVIA_QA, "qa", "web-train.json"),
+                      # verified=join(TRIVIA_QA, "qa", "verified-web-dev.json"),
+                      # dev=join(TRIVIA_QA, "qa", "web-dev.json"),
+                      # train=join(TRIVIA_QA, "qa", "web-train.json"),
+                      test=join(TRIVIA_QA, "qa", "web-test-without-answers.json")
                   ),
-                  FastNormalizedAnswerDetector(), 2)
+                  FastNormalizedAnswerDetector(), 1)
 
 
 def build_sample_corpus():
@@ -161,13 +169,14 @@ def build_unfiltered_corpus():
                   dict(
                       dev=join(TRIVIA_QA_UNFILTERED, "unfiltered-web-dev.json"),
                       train=join(TRIVIA_QA_UNFILTERED, "unfiltered-web-train.json"),
+                      test=join(TRIVIA_QA_UNFILTERED, "unfiltered-web-test-without-answers.json")
                   ),
                   answer_detector=FastNormalizedAnswerDetector(),
                   n_process=2)
 
 
 if __name__ == "__main__":
-    build_sample_corpus()
+    build_web_corpus()
     # build_unfiltered_corpus()
 
 

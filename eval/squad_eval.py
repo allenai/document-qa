@@ -7,9 +7,8 @@ import numpy as np
 import trainer
 from data_processing.qa_training_data import ParagraphAndQuestionDataset, ContextAndQuestion
 from dataset import FixedOrderBatcher
-from evaluator import Evaluator, Evaluation
+from evaluator import Evaluator, Evaluation, SpanEvaluator
 from squad.squad_data import SquadCorpus, split_docs
-from squad.squad_evaluators import BoundedSquadSpanEvaluator
 from model_dir import ModelDir
 from utils import transpose_lists, print_table
 
@@ -61,7 +60,7 @@ def main():
 
     dataset = ParagraphAndQuestionDataset(questions, FixedOrderBatcher(args.batch_size, True))
 
-    evaluators = [BoundedSquadSpanEvaluator(args.answer_bounds)]
+    evaluators = [SpanEvaluator(args.answer_bounds, text_eval="squad")]
     if args.official_output is not None:
         evaluators.append(RecordSpanPrediction(args.answer_bounds[0]))
 
@@ -77,6 +76,7 @@ def main():
     table.append([("%s" % scalars[x] if x in scalars else "-") for x in cols])
     print_table([header] + transpose_lists(table))
 
+    # Save the official output
     if args.official_output is not None:
         quid_to_para = {}
         for x in questions:

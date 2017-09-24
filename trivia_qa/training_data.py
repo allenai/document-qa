@@ -1,5 +1,6 @@
 import sys
 from typing import List, Set, Optional, Tuple, Dict
+import numpy as np
 
 from data_processing.document_splitter import DocumentSplitter, ExtractedParagraphWithAnswers, ParagraphFilter, \
     DocParagraphWithAnswers
@@ -78,7 +79,7 @@ class ExtractSingleParagraph(Preprocessor):
                                                             TokenSpans(q.answer.all_answers, paragraph.answer_spans), 1))
         return FilteredData(output, sum(len(x.all_docs) for x in questions))
 
-    def finalize(self, x: FilteredData):
+    def finalize_chunk(self, x: FilteredData):
         if self.intern:
             question_map = {}
             for q in x.data:
@@ -131,7 +132,15 @@ class ExtractMultiParagraphs(Preprocessor):
                 if self.require_an_answer and len(doc.answer_spans) == 0:
                     continue
                 text = evidence.get_document(doc.doc_id, splitter.reads_first_n)
-                paras = splitter.split_annotated(text, doc.answer_spans)
+                if text is None:
+                    raise ValueError("No evidence text found document: " + doc.doc_id)
+                if doc.answer_spans is not None:
+                    paras = splitter.split_annotated(text, doc.answer_spans)
+                else:
+                    # this is kind of a hack to make the rest of the pipeline work, only
+                    # needed for test cases
+                    paras = splitter.split_annotated(text, np.zeros((0, 2), dtype=np.int32))
+
                 if para_filter is not None:
                     paras = para_filter.prune(q.question, paras)
 
@@ -154,11 +163,13 @@ class ExtractMultiParagraphs(Preprocessor):
                     doc_paras = [DocumentParagraph(doc.doc_id, x.start, x.end,
                                                    i, x.answer_spans, flatten_iterable(x.text))
                                  for i, x in enumerate(paras)]
-                with_paragraphs.append(MultiParagraphQuestion(q.question_id, q.question, q.answer.all_answers, doc_paras))
+                with_paragraphs.append(MultiParagraphQuestion(q.question_id, q.question,
+                                                              None if q.answer is None else q.answer.all_answers,
+                                                              doc_paras))
 
         return FilteredData(with_paragraphs, true_len)
 
-    def finalize(self, q: FilteredData):
+    def finalize_chunk(self, q: FilteredData):
         if self.intern:
             intern_mutli_question(q.data)
 
@@ -220,7 +231,7 @@ class ExtractMultiParagraphsPerQuestion(Preprocessor):
 
         return FilteredData(with_paragraphs, len(questions))
 
-    def finalize(self, q: FilteredData):
+    def finalize_chunk(self, q: FilteredData):
         if self.intern:
             intern_mutli_question(q.data)
 

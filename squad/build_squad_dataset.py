@@ -5,8 +5,6 @@ from os import listdir
 from os.path import expanduser, join, exists
 from typing import List
 
-import numpy as np
-
 import config
 from squad.squad_data import Question, Document, Paragraph, SquadCorpus
 from data_processing.span_data import ParagraphSpan, ParagraphSpans
@@ -48,9 +46,11 @@ def parse_squad_data(source, name, tokenizer, pbar=True) -> List[Document]:
 
             n_words = sum(len(sentence) for sentence in text)
 
-            sent_lens = [len(sent) for sent in text]
-
             for question_ix, question in enumerate(para['qas']):
+                # There are actually some multi-sentence questions, so we should have used
+                # tokenizer.tokenize_paragraph_flat here which would have produced slighy better
+                # results in a few cases. However all the results we report are
+                # done using `tokenize_sentence` so I am just going to leave this way
                 question_text = tokenizer.tokenize_sentence(question['question'])
 
                 answer_spans = []
@@ -98,6 +98,7 @@ def parse_squad_data(source, name, tokenizer, pbar=True) -> List[Document]:
                             break
                         on_word = next_word
 
+                    # Sanity check these as well
                     if text[sent_start][word_start] != flat_text[word_ixs[0]]:
                         raise RuntimeError()
                     if text[sent_end][word_end] != flat_text[word_ixs[-1]]:
@@ -122,8 +123,7 @@ def parse_squad_data(source, name, tokenizer, pbar=True) -> List[Document]:
 
 def main():
     parser = argparse.ArgumentParser()
-    source_dir = join(expanduser("~"), "data", "squad")
-    parser.add_argument('-s', "--source_dir", default=source_dir)
+    parser.add_argument('-s', "--source_dir", default=join(expanduser("~"), "data", "squad"))
 
     args = parser.parse_args()
     source_dir = args.source_dir

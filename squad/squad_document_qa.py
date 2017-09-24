@@ -1,22 +1,16 @@
-import numpy as np
 from typing import List, Optional
-from collections import Counter
 
+import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics import pairwise_distances
 
-from configurable import Configurable
-from data_processing.document_splitter import ParagraphFilter
 from data_processing.multi_paragraph_qa import ParagraphWithAnswers, MultiParagraphQuestion, TokenSpanGroup
-from data_processing.preprocessed_corpus import Preprocessor, DatasetBuilder
-from data_processing.qa_training_data import ParagraphAndQuestionSpec, WordCounts, QaCorpusStats, ParagraphAndQuestion, \
-    ContextAndQuestion, Answer
+from data_processing.preprocessed_corpus import Preprocessor
+from data_processing.qa_training_data import ContextAndQuestion, Answer
 from data_processing.span_data import TokenSpans
-from dataset import Dataset, ListBatcher
-from squad.squad_data import Document, Paragraph, DocParagraphAndQuestion
+from squad.squad_data import Document
 from text_preprocessor import TextPreprocessor
 from utils import flatten_iterable
-
 
 """
 Preprocessors for document-level question answering with SQuAD data
@@ -60,7 +54,9 @@ class SquadParagraphWithAnswers(ParagraphWithAnswers):
         return self.original_text[self.spans[start][0]:self.spans[end][1]]
 
     def build_qa_pair(self, question, question_id, answer_text, group=None):
-        if group is None:
+        if answer_text is None:
+            ans = None
+        elif group is None:
             ans = TokenSpans(answer_text, self.answer_spans)
         else:
             ans = TokenSpanGroup(answer_text, self.answer_spans, group)

@@ -31,14 +31,6 @@ class SimilarityFunction(Configurable):
         return tf.squeeze(self.get_scores(tf.expand_dims(tensor_1, 1), tensor_2), squeeze_dims=[1])
 
 
-class SimilaritySum(SimilarityFunction):
-    def __init__(self, fns: List[SimilarityFunction]):
-        self.fns = fns
-
-    def get_scores(self, tensor_1, tensor_2):
-        return tf.add_n([fn.get_scores(tensor_1, tensor_2) for fn in self.fns])
-
-
 class _WithBias(SimilarityFunction):
     def __init__(self, bias: bool):
         # Note since we typically do softmax on the result, having a bias is usually redundant
@@ -158,7 +150,7 @@ class BiLinear(_WithBias):
 
 
 class TriLinear(_WithBias):
-    """ Function used by BiDaF, bi-linear with an extra component for the dot's of the vectors """
+    """ Function used by BiDaF, bi-linear with an extra component for the dots of the vectors """
     def __init__(self, init="glorot_uniform", bias=False):
         super().__init__(bias)
         self.init = init

@@ -2,6 +2,7 @@ from typing import Optional
 
 import tensorflow as tf
 from tensorflow.contrib.cudnn_rnn.python.ops import cudnn_rnn_ops
+from tensorflow.contrib.cudnn_rnn.python.ops.cudnn_rnn_ops import CudnnCompatibleGRUCell
 from tensorflow.contrib.rnn import LSTMStateTuple, DropoutWrapper, LSTMBlockFusedCell, GRUBlockCell
 from tensorflow.contrib.keras.python.keras.initializers import TruncatedNormal
 from tensorflow.python.ops.rnn import dynamic_rnn, bidirectional_dynamic_rnn
@@ -188,10 +189,11 @@ class CudnnLstm(CudnnRnnMapper, SequenceMapper):
         return super().map(is_train, x, mask)
 
     def __setstate__(self, state):
-        if "recurrent_init" not in state["state"]:
-            state["state"]["recurrent_init"] = None
-        if "keep_recurrent" not in state["state"]:
-            state["state"]["keep_recurrent"] = 1
+        if "state" in state:
+            if "recurrent_init" not in state["state"]:
+                state["state"]["recurrent_init"] = None
+            if "keep_recurrent" not in state["state"]:
+                state["state"]["keep_recurrent"] = 1
         super().__setstate__(state)
 
 
@@ -419,7 +421,6 @@ class GRUCell(RNNCell):
         return new_h, new_h
 
 
-
 class RnnCellSpec(Configurable):
     """ Configurable specification for a RNN cell. """
     def convert_to_state(self, variables):
@@ -533,6 +534,15 @@ class GruCellSpec(RnnCellSpec):
                        kernel_initializer, recurrent_initializer, candidate_initializer, activation)
 
 
+class CompatGruCellSpec(RnnCellSpec):
+
+    def __init__(self, num_units):
+        self.num_units = num_units
+
+    def __call__(self, is_train, scope=None):
+        return CudnnCompatibleGRUCell(self.num_units)
+
+
 class RecurrentEncoder(SequenceEncoder):
     def __init__(self, cell_spec, output):
         self.cell_spec = cell_spec
@@ -609,13 +619,5 @@ class BiRecurrentMapper(SequenceMapper):
             fw, bw = bidirectional_dynamic_rnn(fw, bw, inputs, mask,
                                                swap_memory=self.swap_memory, dtype=tf.float32)[0]
             return self.merge.apply(is_train, fw, bw)
-
-    def __setstate__(self, state):
-        if "state" in state:
-            if "merge" not in state["state"]:
-                state["state"]["merge"] = None
-            if "swap_memory" not in state["state"]:
-                state["state"]["swap_memory"] = False
-        super().__setstate__(state)
 
 

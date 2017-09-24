@@ -1,9 +1,8 @@
-from typing import List, Iterable, Dict, Optional, Union
+from typing import List, Dict
 
-import numpy as np
-from configurable import Configurable
 from tensorflow import Tensor
 
+from configurable import Configurable
 from dataset import Dataset
 from utils import ResourceLoader
 

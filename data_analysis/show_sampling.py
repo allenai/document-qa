@@ -4,9 +4,9 @@ import numpy as np
 from sklearn.feature_extraction.text import strip_accents_unicode
 from tqdm import tqdm
 
-from data_processing.document_splitter import MergeParagraphs, TopTfIdf
+from data_processing.document_splitter import MergeParagraphs, TopTfIdf, ShallowOpenWebRanker
 from data_processing.text_utils import NltkPlusStopWords
-from trivia_qa.build_span_corpus import TriviaQaWebDataset
+from trivia_qa.build_span_corpus import TriviaQaWebDataset, TriviaQaOpenDataset
 from utils import flatten_iterable
 
 
@@ -97,5 +97,49 @@ def build_data():
         input()
 
 
+def show_open_paragraphs(start: int, end: int):
+    splitter = MergeParagraphs(400)
+    stop = NltkPlusStopWords(True)
+    ranker = ShallowOpenWebRanker(6)
+    stop_words = stop.words
+
+    print("Loading train")
+    corpus = TriviaQaOpenDataset()
+    train = corpus.get_dev()
+    np.random.shuffle(train)
+
+    for q in train:
+        q_words = {strip_accents_unicode(w.lower()) for w in q.question}
+        q_words = {x for x in q_words if x not in stop_words}
+
+        para = []
+        for d in q.all_docs:
+            doc = corpus.evidence.get_document(d.doc_id)
+            para += splitter.split_annotated(doc, d.answer_spans)
+
+        ranked = ranker.prune(q.question, para)
+        if len(ranked) < start:
+            continue
+        ranked = ranked[start:end]
+
+        print(" ".join(q.question))
+        print(q.answer.all_answers)
+        for i in range(start, end):
+            para = ranked[i]
+            text = flatten_iterable(para.text)
+            print("Start=%d, Rank=%d" % (para.start, i))
+            if len(para.answer_spans) == 0:
+                # print("No Answer!")
+                continue
+            for s, e in para.answer_spans:
+                text[s] = bcolors.CYAN + text[s]
+                text[e] = text[e] + bcolors.ENDC
+            for i, w in enumerate(text):
+                if strip_accents_unicode(w.lower()) in q_words:
+                    text[i] = bcolors.ERROR + text[i] + bcolors.ENDC
+            print(" ".join(text))
+        input()
+
+
 if __name__ == "__main__":
-    build_data()
+    show_open_paragraphs(0, 4)

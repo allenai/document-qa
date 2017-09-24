@@ -23,7 +23,7 @@ from trivia_qa.trivia_qa_eval import f1_score as triviaqa_em_score
 
 class Evaluation(object):
     """
-    Evaluation of model, include scala summaries and per-example records
+    Evaluation of model, include scalar summaries and per-example records
     """
 
     def __init__(self, scalars, per_sample: Dict[str, List]=None):
@@ -33,7 +33,7 @@ class Evaluation(object):
     def add(self, other):
         for k in self.scalars:
             if k in other.scalars:
-                raise ValueError("Two evalutions had the same scalar key: " + k)
+                raise ValueError("Two evaluations had the same scalar key: " + k)
         self.scalars.update(other.scalars)
 
         if self.per_sample is None:
@@ -41,7 +41,7 @@ class Evaluation(object):
         elif other.per_sample is not None:
             for k in self.per_sample:
                 if k in other.per_sample:
-                    raise ValueError()
+                    raise ValueError("Two evaluations had the same per sample key: " + k)
             self.per_sample.update(other.per_sample)
 
     def add_prefix(self, prefix):
@@ -183,7 +183,7 @@ def trivia_span_scores(data: List[ContextAndQuestion],
         ans = para.answer
 
         pred_span = prediction[i]
-        # For TriviaQA we have generally called join-spaces approach good enough, since the answers here
+        # For TriviaQA we have generally called join-on-spaces approach good enough, since the answers here
         # tend to be short and the gold standard has better normalization. Possibly could get a very
         # small gain using the original text, but I have generaly decided its not worth the trouble
         pred_text = " ".join(para.get_context()[pred_span[0]:pred_span[1]+1])
@@ -212,7 +212,7 @@ def trivia_span_scores(data: List[ContextAndQuestion],
 class SpanEvaluator(Evaluator):
     """
     Evaluate span based models, if text_eval is set should produce exactly
-    the scores returned by the corresponding official evluation scripts
+    the scores returned by the corresponding official evaluation scripts
     """
 
     def __init__(self, bound: List[int], text_eval: str=None):
@@ -470,6 +470,7 @@ class AysncEvaluatorRunner(object):
             except Exception as e:
                 sess.run(self.close_queue)  # Crash the main thread
                 raise e
+            # we should run out of batches and exist gracefully
 
         th = Thread(target=enqueue_eval)
 
@@ -489,7 +490,7 @@ class AysncEvaluatorRunner(object):
             v = tensors[k]
             if len(k.shape) == 0:
                 v = np.array(v)  # List of scalars -> array
-            elif any(x is None for x in k.shape.as_list()):
+            elif any(x is None for x in k.shape.as_list()[1:]):
                 # Variable sized tensors, so convert to flat python-list
                 v = flatten_iterable(v)
             else:

@@ -85,6 +85,7 @@ class Updater(Mapper):
 
 
 class Activation(Updater):
+    """ This layer should not add to collection or create variables """
 
     def apply(self, is_train, x, mask=None):
         return self(x)
@@ -105,18 +106,18 @@ class SequenceBiMapper(Configurable):
         raise NotImplementedError()
 
 
-class Encoder(Configurable):
+class SequenceEncoder(Configurable):
+    """ (batch, time, in_dim) -> (batch, out_dim) """
+    def apply(self, is_train, x, mask=None):
+        raise NotImplementedError()
+
+
+class Encoder(SequenceEncoder):
     """
     reduce the second to last dimension
      (dim1, dim2, ..., dimN, in_dim) -> (dim1, dim2, ..., dim(N-1), out_dim)
      mask should be an sequence length mask of dim one less then `x`
      """
-    def apply(self, is_train, x, mask=None):
-        raise NotImplementedError()
-
-
-class SequenceEncoder(Encoder):
-    """ (batch, time, in_dim) -> (batch, out_dim) """
     def apply(self, is_train, x, mask=None):
         raise NotImplementedError()
 
@@ -137,11 +138,13 @@ class SqueezeLayer(Configurable):
 
 
 class SequencePredictionLayer(Configurable):
+    """ (batch, time, vec), answer -> Prediction """
     def apply(self, is_train, x, answer: List, mask=None) -> Prediction:
         return NotImplemented()
 
 
 class AttentionPredictionLayer(Configurable):
+    """ (batch, time1, vec1), (batch, time2, vec2), answers  -> Prediction """
     def apply(self, is_train, keys, context, answer: List, mask=None, memory_mask=None) -> Prediction:
         raise NotImplementedError()
 
@@ -171,48 +174,6 @@ class MergeWith(SequenceMapper):
                 return self.merge.apply(is_train, x, mapped)
 
 
-class SelfProduct(SequenceMapper):
-    def __init__(self, project_size, scale: bool):
-        self.project_size = project_size
-        self.scale = scale
-
-    def apply(self, is_train, x, mask=None):
-        dim = x.shape.as_list()[-1]
-        project1 = tf.get_variable("project1", (dim, self.project_size))
-        project2 = tf.get_variable("project2", (dim, self.project_size))
-        out = tf.tensordot(x, project1, [[2], [0]]) * tf.tensordot(x, project2, [[2], [0]])
-        if self.scale:
-            out /= np.sqrt(self.project_size)
-        return out
-
-
-class WithProduct(FixedMergeLayer):
-    def apply(self, is_train, tensor1, tensor2, mask) -> tf.Tensor:
-        return tf.concat([tensor1, tf.expand_dims(tensor2, 1) * tensor1], axis=2)
-
-
-class WithTiled(FixedMergeLayer):
-    def apply(self, is_train, tensor1, tensor2, mask) -> tf.Tensor:
-        tiled = tf.tile(tf.expand_dims(tensor2, 1), [1, tf.shape(tensor1)[1], 1])
-        return tf.concat([tensor1, tiled], axis=2)
-
-
-class WithProjectedProduct(FixedMergeLayer):
-    def __init__(self, init="glorot_uniform", include_tiled=False):
-        self.init = init
-        self.include_tiled = include_tiled
-
-    def apply(self, is_train, tensor1, tensor2, mask) -> tf.Tensor:
-        context_size = tensor2.shape.as_list()[-1]
-        project_w = tf.get_variable("project_w", (tensor1.shape.as_list()[-1], context_size))
-        projected = tf.tensordot(tensor1, project_w, axes=[[2], [0]])
-        out = [tensor1, projected * tf.expand_dims(tensor2, 1)]
-        if self.include_tiled:
-            out.append(tf.tile(tf.expand_dims(tensor2, 1), [1, tf.shape(tensor1)[1], 1]))
-
-        return tf.concat(out, axis=2)
-
-
 class LeakyRelu(Activation):
     def __init__(self, reduce_factor: float=0.3):
         self.reduce_factor = reduce_factor
@@ -238,22 +199,9 @@ class ConcatLayer(MergeLayer):
         return tf.concat([tensor1, tensor2], axis=len(tensor1.shape)-1)
 
 
-class SumLayer(MergeLayer):
-    def apply(self, is_train, tensor1: tf.Tensor, tensor2: tf.Tensor) -> tf.Tensor:
-        return tensor1 + tensor2
-
-
 class ConcatWithProduct(MergeLayer):
     def apply(self, is_train, tensor1, tensor2) -> tf.Tensor:
         return tf.concat([tensor1, tensor2, tensor1 * tensor2], axis=len(tensor1.shape) - 1)
-
-
-class ConcatWithProductTmp(MergeLayer):
-    def apply(self, is_train, tensor1, tensor2) -> tf.Tensor:
-        print("HERE!")
-        print(tensor1.shape)
-        print((tensor1 * tensor2).shape)
-        return tf.concat([tensor1, tensor2, tensor1 * tensor2/10.0], axis=len(tensor1.shape) - 1)
 
 
 class DotMerge(MergeLayer):
@@ -306,132 +254,6 @@ class ConcatOneSidedProduct(MergeLayer):
             elements.append(tensor2)
 
         return tf.concat(elements, axis=len(tensor1.shape) - 1)
-
-
-class FullyConnectedMerge(MergeLayer):
-    def __init__(self, n_out: int, init2="glorot_uniform", init1="glorot_uniform",
-                 activation="tanh", bias=True):
-        self.init1 = init1
-        self.init2 = init2
-        self.n_out = n_out
-        self.bias = bias
-        self.activation = activation
-
-    def apply(self, is_train, tensor1: tf.Tensor, tensor2: tf.Tensor) -> tf.Tensor:
-        w1 = tf.get_variable("weight1", (tensor1.shape.as_list()[-1], self.n_out),
-                             dtype=tf.float32, initializer=get_keras_initialization(self.init1))
-        w2 = tf.get_variable("weight2", (tensor2.shape.as_list()[-1], self.n_out),
-                             dtype=tf.float32, initializer=get_keras_initialization(self.init2))
-        total = tf.tensordot(tensor1, w1, [[len(tensor1.shape)-1], [0]]) + \
-                tf.tensordot(tensor2, w2, [[len(tensor2.shape)-1], [0]])
-
-        if self.bias:
-            bias = tf.get_variable("bias", shape=self.n_out, initializer=tf.zeros_initializer())
-            total += bias
-
-        if self.activation is None:
-            return total
-        else:
-            return get_keras_activation(self.activation)(total)
-
-
-class ConstantScaleLayer(Mapper):
-    def __init__(self, scale):
-        self.scale = scale
-
-    def apply(self, is_train, x, mask=None):
-        return x * self.scale
-
-
-class TruncateConcatLayer(MergeLayer):
-    def __init__(self, n_out):
-        self.n_out = n_out
-
-    def apply(self, is_train, tensor1: tf.Tensor, tensor2: tf.Tensor) -> tf.Tensor:
-        rank = len(tensor1.shape)
-        tensor1 = tf.slice(tensor1, [0] * rank, [-1] * (rank - 1) + [self.n_out])
-        tensor2 = tf.slice(tensor2, [0] * rank, [-1] * (rank - 1) + [self.n_out])
-        return tf.concat([tensor1, tensor2], axis=rank-1)
-
-
-class ApplyThenConcat(MergeLayer):
-    def __init__(self, map: Mapper):
-        self.map = map
-
-    def apply(self, is_train, tensor1: tf.Tensor, tensor2: tf.Tensor) -> tf.Tensor:
-        with tf.variable_scope("map1"):
-            tensor1 = self.map.apply(is_train, tensor1)
-        with tf.variable_scope("map2"):
-            tensor2 = self.map.apply(is_train, tensor2)
-
-        rank = len(tensor1.shape)
-        return tf.concat([tensor1, tensor2], axis=rank-1)
-
-
-class WhitenLayer(SequenceMapper):
-    def __init__(self, center=None, objective="l2",
-                 keep_probs=1, drop_whiten=False):
-        self.objective = objective
-        self.keep_probs = keep_probs
-        self.drop_whitened = drop_whiten
-        self.center = center
-
-    def apply(self, is_train, x, mask=None):
-        n_out = x.shape.as_list()[-1]
-
-        def init(shape, dtype=None, partition_info=None):
-            return tf.eye(n_out, dtype=dtype)
-
-        w = tf.get_variable("whiten-matrix", (n_out, n_out), x.dtype, initializer=init)
-
-        flat_inputs = tf.reshape(x, (-1, x.shape.as_list()[-1]))
-        if mask is not None:
-            flat_inputs = tf.boolean_mask(flat_inputs, tf.reshape(tf.sequence_mask(mask), (-1,)))
-        output = tf.matmul(tf.stop_gradient(flat_inputs), w)
-        output_mean = tf.reduce_mean(output, axis=0)
-        centered_output = output - tf.expand_dims(output_mean, 0)
-        cov = tf.matmul(centered_output, centered_output, transpose_a=True) / tf.cast(tf.shape(output)[0], tf.float32)
-
-        if self.objective == "l1":
-            cov_loss = tf.reduce_mean(tf.abs(cov - tf.eye(n_out, n_out)))
-            tf.add_to_collection("auxillary_losses", tf.reduce_mean(tf.abs(cov - tf.eye(n_out, n_out))))
-        elif self.objective == "l2":
-            cov_loss = tf.reduce_mean(tf.square(cov - tf.eye(n_out, n_out)))
-        else:
-            raise ValueError()
-
-        tf.add_to_collection("auxillary_losses", cov_loss)
-        tf.add_to_collection("monitor/batch-covariance-loss", cov_loss)
-
-        last_rank = len(x.shape) - 1
-        if self.drop_whitened:
-            output = dropout(tf.tensordot(x, tf.stop_gradient(w), axes=[[last_rank], [0]]), self.keep_probs, is_train)
-        else:
-            output = tf.tensordot(dropout(x, self.keep_probs, is_train), tf.stop_gradient(w), axes=[[last_rank], [0]])
-        if self.center == "per_batch":
-            if mask is not None:
-                for _ in range(len(x.shape)-1):
-                    output_mean = tf.expand_dims(output_mean, 0)
-            return output - tf.stop_gradient(output_mean)
-        elif self.center == "learn":
-            means = tf.get_variable("whiten-means", n_out, dtype=tf.float32, initializer=tf.zeros_initializer())
-            if self.objective == "l1":
-                mean_loss = tf.reduce_mean(tf.abs(means - tf.stop_gradient(output_mean)))
-            elif self.objective == "l2":
-                mean_loss = tf.reduce_mean(tf.reduce_mean(tf.square(means - tf.stop_gradient(output_mean))))
-            else:
-                raise ValueError()
-            tf.add_to_collection("auxillary_losses", mean_loss)
-            tf.add_to_collection("monitor/batch-mean-loss", mean_loss)
-            for _ in range(len(x.shape)-1):
-                means = tf.expand_dims(means, 0)
-            return output - tf.stop_gradient(means)
-        elif self.center == "ema":
-            raise NotImplementedError()
-        elif self.center is None:
-            return output
-        else:
-            raise ValueError()
 
 
 class FullyConnected(Mapper):
@@ -506,15 +328,6 @@ class ActivationLayer(Updater):
         if self.bias:
             x += tf.get_variable("bias", (1, 1, x.shape.as_list()[-1]), initializer=tf.zeros_initializer())
         return get_keras_activation(self.activation)(x)
-
-
-class TruncateLayer(Mapper):
-    def __init__(self, n_out):
-        self.n_out = n_out
-
-    def apply(self, is_train, x, mask=None):
-        rank = len(x.shape)
-        return tf.slice(x, [0]*rank, [-1]*(rank-1) + [self.n_out])
 
 
 class ProjectLayer(Updater):
@@ -769,6 +582,43 @@ class Conv1d(Mapper):
         return fn(tf.nn.conv2d(x, filter_, strides, "VALID") + bias)
 
 
+class MaxPool(Encoder):
+    def __init__(self, map_layer: Optional[Mapper]=None, min_val: float=0):
+        self.map_layer = map_layer
+        self.min_val = min_val
+
+    def apply(self, is_train, x, mask=None):
+        if self.map_layer is not None:
+            x = self.map_layer.apply(is_train, x, mask)
+
+        rank = len(x.shape) - 2
+        if mask is not None:
+            shape = tf.shape(x)
+            mask = tf.sequence_mask(tf.reshape(mask, (-1,)), shape[-2])
+            mask = tf.cast(tf.reshape(mask, (shape[0], shape[1], shape[2], 1)), tf.float32)
+            # this min_val thing is kind of a hack, really we should do something like compute the
+            # min val over the entire batch, or maybe just pick a very negative values, or maybe
+            # do something a bit more finicky with tf.bool_mask
+            # In practice it doesn't seem to be problem, and some of the earlier models used these
+            # scheme so I have been sticking with it.
+            if self.min_val == 0:
+                x *= mask
+            else:
+                x = x * mask + self.min_val * (1 - mask)
+            return tf.maximum(tf.reduce_max(x, axis=rank), tf.fill([1] * (len(x.shape)-1),
+                                                                   float(self.min_val)))
+        else:
+            return tf.reduce_max(x, axis=rank)
+
+    def __setstate__(self, state):
+        if "min_val" not in state:
+            state["min_val"] = 0
+        if "state" in state:
+            if "min_val" not in state["state"]:
+                state["state"]["min_val"] = 0
+        super().__setstate__(state)
+
+
 class ReduceSequenceLayer(SequenceEncoder):
     def __init__(self, reduce: str, apply_mask=True):
         self.reduce = reduce
@@ -784,36 +634,70 @@ class ReduceSequenceLayer(SequenceEncoder):
 
         if self.reduce == "max":
             if mask is not None:
-                # In case a row in x is all negative
-                x += (tf.reduce_min(x)-1) * (1 - answer_mask)
+                raise NotImplementedError()
             return tf.reduce_max(x, axis=1)
         elif self.reduce == "mean":
             if mask is not None:
-                return tf.reduce_sum(x, axis=1) / tf.cast(tf.expand_dims(mask, 1), tf.float32)
+                return tf.reduce_sum(x * answer_mask, axis=1) / tf.cast(tf.expand_dims(mask, 1), tf.float32)
             else:
                 return tf.reduce_mean(x, axis=1)
         elif self.reduce == "sum":
-            return tf.reduce_sum(x, axis=1)
+            if mask is not None:
+                return tf.reduce_sum(x * answer_mask, axis=1)
+            else:
+                return tf.reduce_sum(x, axis=1)
         else:
             raise ValueError()
 
 
-class MaxPool(Encoder):
-    def __init__(self, map_layer: Optional[Mapper]=None):
-        self.map_layer = map_layer
+class ChainConcat(SequenceBiMapper):
+    """ How bidaf builds start/end logits """
 
-    def apply(self, is_train, x, mask=None):
-        if self.map_layer is not None:
-            x = self.map_layer.apply(is_train, x, mask)
+    def __init__(self, start_layer: SequenceMapper, end_layer: SequenceMapper,
+                 soft_select_start_word: bool=True, use_original: bool=True,
+                 use_start_layer: bool=True, init: str="glorot_uniform"):
+        self.init = init
+        self.use_original = use_original
+        self.start_layer = start_layer
+        self.use_start_layer = use_start_layer
+        self.end_layer = end_layer
+        self.soft_select_start_word = soft_select_start_word
 
-        rank = len(x.shape) - 2
-        if mask is not None:
-            shape = tf.shape(x)
-            mask = tf.sequence_mask(tf.reshape(mask, (-1,)), shape[-2])
-            mask = tf.cast(tf.reshape(mask, (shape[0], shape[1], shape[2], 1)), tf.float32)
-            return tf.maximum(tf.reduce_max(x*mask, axis=rank), tf.zeros([1] * (len(x.shape)-1)))
-        else:
-            return tf.reduce_max(x, axis=rank)
+    def apply(self, is_train, context_embed, context_mask=None):
+        init_fn = get_keras_initialization(self.init)
+        with tf.variable_scope("start_layer"):
+            m1 = self.start_layer.apply(is_train, context_embed, context_mask)
+
+        with tf.variable_scope("start_pred"):
+            logits1 = fully_connected(tf.concat([m1, context_embed], axis=2), 1,
+                                      activation=None, kernel_initializer=init_fn)
+            masked_logits1 = exp_mask(tf.squeeze(logits1, squeeze_dims=[2]), context_mask)
+            prediction1 = tf.nn.softmax(masked_logits1)
+
+        m2_input = []
+        if self.use_original:
+            m2_input.append(context_embed)
+        if self.use_start_layer:
+            m2_input.append(m1)
+        if self.soft_select_start_word:
+            soft_select = tf.einsum("ai,aik->ak", prediction1, m1)
+            soft_select_tiled = tf.tile(tf.expand_dims(soft_select, axis=1), [1, tf.shape(m1)[1], 1])
+            m2_input += [soft_select_tiled, soft_select_tiled * m1]
+
+        with tf.variable_scope("end_layer"):
+            m2 = self.end_layer.apply(is_train, tf.concat(m2_input, axis=2), context_mask)
+
+        with tf.variable_scope("end_pred"):
+            logits2 = fully_connected(tf.concat([m2, context_embed], axis=2), 1,
+                                      activation=None, kernel_initializer=init_fn)
+
+        return logits1, logits2
+
+    def __setstate__(self, state):
+        if "state" in state:
+            if "aggregate" not in state["state"]:
+                state["state"]["aggregate"] = None
+        return super().__setstate__(state)
 
 
 class ReduceLayer(Encoder):
@@ -863,48 +747,43 @@ class ReduceLayer(Encoder):
         return super().__setstate__(state)
 
 
-class ChainConcat(SequenceBiMapper):
-    def __init__(self, start_layer: SequenceMapper, end_layer: SequenceMapper,
-                 soft_select_start_word: bool=True, use_original: bool=True,
-                 use_start_layer: bool=True, init: str="glorot_uniform"):
+class SelfProduct(SequenceMapper):
+    def __init__(self, project_size, scale: bool):
+        self.project_size = project_size
+        self.scale = scale
+
+    def apply(self, is_train, x, mask=None):
+        dim = x.shape.as_list()[-1]
+        project1 = tf.get_variable("project1", (dim, self.project_size))
+        project2 = tf.get_variable("project2", (dim, self.project_size))
+        out = tf.tensordot(x, project1, [[2], [0]]) * tf.tensordot(x, project2, [[2], [0]])
+        if self.scale:
+            out /= np.sqrt(self.project_size)
+        return out
+
+
+class WithProduct(FixedMergeLayer):
+    def apply(self, is_train, tensor1, tensor2, mask) -> tf.Tensor:
+        return tf.concat([tensor1, tf.expand_dims(tensor2, 1) * tensor1], axis=2)
+
+
+class WithTiled(FixedMergeLayer):
+    def apply(self, is_train, tensor1, tensor2, mask) -> tf.Tensor:
+        tiled = tf.tile(tf.expand_dims(tensor2, 1), [1, tf.shape(tensor1)[1], 1])
+        return tf.concat([tensor1, tiled], axis=2)
+
+
+class WithProjectedProduct(FixedMergeLayer):
+    def __init__(self, init="glorot_uniform", include_tiled=False):
         self.init = init
-        self.use_original = use_original
-        self.start_layer = start_layer
-        self.use_start_layer = use_start_layer
-        self.end_layer = end_layer
-        self.soft_select_start_word = soft_select_start_word
+        self.include_tiled = include_tiled
 
-    def apply(self, is_train, context_embed, context_mask=None):
-        init_fn = get_keras_initialization(self.init)
-        with tf.variable_scope("start_layer"):
-            m1 = self.start_layer.apply(is_train, context_embed, context_mask)
+    def apply(self, is_train, tensor1, tensor2, mask) -> tf.Tensor:
+        context_size = tensor2.shape.as_list()[-1]
+        project_w = tf.get_variable("project_w", (tensor1.shape.as_list()[-1], context_size))
+        projected = tf.tensordot(tensor1, project_w, axes=[[2], [0]])
+        out = [tensor1, projected * tf.expand_dims(tensor2, 1)]
+        if self.include_tiled:
+            out.append(tf.tile(tf.expand_dims(tensor2, 1), [1, tf.shape(tensor1)[1], 1]))
 
-        with tf.variable_scope("start_pred"):
-            logits1 = fully_connected(tf.concat([m1, context_embed], axis=2), 1,
-                                      activation=None, kernel_initializer=init_fn)
-            masked_logits1 = exp_mask(tf.squeeze(logits1, squeeze_dims=[2]), context_mask)
-            prediction1 = tf.nn.softmax(masked_logits1)
-
-        m2_input = []
-        if self.use_original:
-            m2_input.append(context_embed)
-        if self.use_start_layer:
-            m2_input.append(m1)
-        if self.soft_select_start_word:
-            soft_select = tf.einsum("ai,aik->ak", prediction1, m1)
-            soft_select_tiled = tf.tile(tf.expand_dims(soft_select, axis=1), [1, tf.shape(m1)[1], 1])
-            m2_input += [soft_select_tiled, soft_select_tiled * m1]
-
-        with tf.variable_scope("end_layer"):
-            m2 = self.end_layer.apply(is_train, tf.concat(m2_input, axis=2), context_mask)
-
-        with tf.variable_scope("end_pred"):
-            logits2 = fully_connected(tf.concat([m2, context_embed], axis=2), 1,
-                                      activation=None, kernel_initializer=init_fn)
-
-        return logits1, logits2
-
-    def __setstate__(self, state):
-        if "aggregate" not in state["state"]:
-            state["state"]["aggregate"] = None
-        return super().__setstate__(state)
+        return tf.concat(out, axis=2)

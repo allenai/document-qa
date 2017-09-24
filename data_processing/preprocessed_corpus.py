@@ -2,14 +2,13 @@ import gzip
 import pickle
 from collections import Counter
 from threading import Lock
-from typing import List, Dict, Iterable, Union, Tuple, Optional
+from typing import List, Dict, Iterable, Tuple, Optional
 
 import numpy as np
 from tqdm import tqdm
 
 from configurable import Configurable
-from data_processing.text_utils import NltkPlusStopWords
-from dataset import TrainingData, Dataset, ListDataset
+from dataset import TrainingData, Dataset
 from utils import split, flatten_iterable, group, ResourceLoader
 
 
@@ -22,7 +21,9 @@ class Preprocessor(Configurable):
         """ Map elements to an unspecified intermediate format """
         raise NotImplementedError()
 
-    def finalize(self, x):
+    def finalize_chunk(self, x):
+        """ Finalize the output from `preprocess`, in multi-processing senarios this will still be run on
+         the main thread so it can be used for things like interning """
         pass
 
 
@@ -73,7 +74,7 @@ def preprocess_par(questions: List, evidence, preprocessor,
 
     if n_processes == 1:
         out = preprocessor.preprocess(tqdm(questions, desc=name, ncols=80), evidence)
-        preprocessor.finalize(out)
+        preprocessor.finalize_chunk(out)
         return out
     else:
         from multiprocessing import Pool
@@ -84,7 +85,7 @@ def preprocess_par(questions: List, evidence, preprocessor,
         lock = Lock()
 
         def call_back(results):
-            preprocessor.finalize(results[0])
+            preprocessor.finalize_chunk(results[0])
             with lock:  # FIXME Even with the lock, the progress bar still is jumping around
                 pbar.update(results[1])
 
@@ -101,6 +102,10 @@ def preprocess_par(questions: List, evidence, preprocessor,
 
 
 class PreprocessedData(TrainingData):
+    """
+    Data the goes through a preprocessing pipeline, for TriviaQA this usually mean leading/choosing what
+    paragraphs we want to train on, the organizing them into a dataset with the desired sampling strategy
+    """
 
     def __init__(self,
                  corpus,
@@ -110,7 +115,8 @@ class PreprocessedData(TrainingData):
                  eval_on_verified: bool=True,
                  eval_on_train: bool = True,
                  hold_out_train: Optional[Tuple[int, int]]= None,
-                 sample=None, sample_dev=None):
+                 sample=None, sample_dev=None,
+                 sample_preprocessed_train=None, sample_seed=None):
         self.hold_out_train = hold_out_train
         self.eval_on_train = eval_on_train
         self.sample = sample
@@ -120,6 +126,8 @@ class PreprocessedData(TrainingData):
         self.preprocesser = preprocesser
         self.builder = builder
         self.eval_builder = eval_builder
+        self.sample_preprocessed_train = sample_preprocessed_train
+        self.sample_seed = sample_seed
 
         self._train = None
         self._dev = None
@@ -130,8 +138,8 @@ class PreprocessedData(TrainingData):
         return self.corpus.name
 
     def cache_preprocess(self, filename):
-        # if self.sample is not None or self.sample_dev is not None or self.hold_out_train is not None:
-        #     raise ValueError()
+        if self.sample is not None or self.sample_dev is not None or self.hold_out_train is not None:
+            raise ValueError()
         if filename.endswith("gz"):
             handle = lambda a,b: gzip.open(a, b, compresslevel=3)
         else:
@@ -178,14 +186,16 @@ class PreprocessedData(TrainingData):
         else:
             verified_questions = None
 
+        rng = np.random.RandomState(self.sample_seed)
+
         if self.sample is not None:
-            rng = np.random.RandomState(0)
-            print("Warning: using sampling. Only should do this during debugging")
+            l = len(train_questions)
             train_questions = rng.choice(train_questions, self.sample, replace=False)
+            print("Sampled %d of %d (%.4f) train questions" % (len(train_questions), l, len(train_questions)/l))
         if self.sample_dev is not None:
-            rng = np.random.RandomState(0)
-            print("Warning: using sampling. Only should do this during debugging")
-            dev_questions = rng.choice(dev_questions, self.sample_dev, replace=False)
+            l = len(dev_questions)
+            dev_questions = np.random.RandomState(self.sample_seed).choice(dev_questions, self.sample_dev, replace=False)
+            print("Sampled %d of %d (%.4f) dev questions" % (len(dev_questions), l, len(dev_questions) / l))
 
         if self.preprocesser:
             print("Preprocessing with %d processes..." % n_processes)
@@ -201,6 +211,17 @@ class PreprocessedData(TrainingData):
             self._verified_dev, self._dev, self._train = out
         else:
             self._verified_dev, self._dev, self._train = verified_questions, dev_questions, train_questions
+
+        if self.sample_preprocessed_train:
+            if isinstance(self._train, FilteredData):
+                l =  len(self._train.data)
+                self._train.data = rng.choice(self._train.data, self.sample_preprocessed_train, False)
+                self._train.true_len *= len(self._train.data)/l
+                print("Sampled %d of %d (%.4f) q-c pairs" % (len(self._train.data), l, len(self._train.data)/l))
+            else:
+                l = len(self._train)
+                self._train = rng.choice(self._train, self.sample_preprocessed_train, False)
+                print("Sampled %d of %d q-c pairs" % (len(self._train), l))
 
         print("Done")
 

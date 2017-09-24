@@ -44,54 +44,6 @@ class RankedParagraphQuestion(ContextAndQuestion):
         return sum(len(s) for s in self.paragraph.text)
 
 
-class RecordParagraphSpanPrediction(Evaluator):
-    """
-    Record a bunch of per-paragraph data, include the model's best span, its confidence, and
-    its score.
-    """
-
-    def __init__(self, bound: int):
-        self.bound = bound
-
-    def tensors_needed(self, prediction):
-        span, score = prediction.get_best_span(self.bound)
-        return dict(spans=span, model_scores=score)
-
-    def evaluate(self, data: List[RankedParagraphQuestion], true_len, **kargs):
-        print("Begining evaluation")
-        spans, model_scores = np.array(kargs["spans"]), np.array(kargs["model_scores"])
-
-        pred_f1s = np.zeros(len(data))
-        pred_ems = np.zeros(len(data))
-
-        print(" Scoring...")
-        for i in tqdm(range(len(data)), total=len(data), ncols=80):
-            point = data[i]
-            if point.answer is None:
-                continue
-            pred_span = spans[i]
-            pred_text = point.paragraph.get_original_text(pred_span[0], pred_span[1])
-            f1 = 0
-            em = 0
-            for answer in data[i].answer.answer_text:
-                f1 = max(f1, squad_f1_score(pred_text, answer))
-                em = max(em, squad_em_score(pred_text, answer))
-            pred_f1s[i] = f1
-            pred_ems[i] = em
-
-        results = {}
-        results["n_answers"] = [0 if x.answer is None else len(x.answer.answer_spans) for x in data]
-        results["predicted_score"] = model_scores
-        results["predicted_start"] = spans[:, 0]
-        results["predicted_end"] = spans[:, 1]
-        results["rank"] = [x.rank for x in data]
-        results["text_f1"] = pred_f1s
-        results["text_em"] = pred_ems
-        results["para_number"] = np.array([x.paragraph_number for x in data])
-        results["question_id"] = [x.question_id for x in data]
-        return Evaluation({}, results)
-
-
 def main():
     parser = argparse.ArgumentParser(description='')
     parser.add_argument('model', help='name of output to exmaine')

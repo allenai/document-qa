@@ -14,7 +14,7 @@ from utils import max_or_none
 
 """
 Classes to map python objects we want to classify into numpy arrays we can feed into Tensorflow,
-e.i. to map (quesiton-context-answer) -> (numpy arries)
+e.i. to map (quesiton-context-answer) -> {tf.placeholder -> numpy arrays}
 """
 
 
@@ -74,6 +74,12 @@ class SingleSpanAnswerEncoder(AnswerEncoder):
             answer_spans[doc_ix, 1] = word_end
         return {self.answer_spans: answer_spans}
 
+    def __getstate__(self):
+        return {}
+
+    def __setstate__(self, state):
+        return SingleSpanAnswerEncoder()
+
 
 class DenseMultiSpanAnswerEncoder(AnswerEncoder):
     """ Encode the answer spans into bool (span_start) and (span_end) arrays """
@@ -101,10 +107,16 @@ class DenseMultiSpanAnswerEncoder(AnswerEncoder):
             answer_ends[doc_ix, answer_spans[:, 1]] = True
         return {self.answer_starts: answer_starts, self.answer_ends: answer_ends}
 
+    def __getstate__(self):
+        return {}
+
+    def __setstate__(self, state):
+        return DenseMultiSpanAnswerEncoder()
+
 
 class GroupedSpanAnswerEncoder(AnswerEncoder):
     """ Encode the answer spans into bool (span_start) and (span_end) arrays, and also record
-    the group_id if one is present in the answer """
+    the group_id if one is present in the answer. Used for the "shared-norm" approach """
 
     def __init__(self):
         self.answer_starts = None
@@ -139,9 +151,15 @@ class GroupedSpanAnswerEncoder(AnswerEncoder):
         return {self.answer_starts: answer_starts, self.answer_ends: answer_ends,
                 self.group_ids:group_id}
 
+    def __getstate__(self):
+        return {}
+
+    def __setstate__(self, state):
+        return GroupedSpanAnswerEncoder()
+
 
 class PackedMultiSpanAnswerEncoder(AnswerEncoder):
-    """ Records the span in a bool array in the packed format of to_packed_coordinates """
+    """ Records the span in a bool array in the packed format of `to_packed_coordinates` """
 
     def __init__(self, bound):
         self.bound = bound
@@ -161,6 +179,12 @@ class PackedMultiSpanAnswerEncoder(AnswerEncoder):
             output[doc_ix, to_packed_coordinates_np(doc.answer.answer_spans, context_word_dim, self.bound)] = True
         return {self.correct_spans: output}
 
+    def __getstate__(self):
+        return dict(bound=self.bound)
+
+    def __setstate__(self, state):
+        return PackedMultiSpanAnswerEncoder(state["bound"])
+
 
 class DocumentAndQuestionEncoder(Configurable):
     """
@@ -169,11 +193,11 @@ class DocumentAndQuestionEncoder(Configurable):
 
     def __init__(self,
                  answer_encoder: AnswerEncoder,
-                 para_size_th: Optional[int]=None,
+                 doc_size_th: Optional[int]=None,
                  word_featurizer: Optional[QaTextFeautrizer]=None):
         # Parameters
         self.answer_encoder = answer_encoder
-        self.doc_size_th = para_size_th
+        self.doc_size_th = doc_size_th
 
         self.word_featurizer = word_featurizer
 
@@ -200,7 +224,7 @@ class DocumentAndQuestionEncoder(Configurable):
 
     @property
     def version(self):
-        return 2
+        return 3
 
     def init(self, input_spec: ParagraphAndQuestionSpec, len_op: bool,
              word_emb: WordEmbedder, char_emb: Optional[CharEmbedder]):
@@ -270,13 +294,6 @@ class DocumentAndQuestionEncoder(Configurable):
                 if x is not None] + self.answer_encoder.get_placeholders()
 
     def encode(self, batch: List[ContextAndQuestion], is_train: bool):
-        for x in batch:
-            if len(x.answer.answer_spans.shape) != 2:
-                print("***")
-                print(x.answer.answer_spans)
-                print("***")
-                raise ValueError()
-
         batch_size = len(batch)
         if self.batch_size is not None:
             if self.batch_size < batch_size:
@@ -353,8 +370,6 @@ class DocumentAndQuestionEncoder(Configurable):
                         question_chars[doc_ix, word_ix, char_ix] = self._char_emb.char_to_ix(char)
 
             for word_ix, word in enumerate(doc.get_context()):
-                if word_ix == self.max_context_word_dim:
-                    break
                 if self._word_embedder is not None:
                     if query_once:
                         ix = doc_mapping.get(word)
@@ -378,14 +393,23 @@ class DocumentAndQuestionEncoder(Configurable):
             question_word_features = np.zeros((batch_size, ques_word_dim, self.word_featurizer.n_question_features()))
             context_word_features = np.zeros((batch_size, context_word_dim, self.word_featurizer.n_context_features()))
             for doc_ix, doc in enumerate(batch):
-                q_f, c_f = self.word_featurizer.get_features(doc.question,
-                                                             doc.get_context()[:self.max_context_word_dim])
+                q_f, c_f = self.word_featurizer.get_features(doc.question, doc.get_context())
                 question_word_features[doc_ix, :q_f.shape[0]] = q_f
                 context_word_features[doc_ix, :c_f.shape[0]] = c_f
             feed_dict[self.context_features] = context_word_features
             feed_dict[self.question_features] = question_word_features
 
         return feed_dict
+
+    def __getstate__(self):
+        # The placeholders are considered transient
+        state = dict(
+            answer_encoder=self.answer_encoder,
+            doc_size_th=self.doc_size_th,
+            word_featurizer=self.word_featurizer,
+            version=self.version
+        )
+        return state
 
     def __setstate__(self, state):
         if state["version"] == 0:
@@ -396,79 +420,16 @@ class DocumentAndQuestionEncoder(Configurable):
             if "answer_encoder" in state["state"]:
                 raise ValueError()
             state["state"]["answer_encoder"] = SingleSpanAnswerEncoder()
-        super().__setstate__(state)
-
-
-class QuestionEncoder(Configurable):
-    def __init__(self):
-        self._max_char_dim = None
-
-        self._word_embedder = None
-        self._char_emb = None
-        self.question_words = None
-        self.question_chars = None
-        self.question_len = None
-
-    def get_placeholders(self):
-        return [x for x in [self.question_len, self.question_words,
-                            self.question_chars] if x is not None]
-
-    def init(self, batch_size, word_emb: WordEmbedder, char_emb: CharEmbedder):
-        self._word_embedder = word_emb
-        self._char_emb = char_emb
-
-        if self._char_emb is not None:
-            self._max_char_dim = self._char_emb.get_word_size_th()
+        elif state["version"] <= 2:
+            super().__setstate__(state)
         else:
-            self._max_char_dim = 1
-
-        self.question_words = tf.placeholder('int32', [batch_size, None], name='question_words')
-        self.question_len = tf.placeholder('int32', [batch_size], name='question_len')
-
-        if self._char_emb:
-            self.question_chars = tf.placeholder('int32', [batch_size, None, self._max_char_dim], name='question_chars')
-        else:
-            self.question_chars = None
-
-    def encode(self, batch: List[List[str]], is_train: bool):
-        max_char_dim = self._max_char_dim
-        n_questions = len(batch)
-
-        feed_dict = {}
-        question_len = np.array([len(q) for q in batch], dtype='int32')
-        feed_dict[self.question_len] = question_len
-
-        ques_word_dim = question_len.max()
-
-        if self._word_embedder is not None:
-            question_words = np.zeros([n_questions, ques_word_dim], dtype='int32')
-            feed_dict[self.question_words] = question_words
-        else:
-            question_words = None
-
-        if self._char_emb is not None:
-            question_chars = np.zeros([n_questions, ques_word_dim, max_char_dim], dtype='int32')
-            feed_dict[self.question_chars] = question_chars
-        else:
-            question_chars = None
-
-        for question_ix, question in enumerate(batch):
-            for word_ix, word in enumerate(question):
-                if self._word_embedder is not None:
-                    ix = self._word_embedder.question_word_to_ix(word)
-                    if ix < 0:
-                        raise ValueError("This encoder does not support placeholders")
-
-                    question_words[question_ix, word_ix] = ix
-                if self._char_emb is not None:
-                    for char_ix, char in enumerate(word):
-                        if char_ix == self._max_char_dim:
-                            break
-                        question_chars[question_ix, word_ix, char_ix] = self._char_emb.char_to_ix(char)
-        return feed_dict
+            del state["version"]
+            return self.__init__(**state)
 
 
 class CheatingEncoder(DocumentAndQuestionEncoder):
+    """ Useful for debugging, encodes where the correct answer span is in the context """
+
     def __init__(self, answer_encoder: AnswerEncoder):
         super().__init__(answer_encoder)
 
@@ -477,8 +438,6 @@ class CheatingEncoder(DocumentAndQuestionEncoder):
         if self.batch_size is not None:
             if self.batch_size < batch_size:
                 raise ValueError()
-            # We have a fixed batch size, so we will pad our inputs with zeros along
-            # the batch dimension
             batch_size = self.batch_size
         N = batch_size
         # else dynamically use the batch size of the examples

@@ -13,7 +13,7 @@ from nn.layers import MaxPool, Conv1d, SequenceMapperSeq, VariationalDropoutLaye
     ResidualLayer, ConcatWithProduct, ChainBiMapper, NullMapper
 from nn.recurrent_layers import CudnnGru
 from nn.similarity_layers import TriLinear
-from nn.span_prediction import BoundsPredictor
+from nn.span_prediction import BoundsPredictor, ForwardSpansOnly
 from squad.squad_data import DocumentQaTrainingData, SquadCorpus
 from trainer import TrainParams, SerializableOptimizer
 from utils import get_output_name_from_cli
@@ -32,8 +32,7 @@ def main():
 
     model = Attention(
         encoder=DocumentAndQuestionEncoder(SingleSpanAnswerEncoder()),
-        word_embed=FixedWordEmbedderPlaceholders(vec_name="glove.840B.300d", word_vec_init_scale=0,
-                                                 placeholder_stddev=0.422, cpu=True, placeholder_flag=True),
+        word_embed=FixedWordEmbedder(vec_name="glove.840B.300d", word_vec_init_scale=0, cpu=True),
         char_embed=CharWordEmbedder(
             LearnedCharEmbedder(word_size_th=14, char_th=50, char_dim=20, init_scale=0.05, force_cpu=True),
             MaxPool(Conv1d(100, 5, 0.8)),
@@ -62,7 +61,7 @@ def main():
         predictor=BoundsPredictor(ChainBiMapper(
             first_layer=recurrent_layer,
             second_layer=recurrent_layer
-        ))
+        ), span_predictor=ForwardSpansOnly())
     )
 
     with open(__file__, "r") as f:

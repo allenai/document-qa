@@ -1,8 +1,7 @@
 from os.path import join, expanduser, dirname
 
 """
-Global config options, its admittedly a bit hacky to have this be a python file,
-also very convenient for IDEs
+Global config options
 """
 
 VEC_DIR = join(expanduser("~"), "data", "glove")

@@ -2,14 +2,15 @@ import argparse
 import json
 import pickle
 from os.path import join
-from typing import List, Optional
+from typing import List
 
 import numpy as np
 from tqdm import tqdm
 
 import trainer
-from data_processing.document_splitter import DocumentSplitter, MergeParagraphs, ParagraphFilter, ContainsQuestionWord, \
-    TopTfIdf, ShallowOpenWebRanker
+from config import TRIVIA_QA
+from data_processing.document_splitter import MergeParagraphs, ContainsQuestionWord, \
+    TopTfIdf, ShallowOpenWebRanker, FirstN
 from data_processing.preprocessed_corpus import preprocess_par
 from data_processing.qa_training_data import ParagraphAndQuestionDataset
 from data_processing.span_data import TokenSpans
@@ -18,28 +19,21 @@ from dataset import FixedOrderBatcher
 from evaluator import Evaluator, Evaluation
 from model_dir import ModelDir
 from trivia_qa.build_span_corpus import TriviaQaWebDataset, TriviaQaOpenDataset
-from trivia_qa.evidence_corpus import TriviaQaEvidenceCorpusTxt
-from trivia_qa.read_data import TriviaQaQuestion
+from trivia_qa.read_data import normalize_wiki_filename
 from trivia_qa.training_data import DocumentParagraphQuestion, ExtractMultiParagraphs, ExtractMultiParagraphsPerQuestion
-from trivia_qa.trivia_qa_eval import f1_score as trivia_f1_score
 from trivia_qa.trivia_qa_eval import exact_match_score as trivia_em_score
-from utils import ResourceLoader, flatten_iterable
+from trivia_qa.trivia_qa_eval import f1_score as trivia_f1_score
+from utils import ResourceLoader
 
 
 class RecordParagraphSpanPrediction(Evaluator):
-    """ Computes the best span in tensorflow, meaning which we expect to be faster and
-    does not require us having to keep the entire set of output logits in RAM """
-    def __init__(self, bound: int, record_text_ans: bool,
-                 use_prob: bool):
+
+    def __init__(self, bound: int, record_text_ans: bool):
         self.bound = bound
-        self.use_prob = use_prob
         self.record_text_ans = record_text_ans
 
     def tensors_needed(self, prediction):
-        if self.use_prob:
-            span, score = prediction.get_best_span_prob(self.bound)
-        else:
-            span, score = prediction.get_best_span(self.bound)
+        span, score = prediction.get_best_span(self.bound)
         needed = dict(spans=span, model_scores=score)
         if hasattr(prediction, "none_logit"):
             needed["none_logit"] = prediction.none_logit
@@ -61,7 +55,6 @@ class RecordParagraphSpanPrediction(Evaluator):
                 continue
             text = point.get_context()
             pred_span = spans[i]
-            # print(pred_span)
             pred_text = " ".join(text[pred_span[0]:pred_span[1] + 1])
             if self.record_text_ans:
                 text_answers.append(pred_text)
@@ -102,31 +95,35 @@ def main():
     parser = argparse.ArgumentParser(description='')
     parser.add_argument('model', help='name of output to exmaine')
     parser.add_argument('-p', '--paragraph_output', type=str, help="Save fine grained results for each paragraph")
-    parser.add_argument('-q', '--question_predictions', type=str, help="Save predictions for each question")
-    parser.add_argument('-d', '--question_doc_predictions', type=str, help="Save predictions for each question-doc pair")
+    parser.add_argument('-o', '--official_output', type=str, help="Build an offical output file with the model's"
+                                                                  " most confident span for each (question, doc) pair")
     parser.add_argument('-e', '--ema', action="store_true")
-    parser.add_argument('-r', '--prob', action="store_true")
+    parser.add_argument('--n_processes', type=int, default=None,
+                        help="Number of processses to do the preprocessing (selecting paragraphs+loading context) with")
     parser.add_argument('-i', '--step', type=int, default=None)
     parser.add_argument('-n', '--n_sample', type=int, default=None)
     parser.add_argument('-a', '--async', type=int, default=10)
     parser.add_argument('-s', '--splitter', type=str, default="merge-400",
-                        choices=["merge-400", "merge-800"])
-    parser.add_argument('-f', '--filter', type=str, default="tfidf-6")
+                        choices=["merge-400", "merge-800", "merge-1200"])
+    parser.add_argument('-f', '--filter', type=str, default="tfidf-12")
     parser.add_argument('-b', '--batch_size', type=int, default=200)
     parser.add_argument('-c', '--corpus',
-                        choices=["web-dev", "web-verified-dev", "web-train",
+                        choices=["web-dev", "web-test", "web-verified-dev", "web-train",
                                  "open-dev", "open-train"],
                         default="web-verified-dev")
     args = parser.parse_args()
 
     model_dir = ModelDir(args.model)
     model = model_dir.get_model()
+    # model = RandomPredictor(1)
 
     if args.corpus.startswith('web'):
         dataset = TriviaQaWebDataset()
         corpus = dataset.evidence
         if args.corpus == "web-dev":
             test_questions = dataset.get_dev()
+        elif args.corpus == "web-test":
+            test_questions = dataset.get_test()
         elif args.corpus == "web-verified-dev":
             test_questions = dataset.get_verified()
         elif args.corpus == "web-train":
@@ -145,8 +142,10 @@ def main():
 
     if args.splitter == "merge-400":
         splitter = MergeParagraphs(400)
-    else:
+    elif args.splitter == "merge-800":
         splitter = MergeParagraphs(800)
+    else:
+        splitter = MergeParagraphs(1200)
 
     per_document = True
     if args.filter == "contains-question-word":
@@ -154,7 +153,7 @@ def main():
     elif args.filter.startswith("tfidf-"):
         para_filter = TopTfIdf(NltkPlusStopWords(punctuation=True), int(args.filter[6:]))
     elif args.filter.startswith("truncate-"):
-        para_filter = None
+        para_filter = FirstN(int(args.filter[9:]))
     elif args.filter.startswith("q-rank-"):
         para_filter = ShallowOpenWebRanker(int(args.filter[7:]))
         per_document = False
@@ -175,15 +174,18 @@ def main():
     else:
         prep = ExtractMultiParagraphsPerQuestion(splitter, para_filter, model.preprocessor, require_an_answer=False)
 
-    prepped_data = preprocess_par(test_questions, corpus, prep, 6, 1000)
+    prepped_data = preprocess_par(test_questions, corpus, prep, args.n_processes, 1000)
 
     data = []
     for q in prepped_data.data:
         for i, p in enumerate(q.paragraphs):
+            if q.answer_text is None:
+                ans = None
+            else:
+                ans = TokenSpans(q.answer_text, p.answer_spans)
             data.append(DocumentParagraphQuestion(q.question_id, p.doc_id,
                                                  (p.start, p.end), q.question, p.text,
-                                                  TokenSpans(q.answer_text, p.answer_spans),
-                                                  i))
+                                                  ans, i))
 
     n_filtered = len(test_questions) - prepped_data.true_len
 
@@ -203,7 +205,7 @@ def main():
     test_questions = ParagraphAndQuestionDataset(questions, FixedOrderBatcher(args.batch_size, True))
 
     evaluation = trainer.test(model,
-                             [RecordParagraphSpanPrediction(8, True, args.prob)],
+                             [RecordParagraphSpanPrediction(8, True)],
                               {args.corpus:test_questions}, ResourceLoader(), checkpoint, args.ema, args.async)[args.corpus]
 
     if not all(len(x) == len(data) for x in evaluation.per_sample.values()):
@@ -211,6 +213,49 @@ def main():
 
     import pandas as pd
     df = pd.DataFrame(evaluation.per_sample)
+
+    if args.official_output is not None:
+        print("Saving question result")
+
+        # I didn't store the unormalized filenames exactly, so unfortunately we have to reload
+        # the source data to get exact filename to output an official test script
+        fns = {}
+        print("Loading proper filenames")
+        if args.corpus == 'web-test':
+            source = join(TRIVIA_QA, "qa", "web-test-without-answers.json")
+        elif args.corpus == "web-dev":
+            source = join(TRIVIA_QA, "qa", "web-dev.json")
+        else:
+            raise NotImplementedError()
+
+        with open(join(source)) as f:
+            data = json.load(f)["Data"]
+        for point in data:
+            for doc in point["EntityPages"]:
+                filename = doc["Filename"]
+                fn = join("wikipedia", filename[:filename.rfind(".")])
+                fn = normalize_wiki_filename(fn)
+                fns[(point["QuestionId"], fn)] = filename
+
+        answers = {}
+        scores = {}
+        for q_id, doc_id, start, end, txt, score in df[["question_id", "doc_id", "para_start", "para_end",
+                                                        "text_answer", "predicted_score"]].itertuples(index=False):
+            filename = dataset.evidence.file_id_map[doc_id]
+            if filename.startswith("web"):
+                true_name = filename[4:] + ".txt"
+            else:
+                true_name = fns[(q_id, filename)]
+
+            key = q_id + "--" + true_name
+            prev_score = scores.get(key)
+            if prev_score is None or prev_score < score:
+                scores[key] = score
+                answers[key] = txt
+
+        with open(args.official_output, "w") as f:
+            json.dump(answers, f)
+
     df.sort_values(["question_id", "doc_id", "predicted_score"], inplace=True, ascending=False)
 
     q_pred = df.groupby(["question_id"]).first()

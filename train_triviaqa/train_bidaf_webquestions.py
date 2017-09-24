@@ -7,12 +7,12 @@ from data_processing.qa_training_data import ParagraphAndQuestionsBuilder, Conte
 from data_processing.text_utils import NltkPlusStopWords
 from dataset import ListBatcher, ClusteredBatcher
 from doc_qa_models import Attention
-from encoder import DocumentAndQuestionEncoder, DenseMultiSpanAnswerEncoder
+from encoder import DocumentAndQuestionEncoder, DenseMultiSpanAnswerEncoder, SingleSpanAnswerEncoder
 from evaluator import LossEvaluator, SpanEvaluator
 from nn.attention import BiAttention, AttentionEncoder
 from nn.embedder import FixedWordEmbedder, CharWordEmbedder, LearnedCharEmbedder
 from nn.layers import NullBiMapper, NullMapper, SequenceMapperSeq, ReduceLayer, Conv1d, HighwayLayer, FullyConnected, \
-    DropoutLayer, ChainConcat
+    DropoutLayer, ChainConcat, MaxPool
 from nn.recurrent_layers import BiRecurrentMapper, LstmCellSpec, CudnnLstm
 from nn.similarity_layers import TriLinear
 from nn.span_prediction import ConfidencePredictor, BoundsPredictor
@@ -29,18 +29,19 @@ def main():
     train_params = TrainParams(
                                # SerializableOptimizer("Adadelta", dict(learning_rate=1)),
                                SerializableOptimizer("Adam", dict(learning_rate=0.001)),
-                               num_epochs=15, ema=0.999, max_checkpoints_to_keep=2,
+                               num_epochs=30, ema=0.999, max_checkpoints_to_keep=2,
                                async_encoding=10,
                                log_period=30, eval_period=1800, save_period=1800,
                                eval_samples=dict(dev=21000, train=12000))
 
     recurrent_layer = SequenceMapperSeq(DropoutLayer(0.8), CudnnLstm(100))
     model = Attention(
-        encoder=DocumentAndQuestionEncoder(DenseMultiSpanAnswerEncoder()),
+        encoder=DocumentAndQuestionEncoder(SingleSpanAnswerEncoder()),
         word_embed=FixedWordEmbedder(vec_name="glove.6B.100d", word_vec_init_scale=0, learn_unk=False),
         char_embed=CharWordEmbedder(
             embedder=LearnedCharEmbedder(16, 49, 8, force_cpu=True),
-            layer=ReduceLayer("max", Conv1d(100, 5, 0.8), mask=False),
+            # layer=ReduceLayer("max", Conv1d(100, 5, 0.8), mask=False),
+            layer=MaxPool(Conv1d(100, 5, 0.8)),
             shared_parameters=True
         ),
         preprocess=None,

@@ -25,35 +25,13 @@ space_re = re.compile("[ \u202f]")
 
 
 def post_split_tokens(tokens: List[str]) -> List[str]:
-    """ Apply a small amount of extra splitting to the given tokens, this is in particular to avoid UNK tokens
-     due to contraction, quotation, or other forms of puncutation. """
+    """
+    Apply a small amount of extra splitting to the given tokens, this is in particular to avoid UNK tokens
+    due to contraction, quotation, or other forms of puncutation. I haven't really done tests to see
+    if/how much difference this makes, but it does avoid some common UNKs I noticed in SQuAD/TriviaQA
+     """
     return flatten_iterable([x for x in extra_split_chars_re.split(token) if x != ""]
                             for token in tokens)
-
-
-def convert_to_spans(raw_text: str, sentences: List[List[str]]) -> List[List[Tuple[int, int]]]:
-    """ Convert a tokenized version of `raw_text` into a series character spans referencing the `raw_text` """
-    cur_idx = 0
-    all_spans = []
-    for sent in sentences:
-        spans = []
-        for token in sent:
-            # Tokenizer might transform double quotes, for these case search over several
-            # possible encodings
-            if double_quote_re.match(token):
-                span = double_quote_re.search(raw_text[cur_idx:])
-                tmp = cur_idx + span.start()
-                l = span.end() - span.start()
-            else:
-                tmp = raw_text.find(token, cur_idx)
-                l = len(token)
-            if tmp < cur_idx:
-                raise ValueError(token)
-            cur_idx = tmp
-            spans.append((cur_idx, cur_idx + l))
-            cur_idx += l
-        all_spans.append(spans)
-    return all_spans
 
 
 def get_word_span(spans: np.ndarray, start: int, stop: int):
@@ -70,7 +48,7 @@ def get_word_span(spans: np.ndarray, start: int, stop: int):
 class ParagraphWithInverse(object):
     """
     Paragraph that retains the inverse mapping of tokens -> span in the original text,
-    Used if we want get the untokenized, uncleaned text for a particular span
+    Used if we want to get the untokenized, uncleaned text for a particular span
     """
 
     @staticmethod
@@ -79,6 +57,7 @@ class ParagraphWithInverse(object):
 
     @staticmethod
     def concat(paras: List, delim: str):
+        paras = [x for x in paras if x.n_tokens > 0]
         original_text = delim.join([x.original_text for x in paras])
         full_inv = []
         all_tokens = []
@@ -88,6 +67,9 @@ class ParagraphWithInverse(object):
                 continue
             all_tokens += para.text
             full_inv.append(para.spans + on_char)
+            for s, e in (para.spans + on_char):
+                if " " in original_text[s:e]:
+                    raise RuntimeError()
             on_char += para.spans[-1][1] + len(delim)
         if len(all_tokens) == 0:
             return ParagraphWithInverse.empty()
@@ -114,13 +96,38 @@ class ParagraphWithInverse(object):
 
 class NltkAndPunctTokenizer(Configurable):
 
+    @staticmethod
+    def convert_to_spans(raw_text: str, sentences: List[List[str]]) -> List[List[Tuple[int, int]]]:
+        """ Convert a tokenized version of `raw_text` into a series character spans referencing the `raw_text` """
+        cur_idx = 0
+        all_spans = []
+        for sent in sentences:
+            spans = []
+            for token in sent:
+                # (our) Tokenizer might transform double quotes, for this case search over several
+                # possible encodings
+                if double_quote_re.match(token):
+                    span = double_quote_re.search(raw_text[cur_idx:])
+                    tmp = cur_idx + span.start()
+                    l = span.end() - span.start()
+                else:
+                    tmp = raw_text.find(token, cur_idx)
+                    l = len(token)
+                if tmp < cur_idx:
+                    raise ValueError(token)
+                cur_idx = tmp
+                spans.append((cur_idx, cur_idx + l))
+                cur_idx += l
+            all_spans.append(spans)
+        return all_spans
+
     def __init__(self):
         self.sent_tokenzier = nltk.load('tokenizers/punkt/english.pickle')
         self.word_tokenizer = nltk.TreebankWordTokenizer()
 
     def clean_text(self, word):
         # be consistent with quotes, and replace \u2014 and \u2212 which I have seen being mapped to UNK
-        # by glove word vecs with different characters
+        # by glove word vecs
         return word.replace("''", "\"").replace("``", "\"").replace("\u2212", "-").replace("\u2014", "\u2013")
 
     def tokenize_sentence(self, sent) -> List[str]:
@@ -129,6 +136,9 @@ class NltkAndPunctTokenizer(Configurable):
 
     def tokenize_paragraph(self, paragraph: str) -> List[List[str]]:
         return [self.tokenize_sentence(s) for s in self.sent_tokenzier.tokenize(paragraph)]
+
+    def tokenize_paragraph_flat(self, paragraph: str) -> List[str]:
+        return flatten_iterable(self.tokenize_paragraph(paragraph))
 
     def tokenize_with_inverse(self, paragraph: str, is_sentence: bool=False) -> ParagraphWithInverse:
         if is_sentence:
@@ -141,7 +151,7 @@ class NltkAndPunctTokenizer(Configurable):
             text[i] = post_split_tokens(sent)
 
         # recover (start, end) for each token relative to the raw `context`
-        text_spans = convert_to_spans(paragraph, text)
+        text_spans = self.convert_to_spans(paragraph, text)
 
         # Clean text, we do this at the end so `convert_to_spans` works as expected
         for i, sent in enumerate(text):
@@ -212,6 +222,8 @@ class NltkPlusStopWords(Configurable):
     def words(self):
         if self._words is None:
             self._words = set(stopwords.words('english'))
+            # Common question words we probably want to ignore, "de" was suprisingly common
+            # due to its appearance in person names
             self._words.update(["many", "how", "de"])
             if self.punctuation:
                 self._words.update(string.punctuation)

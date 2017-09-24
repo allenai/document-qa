@@ -180,72 +180,6 @@ class BiAttention(AttentionMapper):
         super().__setstate__(state)
 
 
-class AttentionEncoder(SequenceEncoder):
-    def __init__(self, key_mapper: SequenceMapper=None,
-                 post_process: Mapper=None,
-                 init="glorot_uniform"):
-        self.init = init
-        self.key_mapper = key_mapper
-        self.post_process = post_process
-
-    def apply(self, is_train, x, mask=None):
-        if self.key_mapper is not None:
-            with tf.variable_scope("map_keys"):
-                keys = self.key_mapper.apply(is_train, x, mask)
-        else:
-            keys = x
-
-        weights = tf.get_variable("weights", keys.shape.as_list()[-1], dtype=tf.float32,
-                                  initializer=get_keras_initialization(self.init))
-        dist = tf.tensordot(keys, weights, axes=[[2], [0]])  # (batch, x_words)
-        dist = exp_mask(dist, mask)
-        dist = tf.nn.softmax(dist)
-
-        out = tf.einsum("ajk,aj->ak", x, dist)  # (batch, x_dim)
-
-        if self.post_process is not None:
-            with tf.variable_scope("post_process"):
-                out = self.post_process.apply(is_train, out)
-        return out
-
-
-class MultiAttentionEncoder(SequenceMultiEncoder):
-    def __init__(self, n_encodings: int, bias: bool=False, key_mapper: SequenceMapper=None,
-                 post_process: Mapper=None,
-                 init="glorot_uniform"):
-        self.init = init
-        self.bias = bias
-        self.n_encodings = n_encodings
-        self.key_mapper = key_mapper
-        self.post_process = post_process
-
-    def apply(self, is_train, x, mask=None):
-        if self.key_mapper is not None:
-            with tf.variable_scope("map_keys"):
-                keys = self.key_mapper.apply(is_train, x, mask)
-        else:
-            keys = x
-
-        weights = tf.get_variable("weights", (keys.shape.as_list()[-1], self.n_encodings), dtype=tf.float32,
-                                  initializer=get_keras_initialization(self.init))
-        dist = tf.tensordot(keys, weights, axes=[[2], [0]])  # (batch, x_words, n_encoding)
-        if self.bias:
-            dist += tf.get_variable("bias", (1, 1, self.n_encodings),
-                                    dtype=tf.float32, initializer=tf.zeros_initializer())
-        if mask is not None:
-            bool_mask = tf.expand_dims(tf.cast(tf.sequence_mask(mask, tf.shape(x)[1]), tf.float32), 2)
-            dist = bool_mask * bool_mask + (1 - bool_mask) * VERY_NEGATIVE_NUMBER
-
-        dist = tf.nn.softmax(dist, dim=1)
-
-        out = tf.einsum("ajk,ajn->ank", x, dist)  # (batch, n_encoding, feature)
-
-        if self.post_process is not None:
-            with tf.variable_scope("post_process"):
-                out = self.post_process.apply(is_train, out)
-        return out
-
-
 class MultiSelfAttention(SequenceMapper):
     def __init__(self, n_heads: int, project_size: Optional[int], memory_size: Optional[int]=None,
                  shared_project: bool=False, project_bias: bool=False, bilinear_comp: bool=False,
@@ -324,3 +258,69 @@ class MultiSelfAttention(SequenceMapper):
             with tf.variable_scope("merge"):
                  response = self.merge.apply(is_train, x, response)
         return response
+
+
+class AttentionEncoder(SequenceEncoder):
+    def __init__(self, key_mapper: SequenceMapper=None,
+                 post_process: Mapper=None,
+                 init="glorot_uniform"):
+        self.init = init
+        self.key_mapper = key_mapper
+        self.post_process = post_process
+
+    def apply(self, is_train, x, mask=None):
+        if self.key_mapper is not None:
+            with tf.variable_scope("map_keys"):
+                keys = self.key_mapper.apply(is_train, x, mask)
+        else:
+            keys = x
+
+        weights = tf.get_variable("weights", keys.shape.as_list()[-1], dtype=tf.float32,
+                                  initializer=get_keras_initialization(self.init))
+        dist = tf.tensordot(keys, weights, axes=[[2], [0]])  # (batch, x_words)
+        dist = exp_mask(dist, mask)
+        dist = tf.nn.softmax(dist)
+
+        out = tf.einsum("ajk,aj->ak", x, dist)  # (batch, x_dim)
+
+        if self.post_process is not None:
+            with tf.variable_scope("post_process"):
+                out = self.post_process.apply(is_train, out)
+        return out
+
+
+class MultiAttentionEncoder(SequenceMultiEncoder):
+    def __init__(self, n_encodings: int, bias: bool=False, key_mapper: SequenceMapper=None,
+                 post_process: Mapper=None,
+                 init="glorot_uniform"):
+        self.init = init
+        self.bias = bias
+        self.n_encodings = n_encodings
+        self.key_mapper = key_mapper
+        self.post_process = post_process
+
+    def apply(self, is_train, x, mask=None):
+        if self.key_mapper is not None:
+            with tf.variable_scope("map_keys"):
+                keys = self.key_mapper.apply(is_train, x, mask)
+        else:
+            keys = x
+
+        weights = tf.get_variable("weights", (keys.shape.as_list()[-1], self.n_encodings), dtype=tf.float32,
+                                  initializer=get_keras_initialization(self.init))
+        dist = tf.tensordot(keys, weights, axes=[[2], [0]])  # (batch, x_words, n_encoding)
+        if self.bias:
+            dist += tf.get_variable("bias", (1, 1, self.n_encodings),
+                                    dtype=tf.float32, initializer=tf.zeros_initializer())
+        if mask is not None:
+            bool_mask = tf.expand_dims(tf.cast(tf.sequence_mask(mask, tf.shape(x)[1]), tf.float32), 2)
+            dist = bool_mask * bool_mask + (1 - bool_mask) * VERY_NEGATIVE_NUMBER
+
+        dist = tf.nn.softmax(dist, dim=1)
+
+        out = tf.einsum("ajk,ajn->ank", x, dist)  # (batch, n_encoding, feature)
+
+        if self.post_process is not None:
+            with tf.variable_scope("post_process"):
+                out = self.post_process.apply(is_train, out)
+        return out

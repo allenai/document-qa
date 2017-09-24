@@ -1,6 +1,7 @@
 import argparse
 import tensorflow as tf
 from model_dir import ModelDir
+import numpy as np
 
 
 def main():
@@ -14,8 +15,15 @@ def main():
 
     reader = tf.train.NewCheckpointReader(checkpoint)
     param_map = reader.get_variable_to_shape_map()
-    for k, v in param_map.items():
+    total = 0
+    for k in sorted(param_map):
+        v = param_map[k]
         print('%s: %s' % (k, str(v)))
+        total += np.prod(v)
+
+    print("%d total" % total)
+
+
 
 if __name__ == "__main__":
     main()
