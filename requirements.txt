@@ -1,0 +1,7 @@
+tensorflow==1.3.0
+nltk
+tqdm
+ujson
+pandas
+scikit-learn
+scipy
