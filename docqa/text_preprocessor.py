@@ -9,7 +9,7 @@ from docqa.data_processing.document_splitter import ExtractedParagraphWithAnswer
 from docqa.data_processing.multi_paragraph_qa import ParagraphWithAnswers
 from docqa.configurable import Configurable
 from docqa.squad.squad_data import SquadCorpus
-from docqa.trivia_qa.build_span_corpus import TriviaQaWebDataset
+from docqa.triviaqa.build_span_corpus import TriviaQaWebDataset
 
 
 class TextPreprocessor(Configurable):

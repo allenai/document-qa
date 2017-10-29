@@ -10,7 +10,7 @@ To install the dependencies (beside tensorflow) use
 
 `pip install -r requirements.txt`
 
-The stopword corpus and punkt sentence tokenizer for nltk will are needed and can be fetched with:
+The stopword corpus and punkt sentence tokenizer for nltk are needed and can be fetched with:
  
  `python -m nltk.downloader punkt stopwords`
  
@@ -25,11 +25,31 @@ The expected file locations can be changed by altering config.py.
  
 
 #### Word Vectors
-The models we train use the common crawl 840 billion token GloVe word vectors. 
-They are expected to exist in "~/data/glove/glove.840B.300d.txt" or "~/data/glove/glove.840B.300d.txt.gz"
+The models we train use the common crawl 840 billion token GloVe word vectors from [here](https://nlp.stanford.edu/projects/glove/)
+They are expected to exist in "~/data/glove/glove.840B.300d.txt" or "~/data/glove/glove.840B.300d.txt.gz".
+
+For example:
+
+```
+mkdir -p ~/data
+mkdir -p ~/data/glove
+cd ~/data/glove
+wget http://nlp.stanford.edu/data/glove.840B.300d.zip
+unzip glove.840B.300d.zip
+rm glove.840B.300d.zip
+```
 
 #### SQuAD Data
-Training or testing on SQuAD requires downloading the SQuAD train/dev files into ~/data/squad,
+Training or testing on SQuAD requires downloading the SQuAD train/dev files into ~/data/squad.
+For instance:
+
+```
+mkdir -p ~/data/squad
+cd ~/data/squad
+wget https://rajpurkar.github.io/SQuAD-explorer/dataset/train-v1.1.json
+wget https://rajpurkar.github.io/SQuAD-explorer/dataset/dev-v1.1.json
+```
+
 then running:
 
 ``python docqa/squad/build_squad_dataset.py``
@@ -40,6 +60,17 @@ This builds pkl files of the tokenized data in "./data/squad"
 The raw TriviaQA data is expected to be unzipped in "~/data/triviaqa". Training
 or testing in the unfiltered setting requires the unfiltered data to be 
 download to "~/data/triviaqa-unfiltered".
+
+```
+mkdir -p ~/data/triviaqa
+cd ~/data/triviaqa
+wget http://nlp.cs.washington.edu/triviaqa/data/triviaqa-rc.tar.gz
+tar xf triviaqa-rc.tar.gz
+
+cd ~/data
+wget http://nlp.cs.washington.edu/triviaqa/data/triviaqa-unfiltered.tar.gz
+tar xf triviaqa-unfiltered.tar.gz
+```
 
 To use TriviaQA we need to tokenize the evidence documents, which can be done by
 

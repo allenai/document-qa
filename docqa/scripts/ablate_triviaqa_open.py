@@ -13,8 +13,8 @@ from docqa.evaluator import LossEvaluator, MultiParagraphSpanEvaluator
 from docqa.scripts.ablate_triviaqa import get_model
 from docqa.text_preprocessor import WithIndicators
 from docqa.trainer import SerializableOptimizer, TrainParams
-from docqa.trivia_qa.build_span_corpus import TriviaQaWebDataset
-from docqa.trivia_qa.training_data import ExtractMultiParagraphsPerQuestion
+from docqa.triviaqa.build_span_corpus import TriviaQaWebDataset
+from docqa.triviaqa.training_data import ExtractMultiParagraphsPerQuestion
 
 
 def main():

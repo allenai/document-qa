@@ -3,7 +3,7 @@ import unicodedata
 from os.path import join
 from typing import List
 
-from docqa.trivia_qa.trivia_qa_eval import normalize_answer as triviaqa_normalize_answer
+from docqa.triviaqa.trivia_qa_eval import normalize_answer as triviaqa_normalize_answer
 
 """
 Read and represent trivia-qa data 

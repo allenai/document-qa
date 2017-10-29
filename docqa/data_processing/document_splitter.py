@@ -7,7 +7,7 @@ from docqa.utils import flatten_iterable
 
 from docqa.data_processing.text_utils import NltkPlusStopWords, ParagraphWithInverse
 from docqa.configurable import Configurable
-from docqa.trivia_qa.evidence_corpus import TriviaQaEvidenceCorpusTxt
+from docqa.triviaqa.evidence_corpus import TriviaQaEvidenceCorpusTxt
 
 """
 Splits a document into paragraphs

@@ -18,11 +18,11 @@ from docqa.data_processing.text_utils import NltkPlusStopWords
 from docqa.dataset import FixedOrderBatcher
 from docqa.evaluator import Evaluator, Evaluation
 from docqa.model_dir import ModelDir
-from docqa.trivia_qa.build_span_corpus import TriviaQaWebDataset, TriviaQaOpenDataset
-from docqa.trivia_qa.read_data import normalize_wiki_filename
-from docqa.trivia_qa.training_data import DocumentParagraphQuestion, ExtractMultiParagraphs, ExtractMultiParagraphsPerQuestion
-from docqa.trivia_qa.trivia_qa_eval import exact_match_score as trivia_em_score
-from docqa.trivia_qa.trivia_qa_eval import f1_score as trivia_f1_score
+from docqa.triviaqa.build_span_corpus import TriviaQaWebDataset, TriviaQaOpenDataset
+from docqa.triviaqa.read_data import normalize_wiki_filename
+from docqa.triviaqa.training_data import DocumentParagraphQuestion, ExtractMultiParagraphs, ExtractMultiParagraphsPerQuestion
+from docqa.triviaqa.trivia_qa_eval import exact_match_score as trivia_em_score
+from docqa.triviaqa.trivia_qa_eval import f1_score as trivia_f1_score
 from docqa.utils import ResourceLoader
 
 

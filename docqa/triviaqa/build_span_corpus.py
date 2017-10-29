@@ -10,9 +10,9 @@ from typing import List, Optional, Dict
 from docqa.config import CORPUS_DIR, TRIVIA_QA, TRIVIA_QA_UNFILTERED
 from docqa.configurable import Configurable
 from docqa.data_processing.text_utils import NltkAndPunctTokenizer
-from docqa.trivia_qa.answer_detection import compute_answer_spans_par, FastNormalizedAnswerDetector
-from docqa.trivia_qa.evidence_corpus import TriviaQaEvidenceCorpusTxt
-from docqa.trivia_qa.read_data import iter_trivia_question, TriviaQaQuestion
+from docqa.triviaqa.answer_detection import compute_answer_spans_par, FastNormalizedAnswerDetector
+from docqa.triviaqa.evidence_corpus import TriviaQaEvidenceCorpusTxt
+from docqa.triviaqa.read_data import iter_trivia_question, TriviaQaQuestion
 from docqa.utils import ResourceLoader
 
 """

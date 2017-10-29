@@ -2,8 +2,8 @@ import argparse
 
 from os.path import exists
 
-from docqa.trivia_qa.build_span_corpus import TriviaQaOpenDataset
-from docqa.trivia_qa.evidence_corpus import get_evidence_voc
+from docqa.triviaqa.build_span_corpus import TriviaQaOpenDataset
+from docqa.triviaqa.evidence_corpus import get_evidence_voc
 
 """
 Build vocab of all words in the triviaqa dataset, including

@@ -26,8 +26,8 @@ from docqa.data_processing.qa_training_data import ParagraphAndQuestionsBuilder,
 from docqa.data_processing.text_utils import NltkPlusStopWords
 from docqa import model_dir
 from docqa.nn.embedder import FixedWordEmbedder, CharWordEmbedder, LearnedCharEmbedder
-from docqa.trivia_qa.build_span_corpus import TriviaQaWebDataset
-from docqa.trivia_qa.training_data import ExtractSingleParagraph, ExtractMultiParagraphs
+from docqa.triviaqa.build_span_corpus import TriviaQaWebDataset
+from docqa.triviaqa.training_data import ExtractSingleParagraph, ExtractMultiParagraphs
 
 
 def get_triviaqa_train_params(n_epochs, n_dev, n_train):

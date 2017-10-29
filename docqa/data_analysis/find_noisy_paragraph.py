@@ -1,6 +1,6 @@
 from docqa.data_processing.document_splitter import TopTfIdf, MergeParagraphs
 from docqa.data_processing.text_utils import NltkPlusStopWords
-from docqa.trivia_qa.build_span_corpus import TriviaQaWebDataset
+from docqa.triviaqa.build_span_corpus import TriviaQaWebDataset
 from docqa.utils import flatten_iterable
 
 

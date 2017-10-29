@@ -10,7 +10,7 @@ from docqa.data_processing.preprocessed_corpus import Preprocessor, FilteredData
 from docqa.data_processing.qa_training_data import ParagraphAndQuestion, Answer
 from docqa.data_processing.span_data import TokenSpans
 from docqa.text_preprocessor import TextPreprocessor
-from docqa.trivia_qa.read_data import TriviaQaQuestion
+from docqa.triviaqa.read_data import TriviaQaQuestion
 from docqa.utils import flatten_iterable
 
 """

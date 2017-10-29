@@ -3,8 +3,8 @@ import numpy as np
 from docqa.data_processing.document_splitter import MergeParagraphs, TopTfIdf
 from docqa.data_processing.preprocessed_corpus import preprocess_par
 from docqa.data_processing.text_utils import NltkPlusStopWords
-from docqa.trivia_qa.build_span_corpus import TriviaQaOpenDataset
-from docqa.trivia_qa.training_data import ExtractMultiParagraphsPerQuestion
+from docqa.triviaqa.build_span_corpus import TriviaQaOpenDataset
+from docqa.triviaqa.training_data import ExtractMultiParagraphsPerQuestion
 
 
 def main():

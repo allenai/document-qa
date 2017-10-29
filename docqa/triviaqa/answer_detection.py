@@ -5,8 +5,8 @@ import numpy as np
 from tqdm import tqdm
 from typing import List
 
-from docqa.trivia_qa.read_data import TriviaQaQuestion
-from docqa.trivia_qa.trivia_qa_eval import normalize_answer, f1_score
+from docqa.triviaqa.read_data import TriviaQaQuestion
+from docqa.triviaqa.trivia_qa_eval import normalize_answer, f1_score
 from docqa.utils import flatten_iterable, split
 
 """

@@ -6,7 +6,7 @@ from tqdm import tqdm
 
 from docqa.data_processing.document_splitter import MergeParagraphs, TopTfIdf, ShallowOpenWebRanker
 from docqa.data_processing.text_utils import NltkPlusStopWords
-from docqa.trivia_qa.build_span_corpus import TriviaQaWebDataset, TriviaQaOpenDataset
+from docqa.triviaqa.build_span_corpus import TriviaQaWebDataset, TriviaQaOpenDataset
 from docqa.utils import flatten_iterable
 
 

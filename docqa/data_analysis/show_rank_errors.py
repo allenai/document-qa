@@ -8,7 +8,7 @@ from docqa.data_processing.document_splitter import ExtractedParagraphWithAnswer
 from docqa.data_processing.text_utils import NltkPlusStopWords
 from docqa.squad.squad_data import SquadCorpus
 from docqa.text_preprocessor import WithIndicators
-from docqa.trivia_qa.build_span_corpus import TriviaQaOpenDataset, TriviaQaWebDataset
+from docqa.triviaqa.build_span_corpus import TriviaQaOpenDataset, TriviaQaWebDataset
 from docqa.utils import flatten_iterable
 import numpy as np
 

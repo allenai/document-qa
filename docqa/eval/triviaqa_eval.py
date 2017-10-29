@@ -8,8 +8,8 @@ from docqa.data_processing.qa_training_data import ContextLenKey, ParagraphAndQu
 from docqa.data_processing.text_utils import NltkPlusStopWords
 from docqa.dataset import FixedOrderBatcher
 from docqa.evaluator import Evaluator, Evaluation, SpanEvaluator
-from docqa.trivia_qa.build_span_corpus import TriviaQaWebDataset
-from docqa.trivia_qa.training_data import ExtractSingleParagraph
+from docqa.triviaqa.build_span_corpus import TriviaQaWebDataset
+from docqa.triviaqa.training_data import ExtractSingleParagraph
 from docqa.utils import ResourceLoader, transpose_lists, print_table
 
 from docqa import trainer

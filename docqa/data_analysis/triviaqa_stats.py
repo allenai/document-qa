@@ -6,8 +6,8 @@ from tqdm import tqdm
 from docqa.data_processing.document_splitter import MergeParagraphs, ContainsQuestionWord, DocumentSplitter, \
     ExtractedParagraphWithAnswers
 from docqa.data_processing.text_utils import NltkPlusStopWords
-from docqa.trivia_qa.build_span_corpus import TriviaQaWebDataset
-from docqa.trivia_qa.read_data import TriviaQaQuestion
+from docqa.triviaqa.build_span_corpus import TriviaQaWebDataset
+from docqa.triviaqa.read_data import TriviaQaQuestion
 from docqa.utils import flatten_iterable
 
 
