@@ -658,11 +658,6 @@ def test(model: Model, evaluators, datasets: Dict[str, Dataset], loader, checkpo
 
     print("Restoring variables")
 
-    # print("HACKING")
-    # model.lm_model.embed_weights_file = None
-    # vars = tf.global_variables() + tf.get_collection(tf.GraphKeys.SAVEABLE_OBJECTS)
-    # dont_restore = {"bilm/char_embed"}
-    # vars = [x for x in vars if x.name not in  dont_restore]
     saver = tf.train.Saver()
     saver.restore(sess, checkpoint)
 
@@ -673,9 +668,6 @@ def test(model: Model, evaluators, datasets: Dict[str, Dataset], loader, checkpo
         ema = tf.train.ExponentialMovingAverage(0)
         saver = tf.train.Saver({ema.average_name(x): x for x in tf.trainable_variables()})
         saver.restore(sess, checkpoint)
-
-    # print("MORE HACKING")
-    # sess.run(tf.variables_initializer([x for x in vars if x.name in dont_restore]))
 
     tf.get_default_graph().finalize()
 
