@@ -40,6 +40,8 @@ class CachingResourceLoader(ResourceLoader):
 
 
 def print_table(table: List[List[str]]):
+    """ Print the lists with evenly spaced columns """
+
     # print while padding each column to the max column length
     col_lens = [0] * len(table[0])
     for row in table:

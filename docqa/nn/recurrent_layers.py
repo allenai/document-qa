@@ -406,7 +406,6 @@ class GRUCell(RNNCell):
                 recurrent_shape[0] = state.shape.as_list()[-1]
                 return tf.concat([self.kernal_init(kernal_shape, dtype), self.recurrent_init(recurrent_shape, dtype)], axis=0)
 
-
             value = tf.sigmoid(_linear(tf.concat([inputs, state], axis=1), self.num_units*2,
                                        True, self.bias_init, _init_stacked_weights))
             r, u = tf.split(value=value, num_or_size_splits=2, axis=1)

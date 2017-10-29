@@ -6,11 +6,6 @@ import pandas as pd
 from docqa.utils import print_table
 
 
-"""
-Compute our scores as more paragraphs are used from a 
-"""
-
-
 def compute_model_scores(df, max_over, target_score, group_cols):
     scores = []
     for _, group in df.groupby(group_cols):

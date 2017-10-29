@@ -46,7 +46,6 @@ def get_squad_train_params(n_epochs):
 
 
 def get_model(char_th: int, dim: int, mode: str, preprocess: Optional[TextPreprocessor]):
-    # specify the stddev to avoid https://github.com/tensorflow/tensorflow/issues/12973
     recurrent_layer = CudnnGru(dim, w_init=TruncatedNormal(stddev=0.05))
 
     if mode.startswith("shared-norm"):

@@ -8,7 +8,7 @@ from docqa.nn.ops import VERY_NEGATIVE_NUMBER, exp_mask
 
 
 """
-Module for non-recurrent attention layeres
+Module for non-recurrent attention layers
 """
 
 

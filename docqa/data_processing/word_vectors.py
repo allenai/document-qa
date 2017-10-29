@@ -20,8 +20,8 @@ def load_word_vectors(vec_name: str, vocab: Optional[Iterable[str]]=None, is_pat
         vec_path = vec_path + ".txt"
     elif exists(vec_path + ".txt.gz"):
         vec_path = vec_path + ".txt.gz"
-    elif exists(vec_path + ".npy"):
-        vec_path = vec_path + ".npy"
+    elif exists(vec_path + ".pkl"):
+        vec_path = vec_path + ".pkl"
     else:
         raise ValueError("No file found for vectors %s" % vec_name)
     return load_word_vector_file(vec_path, vocab)
@@ -32,7 +32,7 @@ def load_word_vector_file(vec_path: str, vocab: Optional[Iterable[str]] = None):
         vocab = set(x.lower() for x in vocab)
 
     # notes some of the large vec files produce utf-8 errors for some words, just skip them
-    if vec_path.endswith(".npy"):
+    if vec_path.endswith(".pkl"):
         with open(vec_path, "rb") as f:
             return pickle.load(f)
     elif vec_path.endswith(".txt.gz"):

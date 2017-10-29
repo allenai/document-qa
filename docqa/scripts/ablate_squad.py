@@ -26,9 +26,9 @@ def train_params(n_epochs):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='')
+    parser = argparse.ArgumentParser(description='Train a confidence model on document-level SQuAD')
     parser.add_argument('mode', choices=["paragraph", "confidence", "shared-norm", "merge", "sigmoid"])
-    parser.add_argument("name")
+    parser.add_argument("name", help="Output directory")
     args = parser.parse_args()
     mode = args.mode
     out = args.name + "-" + datetime.now().strftime("%m%d-%H%M%S")
@@ -68,9 +68,8 @@ def main():
             data = PreprocessedData(
                 SquadCorpus(),
                 SquadTfIdfRanker(NltkPlusStopWords(True), 4, True, model.preprocessor),
-                StratifyParagraphsBuilder(train_batching, 0, 1),
+                StratifyParagraphsBuilder(train_batching, 1),
                 eval_dataset,
-                sample_dev=15, sample=50,
                 eval_on_verified=False,
             )
         else:

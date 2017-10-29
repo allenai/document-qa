@@ -1,9 +1,11 @@
 import argparse
 import json
 import urllib
-from os import listdir
+from os import listdir, mkdir
 from os.path import expanduser, join, exists
 from typing import List
+
+from tqdm import tqdm
 
 from docqa import config
 from docqa.squad.squad_data import Question, Document, Paragraph, SquadCorpus
@@ -21,16 +23,11 @@ def clean_title(title):
     return urllib.parse.unquote(title).replace("_", " ")
 
 
-def parse_squad_data(source, name, tokenizer, pbar=True) -> List[Document]:
+def parse_squad_data(source, name, tokenizer) -> List[Document]:
     with open(source, 'r') as f:
         source_data = json.load(f)
 
-    it = source_data['data']
-    if pbar:
-        # Optional in case the client wants to run w/o installing tqdm (i.e. for codalab scripts)
-        from tqdm import tqdm
-        it = tqdm(it)
-    for article_ix, article in enumerate(it):
+    for article_ix, article in enumerate(tqdm(source_data['data'])):
         article_ix = "%s-%d" % (name, article_ix)
 
         paragraphs = []
@@ -39,8 +36,8 @@ def parse_squad_data(source, name, tokenizer, pbar=True) -> List[Document]:
             questions = []
             context = para['context']
 
-            # list of sentences, each of which is a list of words
             tokenized = tokenizer.tokenize_with_inverse(context)
+            # list of sentences + mapping from words -> original text index
             text, text_spans = tokenized.text, tokenized.spans
             flat_text = flatten_iterable(text)
 
@@ -49,7 +46,7 @@ def parse_squad_data(source, name, tokenizer, pbar=True) -> List[Document]:
             for question_ix, question in enumerate(para['qas']):
                 # There are actually some multi-sentence questions, so we should have used
                 # tokenizer.tokenize_paragraph_flat here which would have produced slighy better
-                # results in a few cases. However all the results we report are
+                # results in a few cases. However all the results we report were
                 # done using `tokenize_sentence` so I am just going to leave this way
                 question_text = tokenizer.tokenize_sentence(question['question'])
 
@@ -122,22 +119,26 @@ def parse_squad_data(source, name, tokenizer, pbar=True) -> List[Document]:
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-s', "--source_dir", default=join(expanduser("~"), "data", "squad"))
+    parser = argparse.ArgumentParser("Preprocess SQuAD data")
+    basedir = join(expanduser("~"), "data", "squad")
+    parser.add_argument("--train_file", default=join(basedir, "train-v1.1.json"))
+    parser.add_argument("--dev_file", default=join(basedir, "dev-v1.1.json"))
 
-    args = parser.parse_args()
-    source_dir = args.source_dir
+    if not exists(config.CORPUS_DIR):
+        mkdir(config.CORPUS_DIR)
+
     target_dir = join(config.CORPUS_DIR, SquadCorpus.NAME)
-    tokenzier = NltkAndPunctTokenizer()
-
     if exists(target_dir) and len(listdir(target_dir)) > 0:
         raise ValueError("Files already exist in " + target_dir)
 
+    args = parser.parse_args()
+    tokenzier = NltkAndPunctTokenizer()
+
     print("Parsing train...")
-    train = list(parse_squad_data(join(source_dir, "train-v1.1.json"), "train", tokenzier))
+    train = list(parse_squad_data(args.train_file, "train", tokenzier))
 
     print("Parsing dev...")
-    dev = list(parse_squad_data(join(source_dir, "dev-v1.1.json"), "dev", tokenzier))
+    dev = list(parse_squad_data(args.dev_file, "dev", tokenzier))
 
     print("Saving...")
     SquadCorpus.make_corpus(train, dev)

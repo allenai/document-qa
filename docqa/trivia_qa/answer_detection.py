@@ -10,7 +10,7 @@ from docqa.trivia_qa.trivia_qa_eval import normalize_answer, f1_score
 from docqa.utils import flatten_iterable, split
 
 """
-Tools for turning the aliases and answer strings from TriviaQa into labelled spans
+Tools for turning the aliases and answer strings from TriviaQA into labelled spans
 """
 
 
@@ -257,7 +257,8 @@ def _compute_answer_spans_chunk(questions, corpus, tokenizer, detector):
     return questions
 
 
-def compute_answer_spans_par(questions, corpus, tokenizer, detector, n_processes):
+def compute_answer_spans_par(questions: List[TriviaQaQuestion], corpus,
+                             tokenizer, detector, n_processes: int):
     if n_processes == 1:
         word_tokenize = tokenizer.tokenize_paragraph_flat
         compute_answer_spans(questions, corpus, word_tokenize, detector)
@@ -265,7 +266,8 @@ def compute_answer_spans_par(questions, corpus, tokenizer, detector, n_processes
     from multiprocessing import Pool
     with Pool(n_processes) as p:
         chunks = split(questions, n_processes)
-        questions = flatten_iterable(p.starmap(_compute_answer_spans_chunk, [[c, corpus, tokenizer, detector] for c in chunks]))
+        questions = flatten_iterable(p.starmap(_compute_answer_spans_chunk,
+                                               [[c, corpus, tokenizer, detector] for c in chunks]))
         return questions
 
 

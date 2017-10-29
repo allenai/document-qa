@@ -13,9 +13,9 @@ from docqa.nn.layers import SequenceMapper, SequenceBiMapper, AttentionMapper, S
     SequenceMapperWithContext, MapMulti, SequencePredictionLayer, AttentionPredictionLayer
 
 
-class DocumentQuestionModel(Model):
+class ParagraphQuestionModel(Model):
     """
-    Base class for models that take document/questions as input, handles embedding the
+    Base class for models that take paragraph/questions as input, handles embedding the
     text in a modular way.
 
     Its a bit of a hack, but at the moment we leave it up to the client to be aware of and use the `preprocessor`
@@ -133,7 +133,7 @@ class DocumentQuestionModel(Model):
         super().__setstate__(state)
 
 
-class ContextOnly(DocumentQuestionModel):
+class ContextOnly(ParagraphQuestionModel):
 
     def __init__(self, encoder: DocumentAndQuestionEncoder,
                  word_embed: Optional[WordEmbedder],
@@ -155,7 +155,7 @@ class ContextOnly(DocumentQuestionModel):
             return self.prediction.apply(is_train, context_embed, answer, context_mask)
 
 
-class Attention(DocumentQuestionModel):
+class Attention(ParagraphQuestionModel):
     """ Model that encodes the question and context, then applies an attention mechanism
     between the two to produce a query-aware context representation, which is used to make a prediction. """
     def __init__(self, encoder: DocumentAndQuestionEncoder,
@@ -214,7 +214,7 @@ class Attention(DocumentQuestionModel):
                 return self.predictor.apply(is_train, context_rep, answer, context_mask)
 
 
-class AttentionAndEncode(DocumentQuestionModel):
+class AttentionAndEncode(ParagraphQuestionModel):
 
     def __init__(self, encoder: DocumentAndQuestionEncoder,
                  word_embed: Optional[WordEmbedder],

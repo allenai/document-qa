@@ -12,14 +12,14 @@ from docqa.nn.span_prediction_ops import to_packed_coordinates_np
 
 """
 Classes to map python objects we want to classify into numpy arrays we can feed into Tensorflow,
-e.i. to map (quesiton-context-answer) -> {tf.placeholder -> numpy arrays}
+e.i. to map (quesiton-context-answer) -> {tf.placeholder / numpy arrays}
 """
 
 
 class AnswerEncoder(Configurable):
     """ Encode just the answer span """
 
-    def init(self, batch_size, context_word_dim):
+    def init(self, batch_size, context_word_dim) -> None:
         raise NotImplementedError()
 
     def encode(self, batch_size, context_len, context_word_dim, batch) -> Dict:
@@ -186,7 +186,8 @@ class PackedMultiSpanAnswerEncoder(AnswerEncoder):
 
 class DocumentAndQuestionEncoder(Configurable):
     """
-    Uses a WordEmbedder/CharEmbedder (passed in by the client in `init`) to encode text into padded batches of arrays
+    Uses a WordEmbedder/CharEmbedder (passed in by the client in `init`) to encode text into padded batches of arrays.
+    It should really be called "ParagraphAndQuestionEncoder", but we are stuck with this for now
     """
 
     def __init__(self,

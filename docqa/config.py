@@ -16,5 +16,4 @@ TRIVIA_QA_UNFILTERED = join(expanduser("~"), "data", "triviaqa-unfiltered")
 DOCUMENT_READER_DB = join(expanduser("~"), "data", "doc-rd", "docs.db")
 
 
-_BASE = dirname(dirname(__file__))
-CORPUS_DIR = join(_BASE, "data")
+CORPUS_DIR = join(dirname(dirname(__file__)), "data")
