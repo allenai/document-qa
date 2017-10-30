@@ -1,7 +1,10 @@
 ## Document QA
 This repo contains code to train neural question answering models in tensorflow, 
 and in particular for the cases when we want to run the model over multiple paragraphs for 
-each questions. Code is included to train on the TriviaQA and SQuAD datasets.
+each questions. Code is included to train on the [TriviaQA](nlp.cs.washington.edu/triviaqa/) 
+and [SQuAD](https://rajpurkar.github.io/SQuAD-explorer/) datasets.
+
+A demo of this work can be found at [documentqa.allenai.org](documentqa.allenai.org)
 
 Small forewarning, this is still much more of a research codebase then a library.
 We anticipate porting this work in [AllenNLP](github.com/allenai/allennlp) where it will 
