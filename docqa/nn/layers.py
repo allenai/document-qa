@@ -30,9 +30,9 @@ def get_keras_activation(name: str):
 
 
 """
-Basic layers, for our purposes layers act like ordinary tensorflow functions 
-(that are allowed to create variables, add to collections, ect.). They exists as objects so that parameters 
-to each layer can be saved/serialized. Layers should be immutable and behave like pure functions
+Basic layers, for our purposes layers act as serializable tensorflow functions, 
+they are allowed to create variables, add to collections, ect.  
+Layers should be immutable and behave like pure functions
 that modify the tensorflow graph. Layers should also implement Configurable and be serialized  by pickle.
 
 The top levels Layers define different tensor->tensor transforms, they exist so models can use
@@ -44,30 +44,9 @@ are always assumed to be in the integer/sequence length format.
 """
 
 
-class MergeLayer(Configurable):
-    """
-    (dim1, dim2, ...., dimN, input_dim1),  (dim1, dim2, ...., dimN, input_dim2) ->
-        (dim1, dim2, ...., dimN, output_dim)
-    """
-    def apply(self, is_train, tensor1: tf.Tensor, tensor2: tf.Tensor) -> tf.Tensor:
-        raise NotImplemented()
-
-
-class FixedMergeLayer(Configurable):
-    """ (batch, time, in_dim) (batch, in_dim) -> (batch, time, out_dim) """
-    def apply(self, is_train, tensor, fixed_tensor, mask) -> tf.Tensor:
-        raise NotImplemented()
-
-
 class SequenceMapper(Configurable):
     """ (batch, time, in_dim) -> (batch, time, out_dim) """
     def apply(self, is_train, x, mask=None):
-        raise NotImplementedError()
-
-
-class SequenceMapperWithContext(Configurable):
-    """ (batch, time, in_dim) (batch, in_dim) -> (batch, time, out_dim) """
-    def apply(self, is_train, x, c, mask=None):
         raise NotImplementedError()
 
 
@@ -80,6 +59,27 @@ class Mapper(SequenceMapper):
 class Updater(Mapper):
     """ (dim1, dim2, ...., input_dim) -> (im1, dim2, ...., input_dim) """
     def apply(self, is_train, x, mask=None):
+        raise NotImplementedError()
+
+
+class MergeLayer(Configurable):
+    """
+    (dim1, dim2, ...., dimN, input_dim1),  (dim1, dim2, ...., dimN, input_dim2) ->
+        (dim1, dim2, ...., dimN, output_dim)
+    """
+    def apply(self, is_train, tensor1, tensor2):
+        raise NotImplemented()
+
+
+class FixedMergeLayer(Configurable):
+    """ (batch, time, in_dim) (batch, in_dim) -> (batch, time, out_dim) """
+    def apply(self, is_train, tensor, fixed_tensor, mask) -> tf.Tensor:
+        raise NotImplemented()
+
+
+class SequenceMapperWithContext(Configurable):
+    """ (batch, time, in_dim) (batch, in_dim) -> (batch, time, out_dim) """
+    def apply(self, is_train, x, c, mask=None):
         raise NotImplementedError()
 
 
@@ -426,6 +426,7 @@ class FirstDimWeightedSum(Mapper):
                             initializer=tf.zeros_initializer())
         return tf.tensordot(x, w, [[1], [0]]) + b
 
+
 class FirstDimAverage(Mapper):
     def apply(self, is_train, x, mask=None):
         return tf.reduce_mean(x, axis=1)
@@ -597,21 +598,6 @@ class FixedDropoutLayer(SequenceMapper):
             else:
                 noise_shape.append(shape[i])
         return dropout(x, self.keep_probs, is_train, noise_shape)
-
-
-class ReweightingMapper(SequenceMapper):
-    def __init__(self, map: SequenceMapper, bias_init: float=1.0):
-        self.map = map
-        self.bias_init = bias_init
-
-    def apply(self, is_train, inputs, mask=None):
-        x = self.map.apply(is_train, inputs)
-        out_dim = x.shape.as_list()[-1]
-        w = tf.get_variable("weights", shape=out_dim, dtype=tf.float32)
-        b = tf.get_variable("bias", dtype=tf.float32, initializer=tf.constant(self.bias_init))
-        weights = tf.sigmoid(b + tf.tensordot(x, w, axes=[[2], [0]]))  # (batch, time)
-
-        return inputs * tf.expand_dims(weights, 2)  # Gets broadcast accross input's last dimension
 
 
 class Conv1d(Mapper):
@@ -795,21 +781,6 @@ class ReduceLayer(Encoder):
             if "mask" not in state["state"]:
                 state["state"]["mask"] = False
         return super().__setstate__(state)
-
-
-class SelfProduct(SequenceMapper):
-    def __init__(self, project_size, scale: bool):
-        self.project_size = project_size
-        self.scale = scale
-
-    def apply(self, is_train, x, mask=None):
-        dim = x.shape.as_list()[-1]
-        project1 = tf.get_variable("project1", (dim, self.project_size))
-        project2 = tf.get_variable("project2", (dim, self.project_size))
-        out = tf.tensordot(x, project1, [[2], [0]]) * tf.tensordot(x, project2, [[2], [0]])
-        if self.scale:
-            out /= np.sqrt(self.project_size)
-        return out
 
 
 class WithProduct(FixedMergeLayer):

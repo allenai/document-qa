@@ -19,15 +19,20 @@ Script to build a corpus from SQUAD training data
 
 
 def clean_title(title):
-    """ Squad titles use URL escape formatting, this method undos it to get the wiki-title"""
+    """ Squad titles use URL escape formatting, this method undoes it to get the wiki-title"""
     return urllib.parse.unquote(title).replace("_", " ")
 
 
-def parse_squad_data(source, name, tokenizer) -> List[Document]:
+def parse_squad_data(source, name, tokenizer, use_tqdm=True) -> List[Document]:
     with open(source, 'r') as f:
         source_data = json.load(f)
 
-    for article_ix, article in enumerate(tqdm(source_data['data'])):
+    if use_tqdm:
+        iter_files = tqdm(source_data['data'], ncols=80)
+    else:
+        iter_files = source_data['data']
+
+    for article_ix, article in enumerate(iter_files):
         article_ix = "%s-%d" % (name, article_ix)
 
         paragraphs = []

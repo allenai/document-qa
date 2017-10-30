@@ -1,16 +1,16 @@
 from typing import List, Optional, Dict, Union
 
 import tensorflow as tf
-from docqa.encoder import DocumentAndQuestionEncoder
 from tensorflow import Tensor
-from docqa.text_preprocessor import TextPreprocessor
-from docqa.utils import ResourceLoader
 
 from docqa.data_processing.qa_training_data import ParagraphAndQuestionDataset
+from docqa.encoder import DocumentAndQuestionEncoder
 from docqa.model import Model, Prediction
 from docqa.nn.embedder import WordEmbedder, CharWordEmbedder
 from docqa.nn.layers import SequenceMapper, SequenceBiMapper, AttentionMapper, SequenceEncoder, \
     SequenceMapperWithContext, MapMulti, SequencePredictionLayer, AttentionPredictionLayer
+from docqa.text_preprocessor import TextPreprocessor
+from docqa.utils import ResourceLoader
 
 
 class ParagraphQuestionModel(Model):

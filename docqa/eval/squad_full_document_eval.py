@@ -1,8 +1,8 @@
 import argparse
-import pickle
 from typing import List, Optional
 
 import numpy as np
+import pandas as pd
 from tqdm import tqdm
 
 from docqa import trainer
@@ -11,10 +11,10 @@ from docqa.data_processing.span_data import TokenSpans
 from docqa.data_processing.text_utils import NltkPlusStopWords, ParagraphWithInverse
 from docqa.dataset import FixedOrderBatcher
 from docqa.eval.triviaqa_full_document_eval import RecordParagraphSpanPrediction
-from docqa.squad.document_rd_corpus import get_doc_rd_doc
-from docqa.squad.squad_document_qa import SquadTfIdfRanker
-from docqa.squad.squad_data import SquadCorpus
 from docqa.model_dir import ModelDir
+from docqa.squad.document_rd_corpus import get_doc_rd_doc
+from docqa.squad.squad_data import SquadCorpus
+from docqa.squad.squad_document_qa import SquadTfIdfRanker
 from docqa.utils import ResourceLoader, flatten_iterable
 
 
@@ -40,16 +40,23 @@ class RankedParagraphQuestion(ContextAndQuestion):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='')
-    parser.add_argument('model', help='name of output to exmaine')
-    parser.add_argument('output', type=str)
-    parser.add_argument('-n', '--n_sample', type=int, default=None)
-    parser.add_argument('-s', '--async', type=int, default=10)
-    parser.add_argument('-a', '--answer_bound', type=int, default=17)
-    parser.add_argument('-p', '--n_paragraphs', type=int, default=None)
-    parser.add_argument('-b', '--batch_size', type=int, default=200)
+    parser = argparse.ArgumentParser(description='Evaluate a model on document-level SQuAD')
+    parser.add_argument('model', help='model to use')
+    parser.add_argument('output', type=str,
+                        help="Store the per-paragraph results in csv format in this file")
+    parser.add_argument('-n', '--n_sample', type=int, default=None,
+                        help="(for testing) run on a subset of questions")
+    parser.add_argument('-s', '--async', type=int, default=10,
+                        help="Encoding batch asynchronously, queueing up to this many")
+    parser.add_argument('-a', '--answer_bound', type=int, default=17,
+                        help="Max answer span length")
+    parser.add_argument('-p', '--n_paragraphs', type=int, default=None,
+                        help="Max number of paragraphs to use")
+    parser.add_argument('-b', '--batch_size', type=int, default=200,
+                        help="Batch size, larger sizes can be faster but uses more memory")
     parser.add_argument('-c', '--corpus', choices=["dev", "train", "doc-rd-dev"], default="dev")
-    parser.add_argument('--ema', action="store_true")
+    parser.add_argument('--ema', action="store_true",
+                        help="Use EMA weights")
     args = parser.parse_args()
 
     model_dir = ModelDir(args.model)
@@ -117,22 +124,13 @@ def main():
                               args.ema, args.async)[args.corpus]
 
     print("Saving result")
-    # output_file = join(model_dir.get_eval_dir(), args.output)
     output_file = args.output
 
-    if output_file.endswith("pkl"):
-        with open(output_file, "wb") as f:
-            pickle.dump(evaluation.per_sample, f)
-    elif output_file.endswith("csv"):
-        import pandas as pd
-        df = pd.DataFrame(evaluation.per_sample)
-        df.to_csv(output_file, index=False)
-    else:
-        raise ValueError("Unrecognized file format")
+    df = pd.DataFrame(evaluation.per_sample)
+    df.to_csv(output_file, index=False)
 
 if __name__ == "__main__":
     main()
-    # tmp()
 
 
 

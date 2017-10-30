@@ -3,10 +3,10 @@ from typing import List, Iterable
 
 import numpy as np
 import tensorflow as tf
-from docqa.utils import ResourceLoader
 
 from docqa.configurable import Configurable
 from docqa.nn.layers import Encoder
+from docqa.utils import ResourceLoader
 
 """
 Classes for embedding words/chars

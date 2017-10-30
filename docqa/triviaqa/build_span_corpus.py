@@ -124,17 +124,17 @@ class TriviaQaSampleWebDataset(TriviaQaSpanCorpus):
         super().__init__("web-sample")
 
 
-def build_wiki_corpus():
+def build_wiki_corpus(n_processes):
     build_dataset("wiki", NltkAndPunctTokenizer(),
                   dict(
                       verified=join(TRIVIA_QA, "qa", "verified-wikipedia-dev.json"),
                       dev=join(TRIVIA_QA, "qa", "wikipedia-dev.json"),
                       train=join(TRIVIA_QA, "qa", "wikipedia-train.json"),
                   ),
-                  FastNormalizedAnswerDetector(), 2)
+                  FastNormalizedAnswerDetector(), n_processes)
 
 
-def build_web_corpus():
+def build_web_corpus(n_processes):
     build_dataset("web", NltkAndPunctTokenizer(),
                   dict(
                       verified=join(TRIVIA_QA, "qa", "verified-web-dev.json"),
@@ -142,19 +142,19 @@ def build_web_corpus():
                       train=join(TRIVIA_QA, "qa", "web-train.json"),
                       test=join(TRIVIA_QA, "qa", "web-test-without-answers.json")
                   ),
-                  FastNormalizedAnswerDetector(), 1)
+                  FastNormalizedAnswerDetector(), n_processes)
 
 
-def build_sample_corpus():
+def build_sample_corpus(n_processes):
     build_dataset("web-sample", NltkAndPunctTokenizer(),
                   dict(
                       dev=join(TRIVIA_QA, "qa", "web-dev.json"),
                       train=join(TRIVIA_QA, "qa", "web-train.json"),
                   ),
-                  FastNormalizedAnswerDetector(), 2, sample=1000)
+                  FastNormalizedAnswerDetector(), n_processes, sample=1000)
 
 
-def build_unfiltered_corpus():
+def build_unfiltered_corpus(n_processes):
     build_dataset("web-open", NltkAndPunctTokenizer(),
                   dict(
                       dev=join(TRIVIA_QA_UNFILTERED, "unfiltered-web-dev.json"),
@@ -162,20 +162,20 @@ def build_unfiltered_corpus():
                       test=join(TRIVIA_QA_UNFILTERED, "unfiltered-web-test-without-answers.json")
                   ),
                   answer_detector=FastNormalizedAnswerDetector(),
-                  n_process=2)
+                  n_process=n_processes)
 
 
 def main():
-    parser = argparse.ArgumentParser("Pre-procsess TriviaQA data, the evidence corpus should "
-                                     "already have been pre-prosessed")
+    parser = argparse.ArgumentParser("Pre-procsess TriviaQA data")
     parser.add_argument("corpus", choices=["web", "wiki", "web-open"])
+    parser.add_argument("-n", "--n_processes", type=int, default=1, help="Number of processes to use")
     args = parser.parse_args()
     if args.corpus == "web":
-        build_web_corpus()
+        build_web_corpus(args.n_processes)
     elif args.corpus == "wiki":
-        build_wiki_corpus()
+        build_wiki_corpus(args.n_processes)
     elif args.corpus == "web-open":
-        build_unfiltered_corpus()
+        build_unfiltered_corpus(args.n_processes)
     else:
         raise RuntimeError()
 

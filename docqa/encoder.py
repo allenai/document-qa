@@ -3,10 +3,10 @@ from typing import List, Optional, Dict
 import numpy as np
 import tensorflow as tf
 
+from docqa.configurable import Configurable
 from docqa.data_processing.qa_training_data import ParagraphAndQuestionSpec, ContextAndQuestion
 from docqa.data_processing.span_data import ParagraphSpans, TokenSpans
 from docqa.data_processing.text_features import QaTextFeautrizer
-from docqa.configurable import Configurable
 from docqa.nn.embedder import WordEmbedder, CharEmbedder
 from docqa.nn.span_prediction_ops import to_packed_coordinates_np
 

@@ -1,11 +1,11 @@
 from typing import Optional
 
 import tensorflow as tf
+
 from docqa.nn.layers import AttentionMapper, MergeLayer, SequenceEncoder, get_keras_initialization, SequenceMapper, \
     Mapper, SequenceMultiEncoder
-from docqa.nn.similarity_layers import SimilarityFunction, compute_attention_mask
 from docqa.nn.ops import VERY_NEGATIVE_NUMBER, exp_mask
-
+from docqa.nn.similarity_layers import SimilarityFunction, compute_attention_mask
 
 """
 Module for non-recurrent attention layers
@@ -13,6 +13,7 @@ Module for non-recurrent attention layers
 
 
 class StaticAttention(AttentionMapper):
+    """ Basic non-recurrent attention using the given SimilarityFunction """
 
     def __init__(self, attention: SimilarityFunction, merge: Optional[MergeLayer]=None, alignment_bias=None):
         self.attention = attention
@@ -52,43 +53,8 @@ class StaticAttention(AttentionMapper):
         super().__setstate__(state)
 
 
-class StaticAttentionWithEncoder(AttentionMapper):
-    """ BiDaF like layer, except will allow the query vector to come from an arbitrary encoder layer """
-
-    def __init__(self, attention: SimilarityFunction,
-                 encoder_layer: SequenceEncoder,
-                 alignment_bias=None):
-        self.attention = attention
-        self.encoder_layer = encoder_layer
-        self.alignment_bias = alignment_bias
-
-    def apply(self, is_train, x, keys, memories, x_mask=None, mem_mask=None):
-        x_word_dim = tf.shape(x)[1]
-        key_word_dim = tf.shape(keys)[1]
-
-        # (batch, x_word, key_word)
-        dist_matrix = self.attention.get_scores(x, keys)
-
-        joint_mask = compute_attention_mask(x_mask, mem_mask, x_word_dim, key_word_dim)
-        dist_matrix += VERY_NEGATIVE_NUMBER * (1 - tf.cast(joint_mask, dist_matrix.dtype))
-
-        if self.alignment_bias is None:
-            select_probs = tf.nn.softmax(dist_matrix)
-        else:
-            bias = tf.exp(tf.get_variable("no-alignment-bias", initializer=tf.constant(-1.0, dtype=tf.float32)))
-            dist_matrix = tf.exp(dist_matrix)
-            select_probs = dist_matrix / (tf.reduce_sum(dist_matrix, axis=2, keep_dims=True) + bias)
-
-        #  Too (batch, x_word, memory_dim)
-        response = tf.matmul(select_probs, memories)
-
-        with tf.variable_scope("encode_keys"):
-            encoded = self.encoder_layer.apply(is_train, keys, mem_mask)
-
-        return tf.concat([x, response, x * response, x * tf.expand_dims(encoded, 1)], axis=2)
-
-
 class StaticAttentionSelf(SequenceMapper):
+    """ Basic non-recurrent attention a sequence and itself using the given SimilarityFunction """
 
     def __init__(self, attention: SimilarityFunction,
                  merge: Optional[MergeLayer]=None,
@@ -137,7 +103,7 @@ class NullAttention(AttentionMapper):
 
 
 class BiAttention(AttentionMapper):
-    """ Bi-attention from https://arxiv.org/abs/1611.01603 """
+    """ Bi-Directonal Attention from https://arxiv.org/abs/1611.01603 """
 
     def __init__(self, sim: SimilarityFunction, q2c: bool, query_dots: bool=True):
         self.sim = sim
@@ -179,6 +145,42 @@ class BiAttention(AttentionMapper):
             if "query_dots" not in state["state"]:
                 state["state"]["query_dots"] = True
         super().__setstate__(state)
+
+
+class StaticAttentionWithEncoder(AttentionMapper):
+    """ BiDaF like layer, except will allow the query vector to come from an arbitrary encoder layer """
+
+    def __init__(self, attention: SimilarityFunction,
+                 encoder_layer: SequenceEncoder,
+                 alignment_bias=None):
+        self.attention = attention
+        self.encoder_layer = encoder_layer
+        self.alignment_bias = alignment_bias
+
+    def apply(self, is_train, x, keys, memories, x_mask=None, mem_mask=None):
+        x_word_dim = tf.shape(x)[1]
+        key_word_dim = tf.shape(keys)[1]
+
+        # (batch, x_word, key_word)
+        dist_matrix = self.attention.get_scores(x, keys)
+
+        joint_mask = compute_attention_mask(x_mask, mem_mask, x_word_dim, key_word_dim)
+        dist_matrix += VERY_NEGATIVE_NUMBER * (1 - tf.cast(joint_mask, dist_matrix.dtype))
+
+        if self.alignment_bias is None:
+            select_probs = tf.nn.softmax(dist_matrix)
+        else:
+            bias = tf.exp(tf.get_variable("no-alignment-bias", initializer=tf.constant(-1.0, dtype=tf.float32)))
+            dist_matrix = tf.exp(dist_matrix)
+            select_probs = dist_matrix / (tf.reduce_sum(dist_matrix, axis=2, keep_dims=True) + bias)
+
+        #  Too (batch, x_word, memory_dim)
+        response = tf.matmul(select_probs, memories)
+
+        with tf.variable_scope("encode_keys"):
+            encoded = self.encoder_layer.apply(is_train, keys, mem_mask)
+
+        return tf.concat([x, response, x * response, x * tf.expand_dims(encoded, 1)], axis=2)
 
 
 class MultiSelfAttention(SequenceMapper):

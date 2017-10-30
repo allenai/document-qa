@@ -7,18 +7,18 @@ from os.path import exists, join, relpath
 from threading import Thread
 from typing import List, Union, Optional, Dict, Tuple
 
-from docqa import configurable
 import numpy as np
 import tensorflow as tf
-from docqa.configurable import Configurable
-from docqa.dataset import TrainingData, Dataset
-from docqa.evaluator import Evaluator, Evaluation, AysncEvaluatorRunner, EvaluatorRunner
-from docqa.model_dir import ModelDir
 from tensorflow.python.training.adadelta import AdadeltaOptimizer
 from tensorflow.python.training.adam import AdamOptimizer
 
+from docqa import configurable
+from docqa.configurable import Configurable
 from docqa.data_processing.preprocessed_corpus import PreprocessedData
+from docqa.dataset import TrainingData, Dataset
+from docqa.evaluator import Evaluator, Evaluation, AysncEvaluatorRunner, EvaluatorRunner
 from docqa.model import Model
+from docqa.model_dir import ModelDir
 
 """
 Contains the train-loop and test-loop for our models

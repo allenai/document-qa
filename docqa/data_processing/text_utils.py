@@ -65,9 +65,7 @@ class ParagraphWithInverse(object):
                 continue
             all_tokens += para.text
             full_inv.append(para.spans + on_char)
-            for s, e in (para.spans + on_char):
-                if " " in original_text[s:e]:
-                    raise RuntimeError()
+
             on_char += para.spans[-1][1] + len(delim)
         if len(all_tokens) == 0:
             return ParagraphWithInverse.empty()
@@ -154,10 +152,6 @@ class NltkAndPunctTokenizer(Configurable):
         # Clean text, we do this at the end so `convert_to_spans` works as expected
         for i, sent in enumerate(text):
             text[i] = [self.clean_text(x) for x in sent]
-
-        if is_sentence:
-            if len(text) != 1:
-                raise RuntimeError()
 
         text_spans = flatten_iterable(text_spans)
         if len(text_spans) == 0:

@@ -97,13 +97,12 @@ class TopTfIdf(ParagraphFilter):
         self.rank = rank
         self.n_to_select = n_to_select
         self.filter_dist_one = filter_dist_one
-        self._tfidf = TfidfVectorizer(strip_accents="unicode", stop_words=self.stop.words)
 
     def prune(self, question, paragraphs: List[ExtractedParagraph]):
         if not self.filter_dist_one and len(paragraphs) == 1:
             return paragraphs
 
-        tfidf = self._tfidf
+        tfidf = TfidfVectorizer(strip_accents="unicode", stop_words=self.stop.words)
         text = []
         for para in paragraphs:
             text.append(" ".join(" ".join(s) for s in para.text))
@@ -122,7 +121,7 @@ class TopTfIdf(ParagraphFilter):
             return [paragraphs[i] for i in sorted_ix[:self.n_to_select]]
 
     def dists(self, question, paragraphs: List[ExtractedParagraph]):
-        tfidf = self._tfidf
+        tfidf = TfidfVectorizer(strip_accents="unicode", stop_words=self.stop.words)
         text = []
         for para in paragraphs:
             text.append(" ".join(" ".join(s) for s in para.text))

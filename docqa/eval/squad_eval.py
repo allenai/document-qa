@@ -36,14 +36,18 @@ class RecordSpanPrediction(Evaluator):
 
 def main():
     parser = argparse.ArgumentParser(description='')
-    parser.add_argument('model', help='name of output to exmaine')
-    parser.add_argument("-o", "--official_output", type=str)
-    parser.add_argument('-n', '--sample_questions', type=int, default=None)
-    parser.add_argument('--answer_bounds', nargs='+', type=int, default=[17])
-    parser.add_argument('-b', '--batch_size', type=int, default=200)
-    parser.add_argument('-s', '--step', default=None)
+    parser.add_argument('model', help='model directory to evaluate')
+    parser.add_argument("-o", "--official_output", type=str, help="where to output an official result file")
+    parser.add_argument('-n', '--sample_questions', type=int, default=None,
+                        help="(for testing) run on a subset of questions")
+    parser.add_argument('--answer_bounds', nargs='+', type=int, default=[17],
+                        help="Max size of answer")
+    parser.add_argument('-b', '--batch_size', type=int, default=200,
+                        help="Batch size, larger sizes can be faster but uses more memory")
+    parser.add_argument('-s', '--step', default=None,
+                        help="Weights to load, if set can be a checkpoint step or 'latest'")
     parser.add_argument('-c', '--corpus', choices=["dev", "train"], default="dev")
-    parser.add_argument('--ema', action="store_true")
+    parser.add_argument('--ema', action="store_true", help="Try to load EMA weights")
     args = parser.parse_args()
 
     model_dir = ModelDir(args.model)

@@ -2,9 +2,9 @@ import itertools
 from typing import Optional, Dict, Iterator, List, Callable
 
 import numpy as np
-from docqa.utils import ResourceLoader
 
 from docqa.configurable import Configurable
+from docqa.utils import ResourceLoader
 
 
 class Dataset(object):

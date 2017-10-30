@@ -93,8 +93,9 @@ class RecordParagraphSpanPrediction(Evaluator):
 
 def main():
     parser = argparse.ArgumentParser(description='')
-    parser.add_argument('model', help='mode directory')
-    parser.add_argument('-p', '--paragraph_output', type=str, help="Save fine grained results for each paragraph")
+    parser.add_argument('model', help='model directory')
+    parser.add_argument('-p', '--paragraph_output', type=str,
+                        help="Save fine grained results for each paragraph in csv format")
     parser.add_argument('-o', '--official_output', type=str, help="Build an offical output file with the model's"
                                                                   " most confident span for each (question, doc) pair")
     parser.add_argument('-e', '--ema', action="store_true", help="Load EMA weights")
@@ -103,10 +104,14 @@ def main():
     parser.add_argument('-i', '--step', type=int, default=None, help="checkpoint to load, default to latest")
     parser.add_argument('-n', '--n_sample', type=int, default=None, help="Number of questions to evaluate on")
     parser.add_argument('-a', '--async', type=int, default=10)
-    parser.add_argument('-s', '--splitter', type=str, default="merge-400",
-                        choices=["merge-400", "merge-600", "merge-800", "merge-1200"])
-    parser.add_argument('-f', '--filter', type=str, default="tfidf-12")
-    parser.add_argument('-b', '--batch_size', type=int, default=200)
+    parser.add_argument('-t', '--tokens', type=int, default=400,
+                        help="Max tokens per a paragraph")
+    parser.add_argument('-f', '--filter', type=str, default="tfidf-15",
+                        help="How to select paragraphs")
+    parser.add_argument('-b', '--batch_size', type=int, default=200,
+                        help="Batch size, larger sizes might be faster but wll take more memory")
+    parser.add_argument('--max_answer_len', type=int, default=8,
+                        help="Max answer span to select")
     parser.add_argument('-c', '--corpus',
                         choices=["web-dev", "web-test", "web-verified-dev", "web-train",
                                  "open-dev", "open-train"],
@@ -139,14 +144,7 @@ def main():
         else:
             raise RuntimeError()
 
-    if args.splitter == "merge-400":
-        splitter = MergeParagraphs(400)
-    elif args.splitter == "merge-600":
-        splitter = MergeParagraphs(600)
-    elif args.splitter == "merge-800":
-        splitter = MergeParagraphs(800)
-    else:
-        splitter = MergeParagraphs(1200)
+    splitter = MergeParagraphs(args.tokens)
 
     per_document = True
     if args.filter == "contains-question-word":
@@ -198,15 +196,23 @@ def main():
 
     print("Done, starting eval")
 
-    if args.step is None:
-        checkpoint = model_dir.get_latest_checkpoint()
+    if args.step is not None:
+        if args.step == "latest":
+            checkpoint = model_dir.get_latest_checkpoint()
+        else:
+            checkpoint = model_dir.get_checkpoint(int(args.step))
     else:
-        checkpoint = model_dir.get_checkpoint(args.step)
+        checkpoint = model_dir.get_best_weights()
+        if checkpoint is not None:
+            print("Using best weights")
+        else:
+            print("Using latest checkpoint")
+            checkpoint = model_dir.get_latest_checkpoint()
 
     test_questions = ParagraphAndQuestionDataset(questions, FixedOrderBatcher(args.batch_size, True))
 
     evaluation = trainer.test(model,
-                             [RecordParagraphSpanPrediction(8, True)],
+                             [RecordParagraphSpanPrediction(args.max_answer_len, True)],
                               {args.corpus:test_questions}, ResourceLoader(), checkpoint, args.ema, args.async)[args.corpus]
 
     if not all(len(x) == len(data) for x in evaluation.per_sample.values()):
@@ -263,13 +269,6 @@ def main():
     print("Question EM: %.4f" % q_pred["text_em"].mean())
     print("Question F1: %.4f" % q_pred["text_f1"].mean())
 
-    doc_pred = df.groupby(["question_id", "doc_id"]).first()
-    print("Doc-Question EM: %.4f" % doc_pred["text_em"].mean())
-    print("Doc-Question F1: %.4f" % doc_pred["text_f1"].mean())
-
-    print("Para-Question EM: %.4f" % df["text_em"].mean())
-    print("Para-Question F1: %.4f" % df["text_f1"].mean())
-
     output_file = args.paragraph_output
     if output_file is not None:
         print("Saving paragraph result")
@@ -285,24 +284,6 @@ def main():
             df.to_csv(output_file, index=False)
         else:
             raise ValueError("Unrecognized file format")
-
-    # if args.question_predictions is not None:
-    #     print("Saving question predictions")
-    #     pred = {}
-    #     for quid, group in df.groupby(["question_id"]):
-    #         selected = group["predicted_score"].argmax()
-    #         pred[quid] = group["text_answer"][selected]
-    #     with open(args.question_predictions, "w") as f:
-    #         json.dump(evaluation.per_sample, f)
-    #
-    # if args.question_doc_predictions is not None:
-    #     print("Saving question-doc predictions")
-    #     pred = {}
-    #     for id, group in df.groupby(["question_id", "doc_id"]):
-    #         selected = group["predicted_score"].argmax()
-    #         pred[id] = group["text_answer"][selected]
-    #     with open(args.question_doc_predictions, "w") as f:
-    #         json.dump(evaluation.per_sample, f)
 
 if __name__ == "__main__":
     main()

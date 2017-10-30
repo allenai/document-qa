@@ -78,6 +78,7 @@ class FastNormalizedAnswerDetector(object):
     """ almost twice as fast and very,very close to NormalizedAnswerDetector's output """
 
     def __init__(self):
+        # These come from the TrivaQA official evaluation script
         self.skip = {"a", "an", "the", ""}
         self.strip = string.punctuation + "".join([u"‘", u"’", u"´", u"`", "_"])
 
@@ -87,11 +88,15 @@ class FastNormalizedAnswerDetector(object):
         self.answer_tokens = normalized_aliases
 
     def any_found(self, para):
+        # Normalize the paragraph
         words = [w.lower().strip(self.strip) for w in flatten_iterable(para)]
         occurances = []
         for answer_ix, answer in enumerate(self.answer_tokens):
+            # Locations where the first word occurs
             word_starts = [i for i, w in enumerate(words) if answer[0] == w]
             n_tokens = len(answer)
+
+            # Advance forward until we find all the words, skipping over articles
             for start in word_starts:
                 end = start + 1
                 ans_token = 1

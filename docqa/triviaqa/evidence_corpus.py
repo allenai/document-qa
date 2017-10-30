@@ -2,7 +2,7 @@ import argparse
 import pickle
 import re
 from collections import Counter
-from os import walk, mkdir
+from os import walk, mkdir, makedirs
 from os.path import relpath, join, exists
 from typing import Set
 
@@ -11,6 +11,7 @@ from tqdm import tqdm
 from docqa import config
 from docqa.config import CORPUS_DIR
 from docqa.data_processing.text_utils import NltkAndPunctTokenizer
+from docqa.triviaqa.read_data import normalize_wiki_filename
 from docqa.utils import group, split, flatten_iterable
 
 """
@@ -18,7 +19,7 @@ Build and cache a tokenized version of the evidence corpus
 """
 
 
-def _gather_files(input_root, output_dir, skip_dirs):
+def _gather_files(input_root, output_dir, skip_dirs, wiki_only):
     if not exists(output_dir):
         mkdir(output_dir)
 
@@ -29,13 +30,16 @@ def _gather_files(input_root, output_dir, skip_dirs):
             if exists(output):
                 continue
         path = relpath(root, input_root)
-        if not exists(join(output_dir, path)):
-            mkdir(join(output_dir, path))
+        normalized_path = normalize_wiki_filename(path)
+        if not exists(join(output_dir, normalized_path)):
+            mkdir(join(output_dir, normalized_path))
         all_files += [join(path, x) for x in filenames]
+    if wiki_only:
+        all_files = [x for x in all_files if "wikipedia/" in x]
     return all_files
 
 
-def build_tokenized_files(filenames, input_root, output_root, tokenizer) -> Set[str]:
+def build_tokenized_files(filenames, input_root, output_root, tokenizer, override=True) -> Set[str]:
     """
     For each file in `filenames` loads the text, tokenizes it with `tokenizer, and
     saves the output to the same relative location in `output_root`.
@@ -43,7 +47,10 @@ def build_tokenized_files(filenames, input_root, output_root, tokenizer) -> Set[
     """
     voc = set()
     for filename in filenames:
-        out_file = filename[:filename.rfind(".")] + ".txt"
+        out_file = normalize_wiki_filename(filename[:filename.rfind(".")]) + ".txt"
+        out_file = join(output_root, out_file)
+        if not override and exists(out_file):
+            continue
         with open(join(input_root, filename), "r") as in_file:
             text = in_file.read().strip()
         paras = [x for x in text.split("\n") if len(x) > 0]
@@ -58,14 +65,15 @@ def build_tokenized_files(filenames, input_root, output_root, tokenizer) -> Set[
     return voc
 
 
-def build_tokenized_corpus(input_root, tokenizer, output_dir, skip_dirs=False, n_processes=1):
+def build_tokenized_corpus(input_root, tokenizer, output_dir, skip_dirs=False,
+                           n_processes=1, wiki_only=False):
     if not exists(output_dir):
-        mkdir(output_dir)
+        makedirs(output_dir)
 
-    all_files = _gather_files(input_root, output_dir, skip_dirs)
+    all_files = _gather_files(input_root, output_dir, skip_dirs, wiki_only)
 
     if n_processes == 1:
-        voc = build_tokenized_files(all_files, input_root, output_dir, tokenizer)
+        voc = build_tokenized_files(tqdm(all_files, ncols=80), input_root, output_dir, tokenizer)
     else:
         voc = set()
         from multiprocessing import Pool
@@ -79,7 +87,7 @@ def build_tokenized_corpus(input_root, tokenizer, output_dir, skip_dirs=False, n
                 pbar.update(1)
             pbar.close()
 
-    voc_file = join(output_dir, "vocab.txt", "w")
+    voc_file = join(output_dir, "vocab.txt")
     with open(voc_file, "w") as f:
         for word in sorted(voc):
             f.write(word)
@@ -225,12 +233,14 @@ class TriviaQaEvidenceCorpusTxt(object):
 
 def main():
     parse = argparse.ArgumentParser("Pre-tokenize the TriviaQA evidence corpus")
-    parse.add_argument("-o", "--output_dir", type=str, default=join(config.CORPUS_DIR, "triviaqa"))
+    parse.add_argument("-o", "--output_dir", type=str, default=join(config.CORPUS_DIR, "triviaqa", "evidence"))
     parse.add_argument("-s", "--source", type=str, default=join(config.TRIVIA_QA, "evidence"))
     # This is slow, using more processes is recommended
-    parse.add_argument("-n", "--n_processes", type=int, default=1)
+    parse.add_argument("-n", "--n_processes", type=int, default=1, help="Number of processes to use")
+    parse.add_argument("--wiki_only", action="store_true")
     args = parse.parse_args()
-    build_tokenized_corpus(args.source, NltkAndPunctTokenizer(), args.output_dir, n_processes=args.n_processes)
+    build_tokenized_corpus(args.source, NltkAndPunctTokenizer(), args.output_dir,
+                           n_processes=args.n_processes, wiki_only=args.wiki_only)
 
 if __name__ == "__main__":
     main()

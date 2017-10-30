@@ -1,10 +1,9 @@
 import json
-
-import numpy as np
-from collections import OrderedDict, Callable
+from collections import OrderedDict
 from inspect import signature
 from warnings import warn
 
+import numpy as np
 from sklearn.base import BaseEstimator
 
 
