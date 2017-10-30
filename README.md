@@ -24,14 +24,14 @@ The easiest way to run this code is to use:
 ``export PYTHONPATH=${PYTHONPATH}:`pwd` ``
 
 ### Data
-By default, we expect source data to stored in "~/data" and preprocessed data will be 
+By default, we expect source data to stored in "\~/data" and preprocessed data will be 
 stored to "./data". 
 The expected file locations can be changed by altering config.py.
  
 
 #### Word Vectors
 The models we train use the common crawl 840 billion token GloVe word vectors from [here](https://nlp.stanford.edu/projects/glove/).
-They are expected to exist in "~/data/glove/glove.840B.300d.txt" or "~/data/glove/glove.840B.300d.txt.gz".
+They are expected to exist in "\~/data/glove/glove.840B.300d.txt" or "\~/data/glove/glove.840B.300d.txt.gz".
 
 For example:
 
@@ -62,9 +62,9 @@ then running:
 This builds pkl files of the tokenized data in "./data/squad"
 
 #### TriviaQA Data
-The raw TriviaQA data is expected to be unzipped in "~/data/triviaqa". Training
+The raw TriviaQA data is expected to be unzipped in "\~/data/triviaqa". Training
 or testing in the unfiltered setting requires the unfiltered data to be 
-download to "~/data/triviaqa-unfiltered".
+download to "\~/data/triviaqa-unfiltered".
 
 ```
 mkdir -p ~/data/triviaqa
