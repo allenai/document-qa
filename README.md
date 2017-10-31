@@ -1,7 +1,8 @@
 ## Document QA
-This repo contains code to train neural question answering models in tensorflow, 
-and in particular for the cases when we want to run the model over multiple paragraphs for 
-each questions. Code is included to train on the [TriviaQA](nlp.cs.washington.edu/triviaqa/) 
+This repo contains code for our paper [Simple and Effective Multi-Paragraph Reading Comprehension](https://arxiv.org/abs/1710.10723).
+It can be used to  train neural question answering models in tensorflow, 
+and in particular for the case when we want to run the model over multiple paragraphs for 
+each question. Code is included to train on the [TriviaQA](nlp.cs.washington.edu/triviaqa/) 
 and [SQuAD](https://rajpurkar.github.io/SQuAD-explorer/) datasets.
 
 A demo of this work can be found at [documentqa.allenai.org](documentqa.allenai.org)
