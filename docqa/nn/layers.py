@@ -404,7 +404,7 @@ class SequenceMapperSeq(SequenceMapper):
         return x
 
     def get_params(self):
-        return dict(layers=[x.get_params() for x in self.layers])
+        return dict(layers=[x.get_config() for x in self.layers])
 
 
 class NullMapper(Updater):

@@ -133,11 +133,11 @@ class CharWordEmbedder(Configurable):
                  shared_parameters: bool):
         self.embeder = embedder
         self.layer = layer
-        self.share = shared_parameters
+        self.shared_parameters = shared_parameters
 
     def embed(self, is_train, *char_ix):
         embeds = self.embeder.embed(is_train, *char_ix)
-        if self.share:
+        if self.shared_parameters:
             with tf.variable_scope("embedding"):
                 output = [self.layer.apply(is_train, embeds[0], char_ix[0][1])]
             with tf.variable_scope("embedding", reuse=True):
@@ -149,6 +149,12 @@ class CharWordEmbedder(Configurable):
                 with tf.variable_scope("embedding%d_%s" % (i, emb.name)):
                     output.append(self.layer.apply(is_train, emb, char_ix[i][1]))
         return output
+
+    def __setstate__(self, state):
+        if "share" in state:
+            state["shared_parameters"] = state["share"]
+            del state["share"]
+        super().__setstate__(state)
 
 
 def shrink_embed(mat, word_ixs: List):
