@@ -5,7 +5,7 @@ and in particular for the case when we want to run the model over multiple parag
 each question. Code is included to train on the [TriviaQA](nlp.cs.washington.edu/triviaqa/) 
 and [SQuAD](https://rajpurkar.github.io/SQuAD-explorer/) datasets.
 
-A demo of this work can be found at [documentqa.allenai.org](documentqa.allenai.org)
+A demo of this work can be found at [documentqa.allenai.org](https://documentqa.allenai.org)
 
 Small forewarning, this is still much more of a research codebase then a library.
 We anticipate porting this work in [AllenNLP](github.com/allenai/allennlp) where it will 
