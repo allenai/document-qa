@@ -2,13 +2,13 @@
 This repo contains code for our paper [Simple and Effective Multi-Paragraph Reading Comprehension](https://arxiv.org/abs/1710.10723).
 It can be used to  train neural question answering models in tensorflow, 
 and in particular for the case when we want to run the model over multiple paragraphs for 
-each question. Code is included to train on the [TriviaQA](nlp.cs.washington.edu/triviaqa/) 
+each question. Code is included to train on the [TriviaQA](http://nlp.cs.washington.edu/triviaqa/) 
 and [SQuAD](https://rajpurkar.github.io/SQuAD-explorer/) datasets.
 
 A demo of this work can be found at [documentqa.allenai.org](https://documentqa.allenai.org)
 
 Small forewarning, this is still much more of a research codebase then a library.
-We anticipate porting this work in [AllenNLP](github.com/allenai/allennlp) where it will 
+we anticipate porting this work in [allennlp](https://github.com/allenai/allennlp) where it will 
 enjoy a cleaner implementation and more stable support.
 
 
