@@ -18,12 +18,16 @@ from docqa.triviaqa.training_data import ExtractMultiParagraphsPerQuestion
 
 
 def main():
-    parser = argparse.ArgumentParser(description='')
+    parser = argparse.ArgumentParser(description='Train a model on TriviaQA unfiltered')
     parser.add_argument('mode', choices=["confidence", "merge", "shared-norm",
                                          "sigmoid", "paragraph"])
-    parser.add_argument("name")
-    parser.add_argument("-t", "--n_tokens", default=400, type=int)
-    parser.add_argument('-n', '--n_processes', type=int, default=2)
+    parser.add_argument("name", help="Where to store the model")
+    parser.add_argument("-t", "--n_tokens", default=400, type=int,
+                        help="Paragraph size")
+    parser.add_argument('-n', '--n_processes', type=int, default=2,
+                        help="Number of processes (i.e., select which paragraphs to train on) "
+                             "the data with"
+                        )
     args = parser.parse_args()
     mode = args.mode
 

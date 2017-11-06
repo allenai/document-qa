@@ -103,13 +103,10 @@ to build the desired set. This builds pkl files "./data/triviaqa/{web|wiki|open}
 ## Training
 Once the data is in place our models can be trained by
 
-`python docqa/scripts/ablate_triviaqa.py`
+`python docqa/scripts/ablate_{triviaqa|squad|triviaqa_unfiltered}.py`
 
-and 
 
-`python docqa/scripts/ablate_squad.py`
-
-See the help menu for these scripts for more details. Note see we use the Cudnn RNN implementations,
+See the help menu for these scripts for more details. Note that since we use the Cudnn RNN implementations,
 these models can only be trained on a GPU. We do provide a script for converting
 the (trained) models to CPU versions:
 

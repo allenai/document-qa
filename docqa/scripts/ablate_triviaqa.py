@@ -113,11 +113,13 @@ def get_model(char_th: int, dim: int, mode: str, preprocess: Optional[TextPrepro
 
 
 def main():
-    parser = argparse.ArgumentParser(description='')
+    parser = argparse.ArgumentParser(description='Train a model on TriviaQA web')
     parser.add_argument('mode', choices=["paragraph-level", "confidence", "merge",
                                          "shared-norm", "sigmoid", "shared-norm-600"])
-    parser.add_argument("name")
-    parser.add_argument('-n', '--n_processes', type=int, default=2)
+    parser.add_argument("name", help="Where to store the model")
+    parser.add_argument('-n', '--n_processes', type=int, default=2,
+                        help="Number of processes (i.e., select which paragraphs to train on) "
+                             "the data with")
     args = parser.parse_args()
     mode = args.mode
 

@@ -26,7 +26,7 @@ def train_params(n_epochs):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Train a confidence model on document-level SQuAD')
+    parser = argparse.ArgumentParser(description='Train a model on document-level SQuAD')
     parser.add_argument('mode', choices=["paragraph", "confidence", "shared-norm", "merge", "sigmoid"])
     parser.add_argument("name", help="Output directory")
     args = parser.parse_args()
