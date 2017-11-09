@@ -8,13 +8,12 @@ from docqa import trainer
 from docqa.data_processing.qa_training_data import ParagraphAndQuestionDataset, ContextAndQuestion
 from docqa.dataset import FixedOrderBatcher
 from docqa.evaluator import Evaluator, Evaluation, SpanEvaluator
-from docqa.squad.squad_data import SquadCorpus, split_docs
 from docqa.model_dir import ModelDir
+from docqa.squad.squad_data import SquadCorpus, split_docs
 from docqa.utils import transpose_lists, print_table
 
-
 """
-Run an evalution on squad and record the offical output
+Run an evaluation on squad and record the official output
 """
 
 
@@ -35,7 +34,7 @@ class RecordSpanPrediction(Evaluator):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='')
+    parser = argparse.ArgumentParser(description='Evaluate a model on SQuAD')
     parser.add_argument('model', help='model directory to evaluate')
     parser.add_argument("-o", "--official_output", type=str, help="where to output an official result file")
     parser.add_argument('-n', '--sample_questions', type=int, default=None,
@@ -45,9 +44,9 @@ def main():
     parser.add_argument('-b', '--batch_size', type=int, default=200,
                         help="Batch size, larger sizes can be faster but uses more memory")
     parser.add_argument('-s', '--step', default=None,
-                        help="Weights to load, if set can be a checkpoint step or 'latest'")
+                        help="Weights to load, can be a checkpoint step or 'latest'")
     parser.add_argument('-c', '--corpus', choices=["dev", "train"], default="dev")
-    parser.add_argument('--ema', action="store_true", help="Try to load EMA weights")
+    parser.add_argument('--no_ema', action="store_true", help="Don't use EMA weights even if they exist")
     args = parser.parse_args()
 
     model_dir = ModelDir(args.model)
@@ -85,7 +84,7 @@ def main():
     model = model_dir.get_model()
 
     evaluation = trainer.test(model, evaluators, {args.corpus: dataset},
-                              corpus.get_resource_loader(), checkpoint, args.ema)[args.corpus]
+                              corpus.get_resource_loader(), checkpoint, not args.no_ema)[args.corpus]
 
     # Print the scalar results in a two column table
     scalars = evaluation.scalars

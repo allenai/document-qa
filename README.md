@@ -118,7 +118,7 @@ Modifying the hyper-parameters beyond the ablations requires building your own t
 ### SQuAD
 Use "docqa/eval/squad_eval.py" to evaluate on paragraph-level (i.e., standard) SQuAD. For example:
 
-`python docqa/eval/squad_eval.py -o output.json --ema -c dev /path/to/model/directory`
+`python docqa/eval/squad_eval.py -o output.json -c dev /path/to/model/directory`
 
 "output.json" can be used with the official evaluation script, for example:
 
@@ -126,7 +126,7 @@ Use "docqa/eval/squad_eval.py" to evaluate on paragraph-level (i.e., standard) S
 
 Use "docqa/eval/squad_full_document_eval.py" to evaluate on the document-level. For example
 
-`python docqa/eval/squad_full_document_eval.py --ema -c dev /path/to/model/directory output.csv`
+`python docqa/eval/squad_full_document_eval.py -c dev /path/to/model/directory output.csv`
 
 This will store the per-paragraph results in output.csv, we can then run:
 
@@ -138,7 +138,7 @@ to get ranked scores as more paragraphs are used.
 ### TriviaQA
 Use "docqa/eval/triviaqa_full_document_eval.py" to evaluate on TriviaQA datasets, like:
  
-`python docqa/eval/triviaqa_full_document_eval.py --n_processes 8 --ema -c web-dev --tokens 400 -f tfidf-15 -b 200 -o question-output.json -p paragraph-output.csv /path/to/model/directory`
+`python docqa/eval/triviaqa_full_document_eval.py --n_processes 8 -c web-dev --tokens 400 -f tfidf-15 -b 200 -o question-output.json -p paragraph-output.csv /path/to/model/directory`
 
 Then the "question-output.json" can be used with the standard triviaqa evaluation [script](https://github.com/mandarjoshi90/triviaqa), 
 the "paragraph-output.csv" contains per-paragraph output, we can run  

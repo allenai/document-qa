@@ -639,7 +639,7 @@ def _train_async(model: Model,
 
 
 def test(model: Model, evaluators, datasets: Dict[str, Dataset], loader, checkpoint,
-         ema=False, aysnc_encoding=None, sample=None) -> Dict[str, Evaluation]:
+         ema=True, aysnc_encoding=None, sample=None) -> Dict[str, Evaluation]:
     print("Setting up model")
     model.set_inputs(list(datasets.values()), loader)
 
@@ -657,17 +657,20 @@ def test(model: Model, evaluators, datasets: Dict[str, Dataset], loader, checkpo
     evaluator_runner.set_input(pred)
 
     print("Restoring variables")
-
     saver = tf.train.Saver()
     saver.restore(sess, checkpoint)
 
     if ema:
         # FIXME This is a bit stupid, since we are loading variables twice, but I found it
         # a bit fiddly to load the variables directly....
-        print("Restoring EMA variables")
         ema = tf.train.ExponentialMovingAverage(0)
-        saver = tf.train.Saver({ema.average_name(x): x for x in tf.trainable_variables()})
-        saver.restore(sess, checkpoint)
+        reader = tf.train.NewCheckpointReader(checkpoint)
+        expected_ema_names = {ema.average_name(x): x for x in tf.trainable_variables()
+                              if reader.has_tensor(ema.average_name(x))}
+        if len(expected_ema_names) > 0:
+            print("Restoring EMA variables")
+            saver = tf.train.Saver(expected_ema_names)
+            saver.restore(sess, checkpoint)
 
     tf.get_default_graph().finalize()
 
