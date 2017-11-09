@@ -9,7 +9,6 @@ import tensorflow as tf
 from tensorflow.contrib.cudnn_rnn.python.ops import cudnn_rnn_ops
 
 from docqa.data_processing.qa_training_data import ParagraphAndQuestionSpec, ParagraphAndQuestion
-from docqa.doc_qa_models import Attention
 from docqa.model_dir import ModelDir
 from docqa.nn.recurrent_layers import BiRecurrentMapper, CompatGruCellSpec
 from docqa.utils import ResourceLoader
