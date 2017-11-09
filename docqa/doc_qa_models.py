@@ -156,8 +156,10 @@ class ContextOnly(ParagraphQuestionModel):
 
 
 class Attention(ParagraphQuestionModel):
-    """ Model that encodes the question and context, then applies an attention mechanism
-    between the two to produce a query-aware context representation, which is used to make a prediction. """
+    """
+    Model that encodes the question and context, then applies an attention mechanism
+    between the two to produce a query-aware context representation, which is used to make a prediction.
+    """
     def __init__(self, encoder: DocumentAndQuestionEncoder,
                  preprocess: Optional[TextPreprocessor],
                  word_embed: Optional[WordEmbedder],
