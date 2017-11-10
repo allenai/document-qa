@@ -62,6 +62,7 @@ def main():
         np.random.RandomState(0).shuffle(sorted(questions, key=lambda x: x.question_id))
         questions = questions[:args.sample_questions]
 
+    questions.sort(key=lambda x:x.n_context_words, reverse=True)
     dataset = ParagraphAndQuestionDataset(questions, FixedOrderBatcher(args.batch_size, True))
 
     evaluators = [SpanEvaluator(args.answer_bounds, text_eval="squad")]
