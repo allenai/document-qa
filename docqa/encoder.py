@@ -76,7 +76,7 @@ class SingleSpanAnswerEncoder(AnswerEncoder):
         return {}
 
     def __setstate__(self, state):
-        return SingleSpanAnswerEncoder()
+        return self.__init__()
 
 
 class DenseMultiSpanAnswerEncoder(AnswerEncoder):
