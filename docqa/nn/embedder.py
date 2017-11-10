@@ -151,6 +151,9 @@ class CharWordEmbedder(Configurable):
         return output
 
     def __setstate__(self, state):
+        if "state" in state:
+            state["state"]["version"] = state["version"]
+            state = state["state"]
         if "share" in state:
             state["shared_parameters"] = state["share"]
             del state["share"]
