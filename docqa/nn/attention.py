@@ -33,6 +33,8 @@ class StaticAttention(AttentionMapper):
         if self.alignment_bias is None:
             select_probs = tf.nn.softmax(dist_matrix)
         else:
+            # Compute softmax with an additional bias term, this allows the model to 'ignore' the memories
+            # if needed since the sum of the weights given to each memory can be < 1.
             bias = tf.exp(tf.get_variable("no-alignment-bias", initializer=tf.constant(-1.0, dtype=tf.float32)))
             dist_matrix = tf.exp(dist_matrix)
             select_probs = dist_matrix / (tf.reduce_sum(dist_matrix, axis=2, keep_dims=True) + bias)
