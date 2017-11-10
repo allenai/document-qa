@@ -85,8 +85,8 @@ class ContextLenBucketedKey(Configurable):
 
 class ParagraphAndQuestionSpec(object):
     """ Bound on the size of `ParagraphAndQuestion` objects """
-    def __init__(self, batch_size, max_question_words, max_num_context_words, max_word_size,
-                 max_batch_size=None):
+    def __init__(self, batch_size, max_question_words=None,
+                 max_num_context_words=None, max_word_size=None, max_batch_size=None):
         if batch_size is not None:
             if max_batch_size is None:
                 max_batch_size = batch_size
@@ -242,22 +242,29 @@ def apply_filters(data: List, data_filters: List[ParagraphQuestionFilter], name:
         return pruned
 
 
+def build_spec(batch_size: int,
+               max_batch_size: int,
+               data: List[ContextAndQuestion]) -> ParagraphAndQuestionSpec:
+    max_ques_size = 0
+    max_word_size = 0
+    max_para_size = 0
+    for data_point in data:
+        context = data_point.get_context()
+        max_word_size = max(max_word_size, max(len(word) for word in context))
+        max_para_size = max(max_para_size, len(context))
+        if data_point.question is not None:
+            max_ques_size = max(max_ques_size, len(data_point.question))
+            max_word_size = max(max_word_size, max(len(word) for word in data_point.question))
+    return ParagraphAndQuestionSpec(batch_size, max_ques_size, max_para_size,
+                                    max_word_size, max_batch_size)
+
+
 class ParagraphAndQuestionDataset(ListDataset):
     """ Dataset with q/a pairs and that exposes some meta-data about its elements """
     def get_spec(self) -> ParagraphAndQuestionSpec:
-        max_ques_size = 0
-        max_word_size = 0
-        max_para_size = 0
-        for data_point in self.data:
-            context = data_point.get_context()
-            max_word_size = max(max_word_size, max(len(word) for word in context))
-            max_para_size = max(max_para_size, len(context))
-            if data_point.question is not None:
-                max_ques_size = max(max_ques_size, len(data_point.question))
-                max_word_size = max(max_word_size, max(len(word) for word in data_point.question))
-        return ParagraphAndQuestionSpec(self.batching.get_fixed_batch_size(),
-                                        max_ques_size, max_para_size, max_word_size,
-                                        self.batching.get_max_batch_size())
+        return build_spec(self.batching.get_fixed_batch_size(),
+                          self.batching.get_max_batch_size(),
+                          self.data)
 
     def get_vocab(self) -> Set[str]:
         return compute_voc(self.data)
