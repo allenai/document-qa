@@ -56,6 +56,8 @@ def build_dataset(name: str, tokenizer, train_files: Dict[str, str],
         for q in questions:  # Sanity check, we should have answers for everything (even if of size 0)
             if q.answer is None:
                 continue
+            if q.all_docs is None:
+                continue
             for doc in q.all_docs:
                 if doc.doc_id in file_map:
                     if doc.answer_spans is None:

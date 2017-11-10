@@ -237,6 +237,8 @@ def compute_answer_spans(questions: List[TriviaQaQuestion], corpus, word_tokeniz
         if len(tokenized_aliases) == 0:
             raise ValueError()
         detector.set_question(tokenized_aliases)
+        if q.all_docs is None:
+            continue
         for doc in q.all_docs:
             text = corpus.get_document(doc.doc_id)
             if text is None:
