@@ -114,6 +114,11 @@ class TriviaQaWebDataset(TriviaQaSpanCorpus):
         super().__init__("web")
 
 
+class TriviaQaWikiDataset(TriviaQaSpanCorpus):
+    def __init__(self):
+        super().__init__("wiki")
+
+
 class TriviaQaOpenDataset(TriviaQaSpanCorpus):
     def __init__(self):
         super().__init__("web-open")
