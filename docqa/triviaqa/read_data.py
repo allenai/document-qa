@@ -191,7 +191,7 @@ class TriviaQaQuestion(object):
         if self.web_docs is not None:
             return self.web_docs + self.entity_docs
         else:
-            return self.web_docs
+            return self.entity_docs
 
     def to_compressed_json(self):
         return [
