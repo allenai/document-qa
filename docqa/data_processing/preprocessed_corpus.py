@@ -69,7 +69,7 @@ def preprocess_par(questions: List, evidence, preprocessor,
                    n_processes=2, chunk_size=200, name=None):
     if chunk_size <= 0:
         raise ValueError("Chunk size must be >= 0, but got %s" % chunk_size)
-    if n_processes is None or n_processes <= 0:
+    if n_processes is not None and n_processes <= 0:
         raise ValueError("n_processes must be >= 1 or None, but got %s" % n_processes)
     n_processes = min(len(questions), n_processes)
 
