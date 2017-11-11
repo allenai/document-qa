@@ -25,6 +25,9 @@ def convert(model_dir, output_dir, best_weights=False):
     print("Load model")
     md = ModelDir(model_dir)
     model = md.get_model()
+    dim = model.embed_mapper.layers[1].n_units
+    global_step = tf.get_variable('global_step', shape=[], dtype='int32',
+                                  initializer=tf.constant_initializer(0), trainable=False)
 
     print("Setting up cudnn version")
     # global_step = tf.get_variable('global_step', shape=[], dtype='int32', trainable=False)
@@ -42,22 +45,10 @@ def convert(model_dir, output_dir, best_weights=False):
                                           None, "test_questions")
 
     print("Load vars")
-    save = tf.train.Saver()
-    if best_weights:
-        checkpoint = md.get_best_weights()
-    else:
-        checkpoint = md.get_latest_checkpoint()
-    print("Loading checkpoint: " + checkpoint)
-    save.restore(sess, checkpoint)
-
-    print("Restoring EMA variables")
-    ema = tf.train.ExponentialMovingAverage(0)
-    saver = tf.train.Saver({ema.average_name(x): x for x in tf.trainable_variables()})
-    saver.restore(sess, checkpoint)
+    md.restore_checkpoint(sess)
 
     feed = model.encode([test_questions], False)
     cuddn_out = sess.run([pred.start_logits, pred.end_logits], feed_dict=feed)
-    dim = 90
 
     print("Done, copying files...")
     if not exists(output_dir):
@@ -74,7 +65,7 @@ def convert(model_dir, output_dir, best_weights=False):
             key = x.name[:-len("/gru_parameters:0")]
             fw_params = x
             if "map_embed" in x.name:
-                c = cudnn_rnn_ops.CudnnGRU(1, dim, 1424)
+                c = cudnn_rnn_ops.CudnnGRU(1, dim, 400)
             elif "chained-out" in x.name:
                 c = cudnn_rnn_ops.CudnnGRU(1, dim, dim * 4)
             else:
@@ -117,8 +108,7 @@ def convert(model_dir, output_dir, best_weights=False):
     if not exists(save_dir):
         mkdir(save_dir)
 
-    print("GLOBAL STEP HACK REMOVE ME")
-    saver.save(sess, join(save_dir, "checkpoint"), 42000)
+    saver.save(sess, join(save_dir, "checkpoint"), sess.run(global_step))
 
     sess.close()
     tf.reset_default_graph()
