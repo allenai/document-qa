@@ -28,9 +28,8 @@ The easiest way to run this code is to use:
 ``export PYTHONPATH=${PYTHONPATH}:`pwd` ``
 
 ### Data
-By default, we expect source data to stored in "\~/data" and preprocessed data will be 
-stored to "./data". 
-The expected file locations can be changed by altering config.py.
+By default, we expect source data to stored in "\~/data" and preprocessed data to be
+stored int "./data". The expected file locations can be changed by altering config.py.
  
 
 #### Word Vectors
@@ -146,3 +145,22 @@ the "paragraph-output.csv" contains per-paragraph output, we can run
 `python docqa/eval/ranked_triviaqa_scores.py paragraph-output.csv`
 
 to get ranked scores as more paragraphs as used.
+
+## Pre-Trained Models
+We have four pre-trained models
+
+1. "squad" Our model trained on the standard SQuAD dataset, this model is listed on the SQuAD leaderboard 
+as BiDAF + Self Attention
+
+2. "squad-shared-norm" Our model trained on document-level SQuAD using the shared-norm approach. 
+
+3. "triviaqa-web-shared-norm" Our model trained on TriviaQA web with the shared-norm approach. This 
+is the model we used to submit scores to the TriviaQA leader board.
+ 
+4. "triviaqa-unfiltered-shared-norm" Our model trained on TriviaQA unfiltered with the shared-norm approach.
+This is the model that powers our demo.
+
+The models can be downloaded [here](https://drive.google.com/open?id=1Hj9WBQHVa__bqoD5RIOPu2qDpvfJQwjR)
+
+The models use the cuDNN implementation of GRUs by default, which means they can only be run on
+the GPU. We also have slower, but CPU compatible, versions [here](https://drive.google.com/open?id=1NRmb2YilnZOfyKULUnL7gu3HE5nT0sMy).
