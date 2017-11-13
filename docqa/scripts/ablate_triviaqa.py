@@ -34,7 +34,6 @@ def get_triviaqa_train_params(n_epochs, n_dev, n_train):
     return TrainParams(
         SerializableOptimizer("Adadelta", dict(learning_rate=1)),
         num_epochs=n_epochs, ema=0.9999, max_checkpoints_to_keep=2,
-        best_weights=("dev", "b8/text-f1"),
         async_encoding=10, log_period=30, eval_period=1800, save_period=1800,
         eval_samples=dict(dev=n_dev, train=n_train))
 
