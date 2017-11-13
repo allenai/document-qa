@@ -349,7 +349,6 @@ class StratifiedParagraphSetDataset(Dataset):
                  force_answer: bool,
                  overample_first_answer: List[int],
                  merge: bool):
-        print("Merge: " + str(merge))
         self.overample_first_answer = overample_first_answer
         self.questions = questions
         self.merge = merge
