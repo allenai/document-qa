@@ -270,7 +270,7 @@ def main():
         group_by = ["question_id"]
 
     # Print a table of scores as more paragraphs are used
-    df.sort_values(["question_id", "doc_id", "predicted_score"], inplace=True, ascending=True)
+    df.sort_values(group_by + ["rank"], inplace=True)
     f1 = compute_model_scores(df, "predicted_score", "text_f1", group_by)
     em = compute_model_scores(df, "predicted_score", "text_em", group_by)
     table = [["N Paragraphs", "EM", "F1"]]
