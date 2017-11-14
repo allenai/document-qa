@@ -38,7 +38,7 @@ def main():
     extract = ExtractMultiParagraphsPerQuestion(MergeParagraphs(args.n_tokens), ShallowOpenWebRanker(16),
                                                 model.preprocessor, intern=True)
 
-    eval = [LossEvaluator(), MultiParagraphSpanEvaluator(8, "triviaqa", mode != "merge")]
+    eval = [LossEvaluator(), MultiParagraphSpanEvaluator(8, "triviaqa", mode != "merge", per_doc=False)]
     oversample = [1] * 4
 
     if mode == "paragraph":

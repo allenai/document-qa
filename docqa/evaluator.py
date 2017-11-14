@@ -14,8 +14,8 @@ from docqa.data_processing.span_data import compute_span_f1
 from docqa.model import Model, Prediction
 from docqa.squad.squad_official_evaluation import exact_match_score as squad_official_em_score
 from docqa.squad.squad_official_evaluation import f1_score as squad_official_f1_score
-from docqa.triviaqa.trivia_qa_eval import exact_match_score as triviaqa_f1_score
-from docqa.triviaqa.trivia_qa_eval import f1_score as triviaqa_em_score
+from docqa.triviaqa.trivia_qa_eval import f1_score as triviaqa_f1_score
+from docqa.triviaqa.trivia_qa_eval import exact_match_score as triviaqa_em_score
 
 
 class Evaluation(object):
@@ -251,16 +251,29 @@ class SpanEvaluator(Evaluator):
 
 class MultiParagraphSpanEvaluator(Evaluator):
     """
-    Measure error with multiple paragraphs per a question
+    Measure error with multiple paragraphs per a question.
+
+    Evaluation is a bit tricky in this case, since we are generally sampling paragraphs
+    each epoch we can't report exact numbers as your would see when running the
+    evaluation scripts. Instead we report some numbers aimed to get an approximate idea of what is going on:
+
+    1: question-text-{em|f1}, accuracy on questions-document pairs (or just questions if `per_doc=False`)
+       using all sampled paragraphs when taking the model's highest confidence answer
+    2: paragraph-text-{em|f1}, accuracy on answer-containing paragraphs (if `paragraph_level=True`)
+    3: The Kendel Tau relation between the model's confidence and the paragraph's f1/em score,
+       (if `k_tau=True`) intended to measure how valid the model's confidence score is
+       when it comes to ranking.
     """
 
-    def __init__(self, bound: int, eval, paragraph_level=True, k_tau=True):
+    def __init__(self, bound: int, eval, paragraph_level=True, k_tau=True,
+                 per_doc=True):
         if eval not in ["squad", "triviaqa"]:
             raise ValueError()
         self.bound = bound
         self.eval = eval
         self.paragraph_level = paragraph_level
         self.k_tau = k_tau
+        self.per_doc = per_doc
 
     def tensors_needed(self, prediction):
         span, score = prediction.get_best_span(self.bound)
@@ -280,7 +293,10 @@ class MultiParagraphSpanEvaluator(Evaluator):
 
         selected_paragraphs = {}
         for i, point in enumerate(data):
-            key = (point.question_id, point.doc_id)
+            if self.per_doc:
+                key = (point.question_id, point.doc_id)
+            else:
+                key = point.question_id
             if key not in selected_paragraphs:
                 selected_paragraphs[key] = i
             elif span_logits[i] > span_logits[selected_paragraphs[key]]:
@@ -302,6 +318,11 @@ class MultiParagraphSpanEvaluator(Evaluator):
 
         prefix = "b%d/" % self.bound
         return Evaluation({prefix+k: v for k,v in out.items()})
+
+    def __setstate__(self, state):
+        if "per_doc" not in state:
+            state["per_doc"] = True
+        super().__setstate__(state)
 
 
 class ConfidenceSpanEvaluator(Evaluator):
