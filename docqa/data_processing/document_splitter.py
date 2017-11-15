@@ -222,9 +222,15 @@ class DocumentSplitter(Configurable):
         return None
 
     def split(self, doc: List[List[List[str]]]) -> List[ExtractedParagraph]:
+        """
+        Splits a list paragraphs->sentences->words to a list of `ExtractedParagraph`
+        """
         raise NotImplementedError()
 
     def split_annotated(self, doc: List[List[List[str]]], spans: np.ndarray) -> List[ExtractedParagraphWithAnswers]:
+        """
+        Split a document and additionally splits answer_span of each paragraph
+        """
         out = []
         for para in self.split(doc):
             para_spans = spans[np.logical_and(spans[:, 0] >= para.start, spans[:, 1] < para.end)] - para.start
@@ -232,14 +238,12 @@ class DocumentSplitter(Configurable):
         return out
 
     def split_inverse(self, paras: List[ParagraphWithInverse]) -> List[ParagraphWithInverse]:
+        """
+        Split a document consisting of `ParagraphWithInverse` objects
+        """
         full_para = ParagraphWithInverse.concat(paras, "\n")
 
         split_docs = self.split([x.text for x in paras])
-
-        max_len = len(full_para.get_context())
-        for para in split_docs:
-            if para.end > max_len:
-                raise RuntimeError()
 
         out = []
         for para in split_docs:
@@ -338,6 +342,21 @@ class MergeParagraphs(DocumentSplitter):
             all_paragraphs.append(ExtractedParagraph(on_paragraph, on_doc_token, word_ix))
 
         return all_paragraphs
+
+
+class PreserveParagraphs(DocumentSplitter):
+    """
+    Convience class that preserves the document's natural paragraph delimitation
+    """
+    def split(self, doc: List[List[List[str]]]):
+        out = []
+        on_token = 0
+        for para in doc:
+            flattened_para = flatten_iterable(para)
+            end = on_token + len(flattened_para)
+            out.append(ExtractedParagraph([flatten_iterable(para)], on_token, end))
+            on_token = end
+        return out
 
 
 def extract_tokens(paragraph: List[List[str]], n_tokens) -> List[List[str]]:
