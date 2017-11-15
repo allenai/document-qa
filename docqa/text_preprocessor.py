@@ -5,7 +5,7 @@ import numpy as np
 from tqdm import tqdm
 from docqa.utils import flatten_iterable
 
-from docqa.data_processing.document_splitter import ExtractedParagraphWithAnswers, MergeParagraphs
+from docqa.data_processing.document_splitter import ExtractedParagraphWithAnswers, MergeParagraphs, ExtractedParagraph
 from docqa.data_processing.multi_paragraph_qa import ParagraphWithAnswers
 from docqa.configurable import Configurable
 from docqa.squad.squad_data import SquadCorpus
@@ -20,7 +20,12 @@ class TextPreprocessor(Configurable):
                                                  paragraph.start == 0, paragraph.answer_spans)
         return ParagraphWithAnswers(text, answers)
 
-    def encode_paragraph(self, question: List[str], text: List[List[str]],
+    def encode_text(self, question: List[str], paragraph: ExtractedParagraph):
+        text, _, _ = self.encode_paragraph(question, paragraph.text, paragraph.start == 0,
+                                           np.zeros((0, 2), dtype=np.int32))
+        return text
+
+    def encode_paragraph(self, question: List[str], paragraphs: List[List[str]],
                          is_first, answer_spans: np.ndarray,
                          token_spans=None) -> Tuple[List[str], np.ndarray, Optional[np.ndarray]]:
         """
@@ -55,7 +60,7 @@ class WithIndicators(TextPreprocessor):
             tokens.append(self.PARAGRAPH_TOKEN)
         return tokens
 
-    def encode_paragraph(self, question: List[str], text: List[List[str]], is_first, answer_spans: np.ndarray, inver=None):
+    def encode_paragraph(self, question: List[str], paragraphs: List[List[str]], is_first, answer_spans: np.ndarray, inver=None):
         out = []
 
         offset = 0
@@ -72,13 +77,13 @@ class WithIndicators(TextPreprocessor):
         offset += 1
         spans = answer_spans + offset
 
-        out += text[0]
-        offset += len(text[0])
-        on_ix = len(text[0])
+        out += paragraphs[0]
+        offset += len(paragraphs[0])
+        on_ix = len(paragraphs[0])
         if inv_out is not None:
-            inv_out.append(inver[:len(text[0])])
+            inv_out.append(inver[:len(paragraphs[0])])
 
-        for sent in text[1:]:
+        for sent in paragraphs[1:]:
             if self.remove_cross_answer:
                 remove = np.logical_and(spans[:, 0] < offset, spans[:, 1] >= offset)
                 spans = spans[np.logical_not(remove)]
