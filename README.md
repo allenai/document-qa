@@ -146,6 +146,15 @@ the "paragraph-output.csv" contains per-paragraph output, we can run
 
 to get ranked scores as more paragraphs as used.
 
+### User Input
+"docqa/scripts/run_on_user_documents.py" serves as a heavily commented example of how to run our models 
+and pre-processing pipeline on other kinds of text. For example:
+ 
+ `docqa/scripts/run_on_user_text.py /path/to/model/directory 
+ "Who wrote the satirical essay 'A Modest Proposal'?"  
+ ~/data/triviaqa/evidence/wikipedia/A_Modest_Proposal.txt 
+ ~/data/triviaqa/evidence/wikipedia/Jonathan_Swift.txt`
+ 
 ## Pre-Trained Models
 We have four pre-trained models
 
