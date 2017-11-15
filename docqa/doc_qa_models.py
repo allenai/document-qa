@@ -1,9 +1,9 @@
-from typing import List, Optional, Dict, Union
+from typing import List, Optional, Dict, Union, Set
 
 import tensorflow as tf
 from tensorflow import Tensor
 
-from docqa.data_processing.qa_training_data import ParagraphAndQuestionDataset
+from docqa.data_processing.qa_training_data import ParagraphAndQuestionDataset, ParagraphAndQuestionSpec
 from docqa.encoder import DocumentAndQuestionEncoder
 from docqa.model import Model, Prediction
 from docqa.nn.embedder import WordEmbedder, CharWordEmbedder
@@ -45,7 +45,7 @@ class ParagraphQuestionModel(Model):
         if self.char_embed is not None:
             self.char_embed.embeder.set_vocab(corpus)
 
-    def set_inputs(self, datasets: List[ParagraphAndQuestionDataset], word_vec_loader):
+    def set_inputs(self, datasets: List[ParagraphAndQuestionDataset], word_vec_loader=None):
         voc = set()
         for dataset in datasets:
             voc.update(dataset.get_vocab())
@@ -56,7 +56,10 @@ class ParagraphQuestionModel(Model):
 
         return self.set_input_spec(input_spec, voc, word_vec_loader)
 
-    def set_input_spec(self, input_spec, voc, word_vec_loader):
+    def set_input_spec(self, input_spec: ParagraphAndQuestionSpec, voc: Set[str],
+                       word_vec_loader: ResourceLoader=None):
+        if word_vec_loader is None:
+            word_vec_loader = ResourceLoader()
         if self.word_embed is not None:
             self.word_embed.init(word_vec_loader, voc)
         if self.char_embed is not None:
