@@ -133,7 +133,7 @@ class SquadCorpus(Configurable):
     def __init__(self):
         dir = join(CORPUS_DIR, self.NAME)
         if not exists(dir) or not isdir(dir):
-            raise ValueError("No directory %d, corpus not built yet?" + dir)
+            raise ValueError("No directory %s, corpus not built yet?" % dir)
         self.dir = dir
 
     @property
