@@ -41,7 +41,7 @@ def main():
                         help="(for testing) run on a subset of questions")
     parser.add_argument('--answer_bounds', nargs='+', type=int, default=[17],
                         help="Max size of answer")
-    parser.add_argument('-b', '--batch_size', type=int, default=200,
+    parser.add_argument('-b', '--batch_size', type=int, default=128,
                         help="Batch size, larger sizes can be faster but uses more memory")
     parser.add_argument('-s', '--step', default=None,
                         help="Weights to load, can be a checkpoint step or 'latest'")
