@@ -1,6 +1,7 @@
 nltk
 tqdm
 ujson
-pandas
+# We require >=0.18 to support the "expanding" function
+pandas>=0.18.0
 scikit-learn
 scipy
