@@ -1,29 +1,29 @@
 from threading import Thread
-from typing import List, Dict
+from typing import List, Dict, Any
 
 import numpy as np
 import tensorflow as tf
-from docqa.configurable import Configurable
-from docqa.dataset import Dataset
 from scipy.stats import kendalltau, spearmanr
 from tqdm import tqdm
-from docqa.utils import flatten_iterable
 
+from docqa.configurable import Configurable
 from docqa.data_processing.qa_training_data import ContextAndQuestion
 from docqa.data_processing.span_data import compute_span_f1
+from docqa.dataset import Dataset
 from docqa.model import Model, Prediction
 from docqa.squad.squad_official_evaluation import exact_match_score as squad_official_em_score
 from docqa.squad.squad_official_evaluation import f1_score as squad_official_f1_score
-from docqa.triviaqa.trivia_qa_eval import f1_score as triviaqa_f1_score
 from docqa.triviaqa.trivia_qa_eval import exact_match_score as triviaqa_em_score
+from docqa.triviaqa.trivia_qa_eval import f1_score as triviaqa_f1_score
+from docqa.utils import flatten_iterable
 
 
 class Evaluation(object):
     """
-    Evaluation of model, include scalar summaries and per-example records
+    Evaluation of model, includes scalar summaries and per-example records
     """
 
-    def __init__(self, scalars, per_sample: Dict[str, List]=None):
+    def __init__(self, scalars: Dict[str, Any], per_sample: Dict[str, List]=None):
         self.scalars = scalars
         self.per_sample = per_sample
 
@@ -62,7 +62,7 @@ class Evaluator(Configurable):
         Build a summary given the input data `input` and the result of the variables requested
         from `tensors_needed`. `true_len` is the total number of examples seen (or an approximation)
         excluding any pre-filtering that was done, its used for the case where some examples could not be
-        processed by the model (i.e. too large) and were removed, but we still want to report
+        processed by the model (e.g. too large) and were removed, but we still want to report
         accurate percentages on the entire dataset.
         """
         raise NotImplementedError()
@@ -73,7 +73,7 @@ class LossEvaluator(Evaluator):
     def tensors_needed(self, _):
         return dict(loss=tf.add_n(tf.get_collection(tf.GraphKeys.LOSSES)))
 
-    def evaluate(self, data, true_len, loss, **kwargs):
+    def evaluate(self, data, true_len, loss):
         return Evaluation({"loss": np.mean(loss)})
 
 
@@ -258,7 +258,9 @@ class MultiParagraphSpanEvaluator(Evaluator):
     evaluation scripts. Instead we report some numbers aimed to get an approximate idea of what is going on:
 
     1: question-text-{em|f1}, accuracy on questions-document pairs (or just questions if `per_doc=False`)
-       using all sampled paragraphs when taking the model's highest confidence answer
+       using all sampled paragraphs when taking the model's highest confidence answer.
+       This tends to be an overly-confident estimate since the sampled paragraphs are usually biased
+       towards using paragraphs that contain the correct answer
     2: paragraph-text-{em|f1}, accuracy on answer-containing paragraphs (if `paragraph_level=True`)
     3: The Kendel Tau relation between the model's confidence and the paragraph's f1/em score,
        (if `k_tau=True`) intended to measure how valid the model's confidence score is
@@ -381,7 +383,7 @@ class ConfidenceSpanEvaluator(Evaluator):
 
 
 class EvaluatorRunner(object):
-    """ Knows how to run a list of evluators """
+    """ Knows how to run a list of evaluators """
 
     def __init__(self, evaluators: List[Evaluator], model: Model):
         self.evaluators = evaluators
@@ -446,7 +448,7 @@ class EvaluatorRunner(object):
 
 
 class AysncEvaluatorRunner(object):
-    """ Knows how to run a list of evluators use a tf.Queue to feed in the data """
+    """ Knows how to run a list of evaluators use a tf.Queue to feed in the data """
 
     def __init__(self, evaluators: List[Evaluator], model: Model, queue_size: int):
         placeholders = model.get_placeholders()
@@ -455,7 +457,9 @@ class AysncEvaluatorRunner(object):
         self.enqueue_op = self.eval_queue.enqueue(placeholders)
         self.dequeue_op = self.eval_queue.dequeue()
         self.close_queue = self.eval_queue.close(True)
-        for x,p in zip(placeholders, self.dequeue_op):
+
+        # Queue in this form has not shape info, so we have to add it in back here
+        for x, p in zip(placeholders, self.dequeue_op):
             p.set_shape(x.shape)
         self.evaluators = evaluators
         self.queue_size = self.eval_queue.size()
