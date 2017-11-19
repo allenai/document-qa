@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en-us">
+    <head>
+        <title>Document QA</title>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/react/15.6.1/react.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/react/15.6.1/react-dom.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/react-bootstrap/0.31.2/react-bootstrap.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/6.26.0/babel.min.js"></script>
+        <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/latest/css/bootstrap.min.css">
+        <style>
+        .loader {
+          border: 4px solid #f3f3f3;
+          border-radius: 50%;
+          border-top: 4px solid blue;
+          border-bottom: 4px solid blue;
+          width: 20px;
+          height: 20px;
+          -webkit-animation: spin 2s linear infinite;
+          animation: spin 2s linear infinite;
+        }
+
+        @-webkit-keyframes spin {
+          0% { -webkit-transform: rotate(0deg); }
+          100% { -webkit-transform: rotate(360deg); }
+        }
+
+        @keyframes spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+
+        .hidden { display:none; }
+        </style>
+    </head>
+
+    <body>
+        <div id="root"></div>
+        <script type="text/babel">
+var FormControl = ReactBootstrap.FormControl
+var ControlLabel = ReactBootstrap.ControlLabel
+var InputGroup = ReactBootstrap.InputGroup
+var Button = ReactBootstrap.Button
+var Glyphicon = ReactBootstrap.Glyphicon
+var Panel = ReactBootstrap.Panel
+var ListGroup = ReactBootstrap.ListGroup
+var Alert = ReactBootstrap.Alert
+var FormGroup = ReactBootstrap.FormGroup
+
+
+function build_highlighted_text(answers, text, normalizer) {
+    answers = answers.slice().sort((a,b) => a.start - b.start)
+
+    var elements = []
+
+    var on_ix = 0
+    for (var i = 0; i < answers.length; i++) {
+        var ans = answers[i]
+        var conf = ans.conf / normalizer
+        if (conf > 0.04) {
+            if (ans.start !== on_ix) {
+                elements.push(<span>{text.slice(on_ix, ans.start)}</span>)
+            }
+            var color = "rgba(255," + Math.floor((1.0 - conf) * 255) + ",0,0.5)"
+            elements.push(<span style={{"backgroundColor": color}}>{text.slice(ans.start, ans.end)}</span>)
+        } else {
+            elements.push(<span>{text.slice(on_ix, ans.end)}</span>)
+        }
+        on_ix = ans.end
+    }
+    if (on_ix < text.length) {
+        elements.push(<span>{text.slice(on_ix, text.length)}</span>)
+    }
+    return elements
+}
+
+function trim(str) {
+    return str.replace(/^\s\s*/, '').replace(/\s\s*$/, '');
+}
+
+class SearchBar extends React.Component {
+    constructor(props) {
+        super(props);
+        this.state = {
+            query: '',  // Query typed into the search bar
+            working: false,  // Are we busy running query
+            mode: "web"  // Mode selected using the radio buttons
+        };
+    }
+
+    updateQuery = (e) => {
+        this.setState({query: e.target.value});
+    }
+
+    updateMode = (e) => {
+        console.log(e.target.value)
+        this.setState({mode: e.target.value});
+    }
+
+    runPostRequest = (text) => {
+        if (text.length > 500000) {
+            self.setState({working: false});
+            self.props.onError("Document too long")
+            return
+        }
+
+        fetch('/answer-from', {
+            method: 'POST',
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                question: this.state.query,
+                document: text,
+            })
+        }).then((response) => {
+            if (!response.ok || this.state.query === "__error__" /* For debugging */) {
+                this.setState({working: false})
+                this.props.onError("Server Error. The server might be overloaded.")
+                throw Error(response.statusText);
+            }
+            return response.json();
+        }).then((json) => {
+            this.setState({working: false});
+            this.props.onAnswer(json)
+        })
+    }
+
+    executeQuery = (e) => {
+        e.preventDefault()
+        if (this.state.query === "") {
+            return
+        }
+        if (this.state.working) {
+            return;
+        }
+
+        this.setState({working: true});
+
+        if (this.state.mode === "doc") {
+            var userFiles = document.getElementById("userFile").files
+            if (userFiles.length == 0) {
+                this.setState({working: false});
+                return false;
+            }
+            var fileReader = new FileReader()
+            var self = this
+            fileReader.onload = function (fileLoadedEvent) {
+                if (console.log(fileLoadedEvent.error !== undefined)) {
+                    self.setState({working: false});
+                    self.props.onError("Error uploading file")
+                    return
+                }
+                var text = trim(fileLoadedEvent.target.result);
+                if (text.length === 0) {
+                    self.setState({working: false});
+                    self.props.onError("Document is empty")
+                    return
+                }
+                self.runPostRequest(text);
+            };
+            fileReader.onabort = function (fileLoadedEvent) {
+                self.setState({working: false});
+                self.props.onError("Error uploading file")
+            }
+            fileReader.readAsText(userFiles[0], "UTF-8");
+        } else if (this.state.mode === "web") {
+            fetch("/answer?question=" + this.state.query).then((response) => {
+                if (!response.ok || this.state.query === "__error__" /* For debugging */) {
+                    this.setState({working: false})
+                    this.props.onError("Server Error. The server might be overloaded.")
+                    throw Error(response.statusText);
+                }
+                return response.json();
+            }).then((json) => {
+                this.setState({working: false});
+                this.props.onAnswer(json)
+            })
+        } else if (this.state.mode === "text") {
+            var text = trim(document.getElementById("userText").value)
+            if (text.length === 0) {
+                this.setState({working: false})
+                return false;
+            }
+            this.runPostRequest(text);
+        }
+        return false
+    }
+
+    render() {
+        var searchIcon;
+        if (this.state.working) {
+            searchIcon = <div className="loader"></div>
+        } else {
+            searchIcon = <Glyphicon glyph="search"/>
+        }
+        return <div><form>
+            <FormGroup>
+                <ControlLabel style={{"width": "100%"}}>
+                    <span>Ask me Anything </span>
+                    <a style={{"float": "right"}} href="about.html">About</a>
+                </ControlLabel>
+                <InputGroup >
+                    <FormControl
+                            type="text"
+                            disabled={this.state.working}
+                            placeholder="Your Question"
+                            onChange={this.updateQuery}
+                            value={this.state.query}/>
+                    <InputGroup.Button>
+                        <Button onClick={this.executeQuery}
+                                disabled={this.state.working}
+                                type="submit">
+                            {searchIcon}
+                        </Button>
+                    </InputGroup.Button>
+                </InputGroup>
+            </FormGroup>
+        </form>
+      <form style={{"display": "inline"}}>
+          Search: {' '}
+        <input type="radio" name="barGroup" defaultChecked="true"
+               disabled={this.state.working} onClick={this.updateMode}
+               value="web"/>{' '} Web {' '}
+        <input type="radio" name="barGroup" onClick={this.updateMode}
+               disabled={this.state.working} value="text"/>{' '} Text {' '}
+        <input type="radio" name="barGroup" onClick={this.updateMode}
+               disabled={this.state.working} value="doc"/>{' '} Document {' '} {' '}
+      </form>
+        <span className={this.state.mode !== "doc" ? 'hidden' : ''}>
+                <FormControl type="file" id="userFile"
+                             style={{"display": "inline"}}></FormControl>
+        </span>
+        <div className={this.state.mode !== "text" ? 'hidden' : ''}>
+            <FormControl componentClass="textarea"
+                         id="userText"
+                         placeholder="Enter text, separate paragraphs by new lines"
+                         disabled={this.state.working}
+                         style={{ height: 150, resize: "vertical"}}/>
+        </div>
+        </div>
+    }
+}
+
+
+class QueryApp extends React.Component {
+    constructor(props) {
+        super(props);
+        this.state = {
+            answerResponse: null,  // Response we are showing
+            error: null  // Error message we are showing
+        };
+    }
+
+    dissmissError = (e) => {
+        this.setState({error: null});
+    }
+
+    onError = (msg) => {
+         this.setState({error: msg});
+    }
+
+    onAnswer = (data) => {
+        this.setState({answerResponse: data});
+    }
+
+    render() {
+        var alert = null;
+        if (this.state.error !== null) {
+            alert = <div>
+                <Alert bsStyle="warning" style={{"padding": "7px"}}>
+                    <span style={{"paddingRight": "10px"}}>
+                        {this.state.error}
+                    </span>
+                    <Button bsStyle="warning" onClick={this.dissmissError}>Dismiss</Button>
+                </Alert>
+            </div>
+        }
+
+        var paragraphs = [];
+        var ans = this.state.answerResponse
+        var answerDisplay;
+        var introDisplay;
+        if (ans !== null) {
+            var best_para = ans[0]
+            var best_answer = best_para.answers[0]
+            var answer_text = best_para.text.slice(best_answer.start, best_answer.end)
+
+            for (var i = 0; i < ans.length; i++) {
+                var para_resp = ans[i]
+                var footer;
+                if (para_resp.source_url === null) {
+                    footer = <span>{para_resp.source_name}</span>
+                } else {
+                    footer = <a href={para_resp.source_url}>{para_resp.source_name}</a>
+                }
+                var text = build_highlighted_text(para_resp.answers, para_resp.text, best_answer.conf)
+                paragraphs.push(
+                        <Panel footer={footer} key={"Para" + paragraphs.length} style={{"whiteSpace": "pre-line"}}>
+                            {text}
+                        </Panel>
+                )
+            }
+
+            answerDisplay = (
+                    <div>
+                        <h5>Best Answer</h5>
+                        <div>{answer_text}</div>
+                        <h5>{"Searched " + ans.length + " paragraphs"}</h5>
+                        <ListGroup>
+                            {paragraphs}
+                        </ListGroup>
+                    </div>
+            )
+            introDisplay = null
+        } else {
+            answerDisplay = null;
+            introDisplay = (
+                <div style={{"marginBottom": "35px"}}>
+                    <h2>Question Answering by Reading Documents Demo</h2>
+                        <strong>Intro:</strong> This is a demo from
+                        "<a href="https://arxiv.org/abs/1710.10723">Simple and Effective Multi-Paragraph Reading Comprehension</a>."
+                        The system answers questions by finding relevant documents on the web and reading them
+                        to locate an answer. Its works best with short-answer trivia questions.
+                    <p><strong>Usage:</strong> Type a question into the search bar and click the search icon or press enter.
+                        You can also use your own documents (must be plain text,
+                        with newline separated paragraphs) by typing/uploading one using the bottom controls.
+                        <br></br>
+                    </p>
+                </div>
+            )
+        }
+
+        return (
+            <div style={{"maxWidth":1000, "margin": "auto"}}>
+                {introDisplay}
+                <SearchBar onError={this.onError} onAnswer={this.onAnswer}></SearchBar>
+                {alert}
+                {answerDisplay}
+            </div>
+        )
+    }
+}
+
+ReactDOM.render(
+  <QueryApp/>,
+  document.getElementById('root')
+);
+
+        </script>
+    </body>
+</html>

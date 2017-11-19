@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en-us">
+
+    <body>
+
+    <h3>Introduction</h3>
+    This is a demonstration of a question answering system from the <a href="https://allenai.org">Allen Institute for Artificial Intelligence</a>
+
+    <h3>How to Use it</h3>
+    Type a question into the search box and click the search icon or press enter, the system will return its best guess as to the answer.
+    Below that we show the text that was searched to find the answer. The answer returned will be highlighted in red, other
+    candidate locations that were given a comparable score will be highlighted in lighter shades.
+    Be patient, answering a question can take 30+ seconds.
+    <br><br>
+    To try to extract the answer from your own document, instead of the using the web, set Search to "Document"
+    and upload a document, or set Search to "Text" and type/copy in your own document. The document must be plain text
+    with paragraphs separated by newlines. Your results may vary using this approach
+    since the model was only optimized for using web search results.
+
+    <h3>How it Works</h3>
+    The system will (unless you provided a document) run a web search on the question, and additionally
+    try to identify Wikipedia articles about entities mentioned in the question. The resulting documents will
+    be passed to a machine learning algorithm which will try to read the text and identify a span of text within one
+    of the documents that answers your questions. No knowledge bases or other sources of information are used.
+
+    <h3>Example Questions</h3>
+    <ul>
+        <li>Who won the World Cup in 2014?</li>
+        <li>What is a group of porcupines called?</li>
+        <li>Which artist created the sculpture "The Thinker"?</li>
+        <li>Where did Harry Potter go to school?</li>
+        <li>What has the strongest magnet field in the Universe?</li>
+        <li>The reaction where two atoms of hydrogen combine to form an atom of helium is called what?</li>
+        <li>Who the president of Spain?</li>
+    </ul>
+
+    <h3>Weaknesses/Limitations</h3>
+    The system can answer short answer questions, most other forms of questions are unlikely work, including:
+    <ul>
+        <li>yes/no questions ("Are tomatoes vegetables?")</li>
+        <li>math problems ("What is 21*123?")</li>
+        <li>multiple choice questions ("Which is taller, the Space Needle taller or the Empire States building?")</li>
+        <li>questions that do not have a concrete answer or require longer output ("What happened during WW2?", "Who is Barrack Obama?")</li>
+        <li>questions that ask for a list ("What are some of the uses of aluminum?")</li>
+    </ul>
+
+    The system has some weaknesses you might observe
+    <ul>
+        <li>Time: It tends to return answers that might have once been true, but are not true currently.</li>
+        <li>Fact vs. Opinion: It does not have a good sense of when a statement can be trusted as a fact.</li>
+        <li>Complex reasoning: It can perform multiple steps of inference (ex "Who won the world Cup during Obama's first term as President?")</li>
+    </ul>
+
+    <h3>References</h3>
+    <ul>
+    <li>Paper: <a href="https://arxiv.org/abs/1710.10723">Simple and Effective Multi-Paragraph Reading Comprehension</a></li>
+    <li>Code: <a href="https://github.com/allenai/document-qa">github.com/allenai/document-qa</a></li>
+    </ul>
+
+    <!-- Vague effort to avoid having the email crawled by writing it in js -->
+    <script language="JavaScript">
+    var username = "csquared";
+    var hostname = "cs.washington.edu";
+    var linktext = username + "@" + hostname ;
+    document.write("<h3>Contact</h3><ul><li>Christopher Clark, " + linktext + "</li></ul>");
+    </script>
+
+    </body>
+</html>
