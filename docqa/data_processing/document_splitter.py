@@ -237,11 +237,12 @@ class DocumentSplitter(Configurable):
             out.append(ExtractedParagraphWithAnswers(para.text, para.start, para.end, para_spans))
         return out
 
-    def split_inverse(self, paras: List[ParagraphWithInverse]) -> List[ParagraphWithInverse]:
+    def split_inverse(self, paras: List[ParagraphWithInverse], delim="\n") -> List[ParagraphWithInverse]:
         """
         Split a document consisting of `ParagraphWithInverse` objects
+        `delim` will be added to the original_txt of between each paragraph
         """
-        full_para = ParagraphWithInverse.concat(paras, "\n")
+        full_para = ParagraphWithInverse.concat(paras, delim)
 
         split_docs = self.split([x.text for x in paras])
 
