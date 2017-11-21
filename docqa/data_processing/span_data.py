@@ -132,7 +132,7 @@ def get_best_span_from_sent_predictions(per_sent_start_pred, per_sent_end_pred, 
     return best_word_span, max_val
 
 
-def top_disjoint_spans(span_scores, bound: int, n_spans: int):
+def top_disjoint_spans(span_scores, bound: int, n_spans: int, spans):
     """
     Given a n_token x n_tokens matrix of spans scores, return the top-n non-overlapping spans
     and their scores
@@ -151,12 +151,13 @@ def top_disjoint_spans(span_scores, bound: int, n_spans: int):
     for s, e in sorted_ux:
         # the span must either start after or end before each existing spans
         if np.all(np.logical_or(cur_spans[:spans_found, 0] > e, cur_spans[:spans_found, 1] < s)):
-            cur_spans[spans_found, 0] = s
-            cur_spans[spans_found, 1] = e
-            cur_scores[spans_found] = span_scores[s, e]
-            spans_found += 1
-            if spans_found == n_spans:
-                break
+            if spans[s][0] < spans[e][1]:  # Don't select zero length spans
+                cur_spans[spans_found, 0] = s
+                cur_spans[spans_found, 1] = e
+                cur_scores[spans_found] = span_scores[s, e]
+                spans_found += 1
+                if spans_found == n_spans:
+                    break
 
     return cur_spans[:spans_found], cur_scores[:spans_found]
 
