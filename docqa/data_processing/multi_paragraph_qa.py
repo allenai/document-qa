@@ -347,9 +347,18 @@ class StratifiedParagraphSetDataset(Dataset):
                  true_len: int,
                  batch_size: int,
                  force_answer: bool,
-                 overample_first_answer: List[int],
+                 oversample_first_answer: List[int],
                  merge: bool):
-        self.overample_first_answer = overample_first_answer
+        """
+        :param true_len: Number questions before any filtering was done
+        :param batch_size: Batch size to use
+        :param force_answer: Require an answer exists for at least
+        one paragraph for each question each batch
+        :param oversample_first_answer: Over sample the top-ranked answer-containing paragraphs
+        by duplicating them the specified amount
+        :param merge: Merge all selected paragraphs for each question into a single super-paragraph
+        """
+        self.overample_first_answer = oversample_first_answer
         self.questions = questions
         self.merge = merge
         self.true_len = true_len
@@ -402,6 +411,7 @@ class StratifiedParagraphSetDataset(Dataset):
 
     def _build_expanded_batches(self, questions):
         out = []
+        # Decide what paragraphs to use for each question
         for i, q in enumerate(questions):
             order = self._order[i]
             out.append(ParagraphSelection(q, order[self._on[i]]))
@@ -410,8 +420,10 @@ class StratifiedParagraphSetDataset(Dataset):
                 self._on[i] = 0
                 np.random.shuffle(order)
 
+        # Sort by context length
         out.sort(key=lambda x: x.n_context_words)
 
+        # Yield the correct batches
         group = 0
         for selection_batch in self.batcher.get_epoch(out):
             batch = []
@@ -419,7 +431,7 @@ class StratifiedParagraphSetDataset(Dataset):
                 q = selected.question
                 if self.merge:
                     paras = [q.paragraphs[i] for i in selected.selection]
-                    # Sort paragraph my reading order, not rank order
+                    # Sort paragraph by reading order, not rank order
                     paras.sort(key=lambda x: x.get_order())
                     answer_spans = []
                     text = []
