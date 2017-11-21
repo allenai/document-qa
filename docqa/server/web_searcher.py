@@ -8,12 +8,14 @@ from aiohttp import ClientSession
 from os.path import exists
 
 BING_API = "https://api.cognitive.microsoft.com/bing/v5.0/search"
+BING_API_7 = "https://api.cognitive.microsoft.com/bing/v7.0/search"
 
 
 class AsyncWebSearcher(object):
     """ Runs search requests and returns the results """
 
-    def __init__(self, bing_api):
+    def __init__(self, bing_api, v7=False):
+        self.v7 = v7
         if bing_api is None:
             raise ValueError("Need a bing API key")
         self.bing_api = bing_api
@@ -22,8 +24,9 @@ class AsyncWebSearcher(object):
         # avoid quoting the entire question, some triviaqa questions have this form
         # TODO is this the right place to do this?
         question = question.strip("\"\' ")
+        url = BING_API_7 if self.v7 else BING_API
         async with ClientSession(headers={"Ocp-Apim-Subscription-Key": self.bing_api}) as sess:
-            async with sess.get(url=BING_API,
+            async with sess.get(url=url,
                                 params=dict(count=n_docs, q=question, mkt="en-US")) as resp:
                 data = await resp.json()
 

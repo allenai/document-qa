@@ -146,6 +146,7 @@ def main():
 
     parser.add_argument('--tagme_api_key', help="Key to use for TAGME (tagme.d4science.org/tagme)")
     parser.add_argument('--bing_api_key', help="Key to use for bing searches")
+    parser.add_argument('--bing_version', choices=["5", "7"], help="Bing search version")
     parser.add_argument('--tagme_thresh', default=0.2, type=float)
     parser.add_argument('--no_wiki', action="store_true", help="Dont use TAGME")
     parser.add_argument('--n_web', type=int, default=10, help='Number of web docs to fetch')
@@ -198,6 +199,7 @@ def main():
             loader,
             bing_api_key,
             tagme_api_key=tagme_api_key,
+            bing_api_7=args.bing_version == "7",
             n_dl_threads=args.n_dl_threads,
             blacklist_trivia_sites=args.blacklist_trivia_sites,
             download_timeout=args.download_timeout,

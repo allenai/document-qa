@@ -44,12 +44,13 @@ class QaSystem(object):
                  wiki_cache: str,
                  paragraph_splitter: DocumentSplitter,
                  paragraph_selector: ParagraphFilter,
-                 vocab: Union[str, Set[str]],
+                 vocab: Union[str, None, Set[str]],
                  model: Union[ParagraphQuestionModel, ModelDir],
                  loader: ResourceLoader=ResourceLoader(),
                  bing_api_key=None,
                  tagme_api_key=None,
                  blacklist_trivia_sites: bool=False,
+                 bing_api_7=False,
                  n_dl_threads: int=5,
                  span_bound:int=8,
                  tagme_threshold: Optional[float]=0.2,
@@ -62,7 +63,7 @@ class QaSystem(object):
         self.tagme_api_key = tagme_api_key
 
         if bing_api_key is not None:
-            self.searcher = AsyncWebSearcher(bing_api_key)
+            self.searcher = AsyncWebSearcher(bing_api_key, bing_api_7)
             self.text_extractor = AsyncBoilerpipeCliExtractor(n_dl_threads, download_timeout)
         else:
             self.text_extractor = None
@@ -95,15 +96,39 @@ class QaSystem(object):
         with self.sess.as_default():
             pred = self.model.get_prediction()
 
-        model.restore_checkpoint(self.sess)
+        if isinstance(model, ModelDir):
+            model.restore_checkpoint(self.sess)
 
         self.span_scores = pred.get_span_scores()
         self.span, self.score = pred.get_best_span(span_bound)
         self.tokenizer = NltkAndPunctTokenizer()
         self.sess.graph.finalize()
 
+    def _preprocess(self, paragraphs: List[WebParagraph]) -> List[WebParagraph]:
+        if self.model.preprocessor is not None:
+            prepped = []
+            for para in paragraphs:
+                if hasattr(para, "spans"):
+                    spans = para.spans
+                else:
+                    spans = None
+
+                text, _, inv = self.model.preprocessor.encode_paragraph([], para.text, para.start == 0,
+                                                                          np.zeros((0, 2), dtype=np.int32), spans)
+                prepped.append(WebParagraph(
+                    [text], para.original_text, inv, para.paragraph_num,
+                    para.start, para.end,
+                    para.source_name, para.source_url
+                ))
+            return prepped
+        else:
+            return paragraphs
+
     async def answer_question(self, question: str) -> Tuple[np.ndarray, List[WebParagraph]]:
-        """ Answer a question using web search """
+        """
+        Answer a question using web search, return the paragraphs and per-span confidence scores
+        in the form of a (batch, max_num_context_tokens, max_num_context_tokens) array
+        """
 
         context = await self.get_question_context(question)
         question = self.tokenizer.tokenize_paragraph_flat(question)
@@ -111,6 +136,21 @@ class QaSystem(object):
         out = self._get_span_scores(question, context)
         self.log.info("Computing answer spans took %.5f seconds" % (time.perf_counter() - t0))
         return out
+
+    async def answer_question_spans(self, question: str) -> Tuple[np.ndarray, np.ndarray, List[WebParagraph]]:
+        """
+        Answer a question using web search, return the top spans and confidence scores for each paragraph
+        """
+
+        paragraphs = await self.get_question_context(question)
+        paragraphs = self._preprocess(paragraphs)
+        question = self.tokenizer.tokenize_paragraph_flat(question)
+        t0 = time.perf_counter()
+        qa_pairs = [ParagraphAndQuestion(c.get_context(), question, None, "") for c in paragraphs]
+        encoded = self.model.encode(qa_pairs, False)
+        spans, scores = self.sess.run([self.span, self.score], encoded)
+        self.log.info("Computing answer spans took %.5f seconds" % (time.perf_counter() - t0))
+        return spans, scores, paragraphs
 
     def answer_with_doc(self, question: str, doc: str) -> Tuple[np.ndarray, List[WebParagraph]]:
         """ Answer a question using the given text as a document """
@@ -134,28 +174,8 @@ class QaSystem(object):
         self.log.info("Computing answer spans took %.5f seconds" % (time.perf_counter() - t0))
         return span_scores
 
-    def _get_span_scores(self, question: List[str], paragraphs: List[ParagraphWithInverse]):
-        """
-        Answer a question using the given paragraphs, returns both the span scores and the
-        pre-processed paragraphs the span are valid for
-        """
-        if self.model.preprocessor is not None:
-            prepped = []
-            for para in paragraphs:
-                if hasattr(para, "spans"):
-                    spans = para.spans
-                else:
-                    spans = None
-
-                text, _, inv = self.model.preprocessor.encode_paragraph([], para.text, para.start == 0,
-                                                                          np.zeros((0, 2), dtype=np.int32), spans)
-                prepped.append(WebParagraph(
-                    [text], para.original_text, inv, para.paragraph_num,
-                    para.start, para.end,
-                    para.source_name, para.source_url
-                ))
-            paragraphs = prepped
-
+    def _get_span_scores(self, question: List[str], paragraphs: List[WebParagraph]):
+        paragraphs = self._preprocess(paragraphs)
         qa_pairs = [ParagraphAndQuestion(c.get_context(), question, None, "") for c in paragraphs]
         encoded = self.model.encode(qa_pairs, False)
         return self.sess.run(self.span_scores, encoded), paragraphs
@@ -189,6 +209,7 @@ class QaSystem(object):
         """
         Find a set of paragraphs from the web that are relevant to the given question
         """
+
         tokenized_paragraphs = []
         if self.tagme_threshold is not None:
             self.log.info("Query tagme for %s", question)
