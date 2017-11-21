@@ -29,7 +29,7 @@ class TextPreprocessor(Configurable):
                          is_first, answer_spans: np.ndarray,
                          token_spans=None) -> Tuple[List[str], np.ndarray, Optional[np.ndarray]]:
         """
-        Returns updated (and flattended) text, answer_spans, and token_spans
+        Returns updated (and flattened) text, answer_spans, and token_spans
         """
         raise NotImplementedError()
 

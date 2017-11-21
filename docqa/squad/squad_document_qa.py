@@ -81,6 +81,11 @@ class QuestionAndSquadParagraph(ContextAndQuestion):
 
 
 class SquadTfIdfRanker(Preprocessor):
+    """
+    TF-IDF ranking for SQuAD, this does the same thing as `TopTfIdf`, but its supports efficient usage
+    when have many many questions per document
+    """
+
     def __init__(self, stop, n_to_select: int, force_answer: bool, text_process: TextPreprocessor=None):
         self.stop = stop
         self.n_to_select = n_to_select

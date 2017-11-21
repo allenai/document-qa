@@ -43,6 +43,7 @@ def main():
     model = get_model(50, 100, args.mode, pre)
 
     if mode == "paragraph":
+        # Run in the "standard" known-paragraph setting
         if model.preprocessor is not None:
             raise NotImplementedError()
         n_epochs = 26
