@@ -35,8 +35,9 @@ class WebParagraph(ParagraphWithInverse):
 class QaSystem(object):
     """
     End-to-end QA system, uses web-requests to get relevant documents and a model
-    to scores candidate answer spans.
+    to score candidate answer spans.
     """
+    # TODO fix logging level
 
     _split_regex = re.compile("\s*\n\s*")  # split includes whitespace to avoid empty paragraphs
 
@@ -48,27 +49,37 @@ class QaSystem(object):
                  model: Union[ParagraphQuestionModel, ModelDir],
                  loader: ResourceLoader=ResourceLoader(),
                  bing_api_key=None,
+                 bing_version="v5.0",
                  tagme_api_key=None,
                  blacklist_trivia_sites: bool=False,
-                 bing_api_7=False,
                  n_dl_threads: int=5,
-                 span_bound:int=8,
+                 span_bound: int=8,
                  tagme_threshold: Optional[float]=0.2,
                  download_timeout: int=None,
-                 n_web_docs=10):
+                 n_web_docs=10,
+                 loop=None):
         self.log = logging.getLogger('qa_system')
         self.tagme_threshold = tagme_threshold
         self.n_web_docs = n_web_docs
         self.blacklist_trivia_sites = blacklist_trivia_sites
         self.tagme_api_key = tagme_api_key
 
+        self.client_sess = ClientSession(loop=loop)
+
         if bing_api_key is not None:
-            self.searcher = AsyncWebSearcher(bing_api_key, bing_api_7)
+            if bing_version is None:
+                raise ValueError("Must specify a Bing version if using a bing_api key")
+            self.searcher = AsyncWebSearcher(bing_api_key, bing_version, loop=loop)
             self.text_extractor = AsyncBoilerpipeCliExtractor(n_dl_threads, download_timeout)
         else:
             self.text_extractor = None
             self.searcher = None
-        self.wiki_corpus = WikiCorpus(wiki_cache, keep_inverse_mapping=True)
+
+        if self.tagme_threshold is not None:
+            self.wiki_corpus = WikiCorpus(wiki_cache, keep_inverse_mapping=True, loop=loop)
+        else:
+            self.wiki_corpus = None
+
         self.paragraph_splitter = paragraph_splitter
         self.paragraph_selector = paragraph_selector
         self.model_dir = model
@@ -92,7 +103,7 @@ class QaSystem(object):
 
         self.model.set_input_spec(ParagraphAndQuestionSpec(None), voc, loader)
 
-        self.sess = tf.Session()
+        self.sess = tf.Session(config=tf.ConfigProto(allow_soft_placement=True))
         with self.sess.as_default():
             pred = self.model.get_prediction()
 
@@ -124,33 +135,34 @@ class QaSystem(object):
         else:
             return paragraphs
 
-    async def answer_question(self, question: str) -> Tuple[np.ndarray, List[WebParagraph]]:
-        """
-        Answer a question using web search, return the paragraphs and per-span confidence scores
-        in the form of a (batch, max_num_context_tokens, max_num_context_tokens) array
-        """
-
-        context = await self.get_question_context(question)
-        question = self.tokenizer.tokenize_paragraph_flat(question)
-        t0 = time.perf_counter()
-        out = self._get_span_scores(question, context)
-        self.log.info("Computing answer spans took %.5f seconds" % (time.perf_counter() - t0))
-        return out
-
     async def answer_question_spans(self, question: str) -> Tuple[np.ndarray, np.ndarray, List[WebParagraph]]:
         """
         Answer a question using web search, return the top spans and confidence scores for each paragraph
         """
 
         paragraphs = await self.get_question_context(question)
-        paragraphs = self._preprocess(paragraphs)
         question = self.tokenizer.tokenize_paragraph_flat(question)
+        paragraphs = self._preprocess(paragraphs)
         t0 = time.perf_counter()
         qa_pairs = [ParagraphAndQuestion(c.get_context(), question, None, "") for c in paragraphs]
         encoded = self.model.encode(qa_pairs, False)
         spans, scores = self.sess.run([self.span, self.score], encoded)
         self.log.info("Computing answer spans took %.5f seconds" % (time.perf_counter() - t0))
         return spans, scores, paragraphs
+
+    async def answer_question(self, question: str) -> Tuple[np.ndarray, List[WebParagraph]]:
+        """
+        Answer a question using web search, return the paragraphs and per-span confidence scores
+        in the form of a (batch, max_num_context_tokens, max_num_context_tokens) array
+        """
+
+        self.log.info("Answering question \"%s\" with web search" % question)
+        context = await self.get_question_context(question)
+        question = self.tokenizer.tokenize_paragraph_flat(question)
+        t0 = time.perf_counter()
+        out = self._get_span_scores(question, context)
+        self.log.info("Computing answer spans took %.5f seconds" % (time.perf_counter() - t0))
+        return out
 
     def answer_with_doc(self, question: str, doc: str) -> Tuple[np.ndarray, List[WebParagraph]]:
         """ Answer a question using the given text as a document """
@@ -194,15 +206,13 @@ class QaSystem(object):
             on_token += n_tokens
         return tokenized_paragraphs
 
-    async def _tagme(self, question):
+    async def _tagme(self, question: str):
         payload = {"text": question,
                    "long_text": 3,
                    "lang": "en",
                    "gcube-token": self.tagme_api_key}
-        async with ClientSession() as sess:
-            async with sess.get(url=TAGME_API, params=payload) as resp:
-                data = await resp.json()
-
+        async with self.client_sess.get(url=TAGME_API, params=payload) as resp:
+            data = await resp.json()
         return [ann_json for ann_json in data["annotations"] if "title" in ann_json]
 
     async def get_question_context(self, question: str) -> List[WebParagraph]:
@@ -263,3 +273,11 @@ class QaSystem(object):
             return []
         question = self.tokenizer.tokenize_sentence(question)
         return self.paragraph_selector.prune(question, tokenized_paragraphs)
+
+    def close(self):
+        if self.wiki_corpus is not None:
+            self.wiki_corpus.close()
+        if self.searcher is not None:
+            self.searcher.close()
+        self.sess.close()
+        self.client_sess.close()

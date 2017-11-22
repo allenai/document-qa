@@ -1,5 +1,6 @@
 import argparse
 import logging
+import sys
 import time
 import ujson
 from os import environ
@@ -8,6 +9,7 @@ from typing import List
 import numpy as np
 import tensorflow as tf
 from sanic import Sanic, response
+from sanic.config import LOGGING
 from sanic.exceptions import ServerError
 from sanic.response import json
 
@@ -21,15 +23,11 @@ from docqa.server.qa_system import WebParagraph, QaSystem
 from docqa.text_preprocessor import WithIndicators
 from docqa.utils import ResourceLoader, LoadFromPath
 
-
 """
 Server for the demo. The server uses the async/await framework so the API calls and 
-downloads can be done asynchronously, allowing the server can answer other queries in the
+web downloads can be done asynchronously, allowing the server to answer other queries in the
 meantime. 
 """
-
-
-log = logging.getLogger('server')
 
 
 class AnswerSpan(object):
@@ -139,16 +137,19 @@ def main():
     parser.add_argument('-t', '--tokens', type=int, default=400,
                         help='Number of tokens to use per paragraph')
     parser.add_argument('--vec_dir', help='Location to find word vectors')
-    parser.add_argument('--n_paragraphs', type=int, default=12,
+    parser.add_argument('--n_paragraphs', type=int, default=15,
                         help="Number of paragraphs to run the model on")
+    parser.add_argument('--paragraphs_to_return', type=int, default=10,
+                        help="Number of paragraphs return to the frontend")
     parser.add_argument('--span_bound', type=int, default=8,
                         help="Max span size to return as an answer")
 
     parser.add_argument('--tagme_api_key', help="Key to use for TAGME (tagme.d4science.org/tagme)")
     parser.add_argument('--bing_api_key', help="Key to use for bing searches")
-    parser.add_argument('--bing_version', choices=["5", "7"], help="Bing search version")
-    parser.add_argument('--tagme_thresh', default=0.2, type=float)
-    parser.add_argument('--no_wiki', action="store_true", help="Dont use TAGME")
+    parser.add_argument('--bing_version', choices=["v5.0", "v7.0"], default="v5.0",
+                        help='Version of Bing API to use (must be compatible with the API key)')
+    parser.add_argument('--tagme_thresh', default=0.2, type=float,
+                        help="TAGME threshold for when to use the identified docs")
     parser.add_argument('--n_web', type=int, default=10, help='Number of web docs to fetch')
     parser.add_argument('--blacklist_trivia_sites', action="store_true",
                         help="Don't use trivia websites")
@@ -157,7 +158,8 @@ def main():
     parser.add_argument('--n_dl_threads', type=int, default=5,
                         help="Number of threads to download documents with")
     parser.add_argument('--request_timeout', type=int, default=60)
-    parser.add_argument('--download_timeout', type=int, default=25)
+    parser.add_argument('--download_timeout', type=int, default=25,
+                        help="Who long to wait before timing out downloads")
     parser.add_argument('--workers', type=int, default=1,
                         help="Number of server workers")
     parser.add_argument('--debug', default=None, choices=["random_model", "dummy_qa"])
@@ -187,53 +189,88 @@ def main():
     else:
         loader = ResourceLoader()
 
-    if args.debug == "dummy_qa":
-        qa = DummyQa()
-    else:
-        qa = QaSystem(
-            args.wiki_cache,
-            MergeParagraphs(args.tokens),
-            ShallowOpenWebRanker(args.n_paragraphs),
-            args.voc,
-            model,
-            loader,
-            bing_api_key,
-            tagme_api_key=tagme_api_key,
-            bing_api_7=args.bing_version == "7",
-            n_dl_threads=args.n_dl_threads,
-            blacklist_trivia_sites=args.blacklist_trivia_sites,
-            download_timeout=args.download_timeout,
-            span_bound=span_bound,
-            tagme_threshold=None if args.no_wiki else args.tagme_thresh,
-            n_web_docs=args.n_web
-        )
+    # Update Sanic's logging to register our class's loggers
+    log_config = LOGGING
+    formatter = "%(asctime)s: %(levelname)s: %(message)s"
+    log_config["formatters"]['my_formatter'] = {
+        'format': formatter,
+        'datefmt': '%Y-%m-%d %H:%M:%S',
+    }
+    log_config['handlers']['stream_handler'] = {
+        'class': "logging.StreamHandler",
+        'formatter': 'my_formatter',
+        'stream': sys.stderr
+    }
+    log_config['handlers']['file_handler'] = {
+        'class': "logging.FileHandler",
+        'formatter': 'my_formatter',
+        'filename': 'logging.log'
+    }
 
-    logging.propagate = False
-    formatter = logging.Formatter("%(asctime)s: %(levelname)s: %(message)s")
-    handler = logging.StreamHandler()
-    handler.setFormatter(formatter)
-    logging.root.addHandler(handler)
-    logging.root.setLevel(logging.DEBUG)
+    # It looks like we have to go and name every logger our own code might
+    # use in order to register it with Sanic
+    log_config["loggers"]['qa_system'] = {
+        'level': 'INFO',
+        'handlers': ['stream_handler', 'file_handler'],
+    }
+    log_config["loggers"]['downloader'] = {
+        'level': 'INFO',
+        'handlers': ['stream_handler', 'file_handler'],
+    }
+    log_config["loggers"]['server'] = {
+        'level': 'INFO',
+        'handlers': ['stream_handler', 'file_handler'],
+    }
 
     app = Sanic()
     app.config.REQUEST_TIMEOUT = args.request_timeout
+    log = logging.getLogger('server')
+
+    @app.listener('before_server_start')
+    async def setup_qa(app, loop):
+        # To play nice with iohttp's async ClientSession objects, we need to construct the QaSystem
+        # inside the event loop.
+        if args.debug == "dummy_qa":
+            qa = DummyQa()
+        else:
+            qa = QaSystem(
+                args.wiki_cache,
+                MergeParagraphs(args.tokens),
+                ShallowOpenWebRanker(args.n_paragraphs),
+                args.voc,
+                model,
+                loader,
+                bing_api_key,
+                bing_version=args.bing_version,
+                tagme_api_key=tagme_api_key,
+                n_dl_threads=args.n_dl_threads,
+                blacklist_trivia_sites=args.blacklist_trivia_sites,
+                download_timeout=args.download_timeout,
+                span_bound=span_bound,
+                tagme_threshold=None if (tagme_api_key is None) else args.tagme_thresh,
+                n_web_docs=args.n_web,
+            )
+        app.qa = qa
+
+    @app.listener('after_server_stop')
+    async def setup_qa(app, loop):
+        app.qa.close()
 
     @app.route("/answer")
     async def answer(request):
         try:
             question = request.args["question"][0]
             if question == "":
-                return response.json(
-                    {'message': 'No question given'},
-                    status=400
-                )
-            spans, paras = await qa.answer_question(question)
+                return response.json({'message': 'No question given'}, status=400)
+            spans, paras = await app.qa.answer_question(question)
             answers = select_answers(paras, spans, span_bound, 10)
+            answers = answers[:args.paragraphs_to_return]
+            best_span = max(answers[0].answers, key=lambda x: x.conf)
+            log.info("Answered \"%s\" (with web search): \"%s\"", question, answers[0].original_text[best_span.start:best_span.end])
             return json([x.to_json() for x in answers])
         except Exception as e:
             log.info("Error: " + str(e))
-
-            raise ServerError("Server Error", status_code=500)
+            raise ServerError(e, status_code=500)
 
     @app.route('/answer-from', methods=['POST'])
     async def answer_from(request):
@@ -247,16 +284,19 @@ def main():
             doc = args["document"]
             if len(doc) > 500000:
                 raise ServerError("Document too large", status_code=400)
-            spans, paras = qa.answer_with_doc(question, doc)
+            spans, paras = app.qa.answer_with_doc(question, doc)
             answers = select_answers(paras, spans, span_bound, 10)
+            answers = answers[:args.paragraphs_to_return]
+            best_span = max(answers[0].answers, key=lambda x: x.conf)
+            log.info("Answered \"%s\" (with user doc): \"%s\"", question, answers[0].original_text[best_span.start:best_span.end])
             return json([x.to_json() for x in answers])
         except Exception as e:
             log.info("Error: " + str(e))
-            raise ServerError("Server Error", status_code=500)
+            raise ServerError(e, status_code=500)
 
     app.static('/', './docqa//server/static/index.html')
     app.static('/about.html', './docqa//service/static/about.html')
-    app.run(host="0.0.0.0", port=8000, workers=args.workers, debug=False)
+    app.run(host="0.0.0.0", port=8000, workers=args.workers, debug=False, log_config=LOGGING)
 
 
 if __name__ == "__main__":

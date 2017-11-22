@@ -134,6 +134,7 @@ class SearchBar extends React.Component {
             return;
         }
 
+        this.props.onExecute()
         this.setState({working: true});
 
         if (this.state.mode === "doc") {
@@ -145,7 +146,7 @@ class SearchBar extends React.Component {
             var fileReader = new FileReader()
             var self = this
             fileReader.onload = function (fileLoadedEvent) {
-                if (console.log(fileLoadedEvent.error !== undefined)) {
+                if (fileLoadedEvent.error !== undefined) {
                     self.setState({working: false});
                     self.props.onError("Error uploading file")
                     return
@@ -255,6 +256,10 @@ class QueryApp extends React.Component {
         this.setState({error: null});
     }
 
+    onStartExecutingQuery = () => {
+        this.setState({error: null});
+    }
+
     onError = (msg) => {
          this.setState({error: msg});
     }
@@ -333,7 +338,7 @@ class QueryApp extends React.Component {
         return (
             <div style={{"maxWidth":1000, "margin": "auto"}}>
                 {introDisplay}
-                <SearchBar onError={this.onError} onAnswer={this.onAnswer}></SearchBar>
+                <SearchBar onError={this.onError} onAnswer={this.onAnswer} onExecute={this.onStartExecutingQuery}></SearchBar>
                 {alert}
                 {answerDisplay}
             </div>

@@ -97,7 +97,8 @@ class WikiCorpus(object):
 
     def __init__(self, cache_dir=None, follow_redirects: bool=True,
                  keep_inverse_mapping: bool=False,
-                 extract_lists: bool=False, tokenizer=NltkAndPunctTokenizer()):
+                 extract_lists: bool=False, tokenizer=NltkAndPunctTokenizer(),
+                 loop=None):
         """
         :param cache_dir: Optional, directory to cache the documents we download
         :param follow_redirects: Follow wiki re-directs
@@ -106,6 +107,7 @@ class WikiCorpus(object):
         :param extract_lists: Include lists in the extracted articles
         :param tokenizer: Tokenizer to use to tokenize the documents
         """
+        self.cl_sess = ClientSession(loop=loop)
         self.tokenizer = tokenizer
         self.extract_lists = extract_lists
         self.follow_redirects = follow_redirects
@@ -151,14 +153,13 @@ class WikiCorpus(object):
 
         log.info("Load wiki article for \"%s\"", wiki_title)
 
-        async with ClientSession() as sess:
-            # Use int(self.follow_redirects) since this get method doesn't support
-            # bool values for some reason
-            async with sess.get(url=WIKI_API,
-                                params=dict(action="parse", page=wiki_title,
-                                            redirects=int(self.follow_redirects),
-                                            format="json")) as resp:
-                data = await resp.json()
+        # Use int(self.follow_redirects) since this get method doesn't support
+        # bool values for some reason
+        async with self.cl_sess.get(url=WIKI_API,
+                                    params=dict(action="parse", page=wiki_title,
+                                                redirects=int(self.follow_redirects),
+                                                format="json")) as resp:
+            data = await resp.json()
 
         raw_data = data["parse"]
 
@@ -179,7 +180,7 @@ class WikiCorpus(object):
                     paragraphs.append(para)
             elif element.name == "ul" or element.name == "ol":
                 if dict(element.parent.attrs).get("class") != ["mw-parser-output"]:
-                    # only extract "body" lists
+                    # only extract "body" lists, avoid info-boxes
                     continue
                 para = self._sent_to_paragraph(len(paragraphs),
                                                "list" if element.name == "ul" else "ordered_list",
@@ -212,3 +213,6 @@ class WikiCorpus(object):
                 ujson.dump(dict(title=article.title, url=article.url,
                                 paragraphs=[x.to_json() for x in article.paragraphs]), f)
         return article
+
+    def close(self):
+        self.cl_sess.close()
