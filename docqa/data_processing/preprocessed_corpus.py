@@ -14,9 +14,6 @@ from docqa.configurable import Configurable
 
 class Preprocessor(Configurable):
 
-    def n_features(self):
-        return None
-
     def preprocess(self, question: Iterable, evidence) -> object:
         """ Map elements to an unspecified intermediate format """
         raise NotImplementedError()
