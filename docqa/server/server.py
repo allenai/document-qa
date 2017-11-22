@@ -166,6 +166,7 @@ def main():
 
     args = parser.parse_args()
     span_bound = args.span_bound
+    n_to_return = args.paragraphs_to_return
 
     if args.tagme_api_key is not None:
         tagme_api_key = args.tagme_api_key
@@ -264,7 +265,7 @@ def main():
                 return response.json({'message': 'No question given'}, status=400)
             spans, paras = await app.qa.answer_question(question)
             answers = select_answers(paras, spans, span_bound, 10)
-            answers = answers[:args.paragraphs_to_return]
+            answers = answers[:n_to_return]
             best_span = max(answers[0].answers, key=lambda x: x.conf)
             log.info("Answered \"%s\" (with web search): \"%s\"", question, answers[0].original_text[best_span.start:best_span.end])
             return json([x.to_json() for x in answers])
@@ -286,7 +287,7 @@ def main():
                 raise ServerError("Document too large", status_code=400)
             spans, paras = app.qa.answer_with_doc(question, doc)
             answers = select_answers(paras, spans, span_bound, 10)
-            answers = answers[:args.paragraphs_to_return]
+            answers = answers[:n_to_return]
             best_span = max(answers[0].answers, key=lambda x: x.conf)
             log.info("Answered \"%s\" (with user doc): \"%s\"", question, answers[0].original_text[best_span.start:best_span.end])
             return json([x.to_json() for x in answers])
@@ -295,7 +296,7 @@ def main():
             raise ServerError(e, status_code=500)
 
     app.static('/', './docqa//server/static/index.html')
-    app.static('/about.html', './docqa//service/static/about.html')
+    app.static('/about.html', './docqa/server/static/about.html')
     app.run(host="0.0.0.0", port=8000, workers=args.workers, debug=False, log_config=LOGGING)
 
 
