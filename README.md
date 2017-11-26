@@ -102,7 +102,7 @@ to build the desired set. This builds pkl files "./data/triviaqa/{web|wiki|open}
 ## Training
 Once the data is in place our models can be trained by
 
-`python docqa/scripts/ablate_{triviaqa|squad|triviaqa_unfiltered}.py`
+`python docqa/scripts/ablate_{triviaqa|squad|triviaqa_wiki|triviaqa_unfiltered}.py`
 
 
 See the help menu for these scripts for more details. Note that since we use the Cudnn RNN implementations,
@@ -129,7 +129,7 @@ Use "docqa/eval/squad_full_document_eval.py" to evaluate on the document-level. 
 
 This will store the per-paragraph results in output.csv, we can then run:
 
-`docqa/eval/ranked_squad_scores.py output.csv`
+`python docqa/eval/ranked_scores.py output.csv`
 
 to get ranked scores as more paragraphs are used.
 
@@ -137,14 +137,20 @@ to get ranked scores as more paragraphs are used.
 ### TriviaQA
 Use "docqa/eval/triviaqa_full_document_eval.py" to evaluate on TriviaQA datasets, like:
  
-`python docqa/eval/triviaqa_full_document_eval.py --n_processes 8 -c web-dev --tokens 400 -f tfidf-15 -b 200 -o question-output.json -p paragraph-output.csv /path/to/model/directory`
+`python docqa/eval/triviaqa_full_document_eval.py --n_processes 8 -c web-dev --tokens 400 -o question-output.json -p paragraph-output.csv /path/to/model/directory`
 
 Then the "question-output.json" can be used with the standard triviaqa evaluation [script](https://github.com/mandarjoshi90/triviaqa), 
 the "paragraph-output.csv" contains per-paragraph output, we can run  
 
-`python docqa/eval/ranked_triviaqa_scores.py paragraph-output.csv`
+`python docqa/eval/ranked_scores.py paragraph-output.csv`
 
-to get ranked scores as more paragraphs as used.
+to get ranked scores as more paragraphs as used for each question, or 
+
+`python docqa/eval/ranked_scores.py --per_doc paragraph-output.csv`
+
+to get ranked scores as more paragraphs as used for each (question, document) pair,
+as should be done for TrivaQA web.
+
 
 ### User Input
 "docqa/scripts/run_on_user_documents.py" serves as a heavily commented example of how to run our models 

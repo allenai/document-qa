@@ -135,6 +135,7 @@ def build_wiki_corpus(n_processes):
                       verified=join(TRIVIA_QA, "qa", "verified-wikipedia-dev.json"),
                       dev=join(TRIVIA_QA, "qa", "wikipedia-dev.json"),
                       train=join(TRIVIA_QA, "qa", "wikipedia-train.json"),
+                      test=join(TRIVIA_QA, "qa", "wikipedia-test-without-answers.json")
                   ),
                   FastNormalizedAnswerDetector(), n_processes)
 

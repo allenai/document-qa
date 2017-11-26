@@ -195,8 +195,14 @@ class ExtractMultiParagraphsPerQuestion(Preprocessor):
                 if self.require_an_answer and len(doc.answer_spans) == 0:
                     continue
                 text = evidence.get_document(doc.doc_id, splitter.reads_first_n)
-                split = splitter.split_annotated(text, doc.answer_spans)
-                paras.extend([DocParagraphWithAnswers(x.text, x.start, x.end, x.answer_spans, doc.doc_id) for x in split])
+                if doc.answer_spans is not None:
+                    split = splitter.split_annotated(text, doc.answer_spans)
+                else:
+                    # this is kind of a hack to make the rest of the pipeline work, only
+                    # needed for test cases
+                    split = splitter.split_annotated(text, np.zeros((0, 2), dtype=np.int32))
+                paras.extend([DocParagraphWithAnswers(x.text, x.start, x.end, x.answer_spans, doc.doc_id)
+                              for x in split])
 
             if para_filter is not None:
                 paras = para_filter.prune(q.question, paras)
@@ -217,7 +223,9 @@ class ExtractMultiParagraphsPerQuestion(Preprocessor):
                     doc_paras.append(DocumentParagraph(para.doc_id, para.start, para.end,
                                                        i, preprocessed.answer_spans, preprocessed.text))
                 with_paragraphs.append(
-                    MultiParagraphQuestion(q.question_id, q.question, q.answer.all_answers, doc_paras))
+                    MultiParagraphQuestion(q.question_id, q.question,
+                                           None if q.answer is None else q.answer.all_answers,
+                                           doc_paras))
             else:
                 doc_paras = [DocumentParagraph(x.doc_id, x.start, x.end,
                                                i, x.answer_spans, flatten_iterable(x.text))

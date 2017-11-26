@@ -10,7 +10,7 @@ from docqa.data_processing.qa_training_data import ContextAndQuestion, Answer, P
 from docqa.data_processing.span_data import TokenSpans
 from docqa.data_processing.text_utils import NltkPlusStopWords, ParagraphWithInverse
 from docqa.dataset import FixedOrderBatcher
-from docqa.eval.ranked_squad_scores import compute_model_scores
+from docqa.eval.ranked_scores import compute_ranked_scores
 from docqa.evaluator import Evaluation, Evaluator
 from docqa.model_dir import ModelDir
 from docqa.squad.document_rd_corpus import get_doc_rd_doc
@@ -199,8 +199,8 @@ def main():
 
     df.sort_values(["question_id", "rank"], inplace=True, ascending=True)
     group_by = ["question_id"]
-    f1 = compute_model_scores(df, "predicted_score", "text_f1", group_by)
-    em = compute_model_scores(df, "predicted_score", "text_em", group_by)
+    f1 = compute_ranked_scores(df, "predicted_score", "text_f1", group_by)
+    em = compute_ranked_scores(df, "predicted_score", "text_em", group_by)
     table = [["N Paragraphs", "EM", "F1"]]
     table += list([str(i+1), "%.4f" % e, "%.4f" % f] for i, (e, f) in enumerate(zip(em, f1)))
     print_table(table)

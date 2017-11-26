@@ -1,6 +1,5 @@
 import argparse
 import json
-import pickle
 from os.path import join
 from typing import List
 
@@ -16,17 +15,16 @@ from docqa.data_processing.qa_training_data import ParagraphAndQuestionDataset
 from docqa.data_processing.span_data import TokenSpans
 from docqa.data_processing.text_utils import NltkPlusStopWords
 from docqa.dataset import FixedOrderBatcher
-from docqa.eval.ranked_triviaqa_scores import compute_model_scores
+from docqa.eval.ranked_scores import compute_ranked_scores
 from docqa.evaluator import Evaluator, Evaluation
 from docqa.model_dir import ModelDir
-from docqa.triviaqa.build_span_corpus import TriviaQaWebDataset, TriviaQaOpenDataset
+from docqa.triviaqa.build_span_corpus import TriviaQaWebDataset, TriviaQaOpenDataset, TriviaQaWikiDataset
 from docqa.triviaqa.read_data import normalize_wiki_filename
 from docqa.triviaqa.training_data import DocumentParagraphQuestion, ExtractMultiParagraphs, \
     ExtractMultiParagraphsPerQuestion
 from docqa.triviaqa.trivia_qa_eval import exact_match_score as trivia_em_score
 from docqa.triviaqa.trivia_qa_eval import f1_score as trivia_f1_score
 from docqa.utils import ResourceLoader, print_table
-
 
 """
 Evaluate on TriviaQA data
@@ -115,7 +113,7 @@ def main():
                         help="Max answer span to select")
     parser.add_argument('-c', '--corpus',
                         choices=["web-dev", "web-test", "web-verified-dev", "web-train",
-                                 "open-dev", "open-train"],
+                                 "open-dev", "open-train", "wiki-dev", "wiki-test"],
                         default="web-verified-dev")
     args = parser.parse_args()
 
@@ -124,7 +122,6 @@ def main():
 
     if args.corpus.startswith('web'):
         dataset = TriviaQaWebDataset()
-        corpus = dataset.evidence
         if args.corpus == "web-dev":
             test_questions = dataset.get_dev()
         elif args.corpus == "web-test":
@@ -134,30 +131,39 @@ def main():
         elif args.corpus == "web-train":
             test_questions = dataset.get_train()
         else:
-            raise RuntimeError()
+            raise AssertionError()
+    elif args.corpus.startswith("wiki"):
+        dataset = TriviaQaWikiDataset()
+        if args.corpus == "wiki-dev":
+            test_questions = dataset.get_dev()
+        elif args.corpus == "wiki-test":
+            test_questions = dataset.get_test()
+        else:
+            raise AssertionError()
     else:
         dataset = TriviaQaOpenDataset()
-        corpus = dataset.evidence
         if args.corpus == "open-dev":
             test_questions = dataset.get_dev()
         elif args.corpus == "open-train":
             test_questions = dataset.get_train()
         else:
-            raise RuntimeError()
+            raise AssertionError()
 
+    corpus = dataset.evidence
     splitter = MergeParagraphs(args.tokens)
 
-    per_document = not args.corpus.startswith("open")
+    per_document = args.corpus.startswith("web")  # wiki and web are both multi-document
 
     filter_name = args.filter
     if filter_name is None:
-        if args.corpus.startswith("open"):
-            filter_name = "linear"
-        else:
+        # Pick default depending on the kind of data we are using
+        if per_document:
             filter_name = "tfidf"
+        else:
+            filter_name = "linear"
 
-    print("Selecting %d paragraphs using %s method per %s" % (args.n_paragraphs, filter_name,
-                                                              ("question-document pair" if per_document else "question")))
+    print("Selecting %d paragraphs using method \"%s\" per %s" % (
+        args.n_paragraphs, filter_name, ("question-document pair" if per_document else "question")))
 
     if filter_name == "tfidf":
         para_filter = TopTfIdf(NltkPlusStopWords(punctuation=True), args.n_paragraphs)
@@ -225,37 +231,41 @@ def main():
     if args.official_output is not None:
         print("Saving question result")
 
-        # I didn't store the unormalized filenames exactly, so unfortunately we have to reload
-        # the source data to get exact filename to output an official test script
         fns = {}
-        print("Loading proper filenames")
-        if args.corpus == 'web-test':
-            source = join(TRIVIA_QA, "qa", "web-test-without-answers.json")
-        elif args.corpus == "web-dev":
-            source = join(TRIVIA_QA, "qa", "web-dev.json")
-        else:
-            raise NotImplementedError()
+        if per_document:
+            # I didn't store the unormalized filenames exactly, so unfortunately we have to reload
+            # the source data to get exact filename to output an official test script
+            print("Loading proper filenames")
+            if args.corpus == 'web-test':
+                source = join(TRIVIA_QA, "qa", "web-test-without-answers.json")
+            elif args.corpus == "web-dev":
+                source = join(TRIVIA_QA, "qa", "web-dev.json")
+            else:
+                raise AssertionError()
 
-        with open(join(source)) as f:
-            data = json.load(f)["Data"]
-        for point in data:
-            for doc in point["EntityPages"]:
-                filename = doc["Filename"]
-                fn = join("wikipedia", filename[:filename.rfind(".")])
-                fn = normalize_wiki_filename(fn)
-                fns[(point["QuestionId"], fn)] = filename
+            with open(join(source)) as f:
+                data = json.load(f)["Data"]
+            for point in data:
+                for doc in point["EntityPages"]:
+                    filename = doc["Filename"]
+                    fn = join("wikipedia", filename[:filename.rfind(".")])
+                    fn = normalize_wiki_filename(fn)
+                    fns[(point["QuestionId"], fn)] = filename
 
         answers = {}
         scores = {}
         for q_id, doc_id, start, end, txt, score in df[["question_id", "doc_id", "para_start", "para_end",
                                                         "text_answer", "predicted_score"]].itertuples(index=False):
             filename = dataset.evidence.file_id_map[doc_id]
-            if filename.startswith("web"):
-                true_name = filename[4:] + ".txt"
+            if per_document:
+                if filename.startswith("web"):
+                    true_name = filename[4:] + ".txt"
+                else:
+                    true_name = fns[(q_id, filename)]
+                key = q_id + "--" + true_name
             else:
-                true_name = fns[(q_id, filename)]
+                key = q_id
 
-            key = q_id + "--" + true_name
             prev_score = scores.get(key)
             if prev_score is None or prev_score < score:
                 scores[key] = score
@@ -264,6 +274,13 @@ def main():
         with open(args.official_output, "w") as f:
             json.dump(answers, f)
 
+    output_file = args.paragraph_output
+    if output_file is not None:
+        print("Saving paragraph result")
+        df.to_csv(output_file, index=False)
+
+    print("Computing scores")
+
     if per_document:
         group_by = ["question_id", "doc_id"]
     else:
@@ -271,27 +288,11 @@ def main():
 
     # Print a table of scores as more paragraphs are used
     df.sort_values(group_by + ["rank"], inplace=True)
-    f1 = compute_model_scores(df, "predicted_score", "text_f1", group_by)
-    em = compute_model_scores(df, "predicted_score", "text_em", group_by)
+    f1 = compute_ranked_scores(df, "predicted_score", "text_f1", group_by)
+    em = compute_ranked_scores(df, "predicted_score", "text_em", group_by)
     table = [["N Paragraphs", "EM", "F1"]]
     table += list([str(i+1), "%.4f" % e, "%.4f" % f] for i, (e, f) in enumerate(zip(em, f1)))
     print_table(table)
-
-    output_file = args.paragraph_output
-    if output_file is not None:
-        print("Saving paragraph result")
-        if output_file.endswith("json"):
-            with open(output_file, "w") as f:
-                json.dump(evaluation.per_sample, f)
-        elif output_file.endswith("pkl"):
-            with open(output_file, "wb") as f:
-                pickle.dump(evaluation.per_sample, f)
-        elif output_file.endswith("csv"):
-
-            df.to_csv(output_file, index=False)
-        else:
-            raise ValueError("Unrecognized file format")
-
 if __name__ == "__main__":
     main()
 
