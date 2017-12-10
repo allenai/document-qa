@@ -28,8 +28,8 @@ The easiest way to run this code is to use:
 ``export PYTHONPATH=${PYTHONPATH}:`pwd` ``
 
 ### Data
-By default, we expect source data to stored in "\~/data" and preprocessed data to be
-stored int "./data". The expected file locations can be changed by altering config.py.
+By default, we expect source data to be stored in "\~/data" and preprocessed data to be
+stored in "./data". The expected file locations can be changed by altering config.py.
  
 
 #### Word Vectors
@@ -137,7 +137,7 @@ to get ranked scores as more paragraphs are used.
 ### TriviaQA
 Use "docqa/eval/triviaqa_full_document_eval.py" to evaluate on TriviaQA datasets, like:
  
-`python docqa/eval/triviaqa_full_document_eval.py --n_processes 8 -c web-dev --tokens 400 -o question-output.json -p paragraph-output.csv /path/to/model/directory`
+`python docqa/eval/triviaqa_full_document_eval.py --n_processes 8 -c web-dev --tokens 800 -o question-output.json -p paragraph-output.csv /path/to/model/directory`
 
 Then the "question-output.json" can be used with the standard triviaqa evaluation [script](https://github.com/mandarjoshi90/triviaqa), 
 the "paragraph-output.csv" contains per-paragraph output, we can run  
@@ -156,7 +156,7 @@ as should be done for TrivaQA web.
 "docqa/scripts/run_on_user_documents.py" serves as a heavily commented example of how to run our models 
 and pre-processing pipeline on other kinds of text. For example:
  
- `docqa/scripts/run_on_user_text.py /path/to/model/directory 
+ `python docqa/scripts/run_on_user_documents.py /path/to/model/directory 
  "Who wrote the satirical essay 'A Modest Proposal'?"  
  ~/data/triviaqa/evidence/wikipedia/A_Modest_Proposal.txt 
  ~/data/triviaqa/evidence/wikipedia/Jonathan_Swift.txt`
