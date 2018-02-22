@@ -21,7 +21,6 @@ def train_params(n_epochs):
     return TrainParams(SerializableOptimizer("Adadelta", dict(learning_rate=1.0)),
                        ema=0.999, max_checkpoints_to_keep=3, async_encoding=10,
                        num_epochs=n_epochs, log_period=30, eval_period=1200, save_period=1200,
-                       best_weights=("dev", "b17/text-f1"),
                        eval_samples=dict(dev=None, train=8000))
 
 
@@ -47,6 +46,7 @@ def main():
         if model.preprocessor is not None:
             raise NotImplementedError()
         n_epochs = 26
+
         train_batching = ClusteredBatcher(45, ContextLenBucketedKey(3), True, False)
         eval_batching = ClusteredBatcher(45, ContextLenKey(), False, False)
         data = DocumentQaTrainingData(corpus, None, train_batching, eval_batching)
@@ -90,7 +90,11 @@ def main():
         notes = f.read()
         notes = args.mode + "\n" + notes
 
-    trainer.start_training(data, model, train_params(n_epochs), eval, model_dir.ModelDir(out), notes)
+    params = train_params(n_epochs)
+    if mode == "paragraph":
+        params.best_weights = ("dev", "b17/text-f1")
+
+    trainer.start_training(data, model, params, eval, model_dir.ModelDir(out), notes)
 
 
 if __name__ == "__main__":
