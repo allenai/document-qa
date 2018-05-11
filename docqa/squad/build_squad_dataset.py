@@ -125,9 +125,8 @@ def parse_squad_data(source, name, tokenizer, use_tqdm=True) -> List[Document]:
 
 def main():
     parser = argparse.ArgumentParser("Preprocess SQuAD data")
-    basedir = join(expanduser("~"), "data", "squad")
-    parser.add_argument("--train_file", default=join(basedir, "train-v1.1.json"))
-    parser.add_argument("--dev_file", default=join(basedir, "dev-v1.1.json"))
+    parser.add_argument("--train_file", default=config.SQUAD_TRAIN)
+    parser.add_argument("--dev_file", default=config.SQUAD_DEV)
 
     if not exists(config.CORPUS_DIR):
         mkdir(config.CORPUS_DIR)
