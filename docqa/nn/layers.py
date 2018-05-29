@@ -214,11 +214,6 @@ class ConcatWithProduct(MergeLayer):
         return tf.concat([tensor1, tensor2, tensor1 * tensor2], axis=len(tensor1.shape) - 1)
 
 
-class DotMerge(MergeLayer):
-    def apply(self, is_train, tensor1, tensor2) -> tf.Tensor:
-        return tensor1 * tensor2
-
-
 class ConcatWithProductProj(MergeLayer):
     def __init__(self, n_project, init="glorot_uniform", dots=True, scale=True):
         self.n_project = n_project
