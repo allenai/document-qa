@@ -96,7 +96,7 @@ answers spans in each document. Run
 
 `python docqa/triviaqa/build_span_corpus.py {web|wiki|open} --n_processes 8`
 
-to build the desired set. This builds pkl files "./data/triviaqa/{web|wiki|open}"
+to build the desired set. This builds pkl files "./data/triviaqa/{web|wiki|web-open}"
 
 
 ## Training
