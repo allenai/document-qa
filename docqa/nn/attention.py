@@ -132,7 +132,7 @@ class BiAttention(AttentionMapper):
                 return tf.concat([x, select_query], axis=2)
 
         # select query-to-context
-        context_dist = tf.reduce_max(dist_matrix, axis=2)  # (batch, x_word``s)
+        context_dist = tf.reduce_max(dist_matrix, axis=2)  # (batch, x_words)
         context_probs = tf.nn.softmax(context_dist)  # (batch, x_words)
         select_context = tf.einsum("ai,aik->ak", context_probs, x)  # (batch, x_dim)
         select_context = tf.expand_dims(select_context, 1)
