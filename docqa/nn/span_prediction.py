@@ -7,7 +7,7 @@ from docqa.nn.layers import SequenceBiMapper, MergeLayer, Mapper, get_keras_init
 from docqa.nn.span_prediction_ops import best_span_from_bounds, to_unpacked_coordinates, \
     to_packed_coordinates, packed_span_f1_mask
 from tensorflow import Tensor
-from tensorflow.contrib.layers import fully_connected
+from tensorflow.keras.layers import Dense  # For TensorFlow 2.x
 
 from docqa.model import Prediction
 from docqa.nn.ops import VERY_NEGATIVE_NUMBER, exp_mask, segment_logsumexp
